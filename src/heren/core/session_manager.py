@@ -24,6 +24,9 @@ from typing import Any, Optional
 # GodotServer integration
 from heren.core.godot_server import GodotServer
 
+# GodotDaemon integration (WebSocket persistente)
+from heren.daemon.godot_daemon import GodotDaemon
+
 logger = logging.getLogger(__name__)
 
 
@@ -108,6 +111,9 @@ class Session:
     # GodotServer (persistent HTTP server)
     godot_server: Optional[GodotServer] = None
     
+    # GodotDaemon (persistent WebSocket server - NUEVO)
+    godot_daemon: Optional[GodotDaemon] = None
+    
     # Operation history
     operations: list = field(default_factory=list)
     undo_stack: list = field(default_factory=list)
@@ -181,7 +187,8 @@ class SessionManager:
         self,
         project_path: str,
         godot_path: Optional[str] = None,
-        use_server: bool = True,
+        use_server: bool = False,  # GodotServer HTTP (legacy, no funciona en headless)
+        use_daemon: bool = True,   # GodotDaemon WebSocket (NUEVO - recomendado)
     ) -> Session:
         """
         Inicia una nueva sesi�n.
@@ -232,20 +239,38 @@ class SessionManager:
         # Verificar que Godot funciona
         self._verify_godot(godot_path)
         
-        # Iniciar GodotServer (HTTP persistent server) si se solicita
-        if use_server:
+        # Iniciar GodotDaemon (WebSocket persistent server) si se solicita
+        if use_daemon:
             try:
-                logger.info(f"Iniciando GodotServer para sesi�n {session_id}...")
+                logger.info(f"[Daemon] Iniciando GodotDaemon para sesi�n {session_id}...")
+                daemon = GodotDaemon(
+                    project_path=project_path,
+                    godot_path=godot_path
+                )
+                if daemon.start():
+                    session.godot_daemon = daemon
+                    logger.info(f"[Daemon] GodotDaemon iniciado en puerto {daemon.port}")
+                else:
+                    logger.warning("[Daemon] No se pudo iniciar GodotDaemon. Usando scripts temporales.")
+                    session.godot_daemon = None
+            except Exception as e:
+                logger.warning(f"[Daemon] Error iniciando GodotDaemon: {e}. Usando scripts temporales.")
+                session.godot_daemon = None
+        else:
+            session.godot_daemon = None
+        
+        # Iniciar GodotServer (HTTP legacy) solo si se solicita expl�citamente
+        if use_server and not use_daemon:
+            try:
+                logger.info(f"Iniciando GodotServer legacy para sesi�n {session_id}...")
                 session.godot_server = GodotServer(
                     project_path=project_path,
                     godot_exe=godot_path
                 )
                 logger.info(f"GodotServer iniciado en puerto {session.godot_server.port}")
             except Exception as e:
-                logger.warning(f"No se pudo iniciar GodotServer: {e}. Usando scripts temporales.")
+                logger.warning(f"No se pudo iniciar GodotServer: {e}")
                 session.godot_server = None
-        else:
-            session.godot_server = None
         
         with self._sessions_lock:
             self._sessions[session_id] = session
@@ -393,6 +418,55 @@ class SessionManager:
             return session.godot_server
         return None
     
+    def get_godot_daemon(self, session_id: str) -> Optional[GodotDaemon]:
+        """Obtiene el GodotDaemon de una sesi�n."""
+        session = self.get_session(session_id)
+        if session and session.godot_daemon and session.godot_daemon.is_alive():
+            return session.godot_daemon
+        return None
+    
+    def execute_via_daemon(
+        self,
+        session_id: str,
+        method: str,
+        params: dict
+    ) -> dict:
+        """Ejecuta una operaci�n via GodotDaemon (WebSocket)."""
+        daemon = self.get_godot_daemon(session_id)
+        if not daemon:
+            return {
+                "success": False,
+                "error": "daemon_not_available",
+                "message": "GodotDaemon no est� disponible para esta sesi�n"
+            }
+        
+        session = self.get_session(session_id)
+        if session:
+            session.touch()
+        
+        return daemon.call(method, params)
+    
+    def execute_batch_via_daemon(
+        self,
+        session_id: str,
+        operations: list,
+        stop_on_error: bool = False
+    ) -> dict:
+        """Ejecuta m�ltiples operaciones via GodotDaemon en una sola llamada."""
+        daemon = self.get_godot_daemon(session_id)
+        if not daemon:
+            return {
+                "success": False,
+                "error": "daemon_not_available",
+                "message": "GodotDaemon no est� disponible para esta sesi�n"
+            }
+        
+        session = self.get_session(session_id)
+        if session:
+            session.touch()
+        
+        return daemon.batch(operations, stop_on_error)
+    
     def get_session(self, session_id: str) -> Optional[Session]:
         """Obtiene una sesi�n por ID."""
         with self._sessions_lock:
@@ -414,7 +488,15 @@ class SessionManager:
         if not session:
             return False
         
-        # Detener GodotServer
+        # Detener GodotDaemon
+        if session.godot_daemon:
+            try:
+                session.godot_daemon.stop()
+                logger.info(f"[Daemon] GodotDaemon detenido para sesi�n {session_id}")
+            except Exception as e:
+                logger.warning(f"[Daemon] Error deteniendo GodotDaemon: {e}")
+        
+        # Detener GodotServer (legacy)
         if session.godot_server:
             try:
                 session.godot_server.stop()

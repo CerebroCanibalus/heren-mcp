@@ -18,12 +18,23 @@ logger = logging.getLogger(__name__)
 
 def _execute_operation(session_id: str, operation: str, params: dict) -> dict:
     """
-    Ejecuta una operaci�n usando GodotServer si est� disponible,
-    o fallback a scripts temporales.
+    Ejecuta una operaci�n usando GodotDaemon si est� disponible,
+    luego GodotServer, o fallback a scripts temporales.
     """
     session_manager = get_session_manager()
     
-    # Intentar usar GodotServer primero
+    # 1. Intentar GodotDaemon primero (WebSocket - m�s r�pido)
+    daemon = session_manager.get_godot_daemon(session_id)
+    if daemon:
+        try:
+            result = session_manager.execute_via_daemon(session_id, operation, params)
+            if result.get("success") or "error" not in result:
+                return result
+            logger.warning(f"[Daemon] Operaci�n {operation} retorn� error: {result.get('error')}")
+        except Exception as e:
+            logger.warning(f"[Daemon] Error en {operation}: {e}")
+    
+    # 2. Intentar GodotServer (HTTP legacy)
     server = session_manager.get_godot_server(session_id)
     if server:
         try:
@@ -71,7 +82,7 @@ def _execute_operation(session_id: str, operation: str, params: dict) -> dict:
 def heren_start_session(
     project_path: str,
     godot_path: Optional[str] = None,
-    use_server: bool = True,
+    use_daemon: bool = True,
 ) -> dict:
     """
     Inicia una sesión con Godot.
@@ -79,14 +90,14 @@ def heren_start_session(
     Args:
         project_path: Ruta absoluta al proyecto Godot
         godot_path: Ruta al ejecutable de Godot (opcional)
-        use_server: Si True, inicia GodotServer HTTP persistente
+        use_daemon: Si True, inicia GodotDaemon WebSocket (recomendado)
     
     Returns:
         {"success": True, "session_id": "..."} o {"success": False, "error": "..."}
     """
     try:
         manager = get_session_manager()
-        session = manager.start_session(project_path, godot_path, use_server=use_server)
+        session = manager.start_session(project_path, godot_path, use_daemon=use_daemon)
         
         return {
             "success": True,

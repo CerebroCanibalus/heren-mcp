@@ -54,7 +54,13 @@ def heren_batch(
     try:
         session_manager = get_session_manager()
         
-        # Intentar usar GodotServer (m�s r�pido)
+        # 1. Intentar GodotDaemon (WebSocket - más rápido)
+        daemon = session_manager.get_godot_daemon(session_id)
+        if daemon:
+            logger.info(f"[Daemon] Ejecutando batch de {len(operations)} operaciones")
+            return session_manager.execute_batch_via_daemon(session_id, operations, stop_on_error)
+        
+        # 2. Intentar GodotServer (HTTP legacy)
         server = session_manager.get_godot_server(session_id)
         if server:
             logger.info(f"Ejecutando batch de {len(operations)} operaciones via GodotServer")
@@ -63,7 +69,7 @@ def heren_batch(
                 "stop_on_error": stop_on_error
             })
         
-        # Fallback: ejecutar una por una con scripts temporales
+        # 3. Fallback: ejecutar una por una con scripts temporales
         logger.info(f"Ejecutando batch de {len(operations)} operaciones via scripts temporales")
         return _execute_batch_fallback(session_id, operations, stop_on_error)
         

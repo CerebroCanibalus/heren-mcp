@@ -19,6 +19,15 @@ from heren.core.session_manager import get_session_manager
 from heren.tools.scene_tools import heren_start_session, heren_end_session, heren_get_scene_tree, heren_save_scene
 from heren.tools.node_tools import heren_add_node, heren_remove_node, heren_set_property
 from heren.tools.batch_tools import heren_batch
+from heren.tools.visual_tools import (
+    heren_screenshot,
+    heren_capture_viewport,
+    heren_performance_metrics,
+    heren_daemon_health,
+    heren_load_scene,
+    heren_unload_scene,
+    heren_get_loaded_scenes,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -191,6 +200,138 @@ def batch(
         ])
     """
     return heren_batch(session_id, operations, stop_on_error)
+
+
+# ============================================================
+# VISUAL TOOLS (Requieren GodotDaemon)
+# ============================================================
+
+@mcp.tool()
+def screenshot(
+    session_id: str,
+    scene_path: str,
+    output_path: str = None,
+    resolution: tuple = (1920, 1080),
+    wait_frames: int = 3,
+    format: str = "png",
+    quality: float = 0.9,
+) -> dict:
+    """
+    Captura un screenshot de una escena usando rendering GPU.
+    
+    REQUIERE GodotDaemon activo. Si no lo tienes, inicia sesion con use_daemon=True.
+    
+    Args:
+        session_id: ID de sesion activa
+        scene_path: Ruta a la escena (res://scenes/Main.tscn)
+        output_path: Ruta de salida. None = temp directory
+        resolution: (width, height)
+        wait_frames: Frames a esperar antes de capturar
+        format: "png", "jpeg" o "webp"
+        quality: Calidad JPEG/WebP (0.0-1.0)
+    
+    Returns:
+        {"success": True, "image_path": "...", "resolution": [1920, 1080]}
+    """
+    return heren_screenshot(session_id, scene_path, output_path, resolution, wait_frames, format, quality)
+
+
+@mcp.tool()
+def capture_viewport(
+    session_id: str,
+    output_path: str = None,
+    format: str = "png",
+    quality: float = 0.9,
+) -> dict:
+    """
+    Captura el viewport actual del daemon Godot.
+    
+    Muestra lo que el daemon "ve" en su ventana en tiempo real.
+    
+    Args:
+        session_id: ID de sesion activa
+        output_path: Ruta de salida. None = temp directory
+        format: "png", "jpeg" o "webp"
+        quality: Calidad JPEG/WebP
+    
+    Returns:
+        {"success": True, "image_path": "...", "resolution": [1920, 1080]}
+    """
+    return heren_capture_viewport(session_id, output_path, format, quality)
+
+
+@mcp.tool()
+def performance_metrics(session_id: str) -> dict:
+    """
+    Obtiene metricas de rendimiento en tiempo real del daemon.
+    
+    Args:
+        session_id: ID de sesion activa
+    
+    Returns:
+        {"success": True, "metrics": {"fps": 60, "memory_mb": 150, ...}}
+    """
+    return heren_performance_metrics(session_id)
+
+
+@mcp.tool()
+def daemon_health(session_id: str) -> dict:
+    """
+    Verifica la salud del daemon Godot.
+    
+    Args:
+        session_id: ID de sesion activa
+    
+    Returns:
+        {"success": True, "status": "healthy", "scenes_cached": 5, ...}
+    """
+    return heren_daemon_health(session_id)
+
+
+@mcp.tool()
+def load_scene(session_id: str, scene_path: str) -> dict:
+    """
+    Carga una escena en el cache del daemon para operaciones rapidas.
+    
+    Una vez cargada, get_scene_tree y modificaciones son ~20ms.
+    
+    Args:
+        session_id: ID de sesion activa
+        scene_path: Ruta a la escena (res://scenes/Player.tscn)
+    
+    Returns:
+        {"success": True, "cached": true, "node_count": 42}
+    """
+    return heren_load_scene(session_id, scene_path)
+
+
+@mcp.tool()
+def unload_scene(session_id: str, scene_path: str) -> dict:
+    """
+    Descarga una escena del cache del daemon.
+    
+    Args:
+        session_id: ID de sesion activa
+        scene_path: Ruta a la escena
+    
+    Returns:
+        {"success": True}
+    """
+    return heren_unload_scene(session_id, scene_path)
+
+
+@mcp.tool()
+def get_loaded_scenes(session_id: str) -> dict:
+    """
+    Lista las escenas cargadas en el cache del daemon.
+    
+    Args:
+        session_id: ID de sesion activa
+    
+    Returns:
+        {"success": True, "scenes": [{"path": "...", "type": "Node2D", "valid": true}]}
+    """
+    return heren_get_loaded_scenes(session_id)
 
 
 def main():
