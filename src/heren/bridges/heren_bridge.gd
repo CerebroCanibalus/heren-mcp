@@ -25,7 +25,7 @@ func _init():
 				DirAccess.remove_absolute(CMD_FILE)
 				
 				if not line.is_empty():
-					var result = process_command(line.strip())
+					var result = process_command(line.strip_edges())
 					
 					# Escribir respuesta
 					var resp_file = FileAccess.open(RESP_FILE, FileAccess.WRITE)

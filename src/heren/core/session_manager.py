@@ -1,10 +1,10 @@
 """
 Heren MCP - Session Manager (Capa 0)
 
-El núcleo del sistema. Se inicializa primero. Sin sesión, no hay operaciones.
-Mantiene Godot headless vivo, gestiona caché, y coordina todo.
+El n�cleo del sistema. Se inicializa primero. Sin sesi�n, no hay operaciones.
+Gestiona cach� agresiva y ejecuta scripts GDScript temporales via Godot CLI.
 
-Filosofía: Poder. Eficiencia. Rapidez.
+Filosof�a: Poder. Eficiencia. Rapidez.
 """
 
 import json
@@ -12,6 +12,7 @@ import logging
 import os
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -42,7 +43,7 @@ class LRUCache:
                 del self._cache[key]
                 return None
             
-            # Mover al final (más recientemente usado)
+            # Mover al final (m�s recientemente usado)
             self._cache.move_to_end(key)
             return entry["value"]
     
@@ -90,19 +91,15 @@ class ProjectState:
 
 @dataclass 
 class Session:
-    """Una sesión activa con Godot."""
+    """Una sesi�n activa con un proyecto Godot."""
     id: str
     project_path: str
     project_state: ProjectState
     created_at: float = field(default_factory=time.time)
     last_activity: float = field(default_factory=time.time)
     
-    # Godot process
-    godot_process: Optional[subprocess.Popen] = None
-    godot_lock: threading.RLock = field(default_factory=threading.RLock)
-    
     # Cache
-    scene_cache: LRUCache = field(default_factory=lambda: LRUCache(max_size=50, ttl_seconds=600))
+    scene_cache: LRUCache = field(default_factory=lambda: LRUCache(max_size=50, ttl_seconds=300))
     resource_cache: LRUCache = field(default_factory=lambda: LRUCache(max_size=100, ttl_seconds=300))
     
     # Operation history
@@ -111,11 +108,11 @@ class Session:
     redo_stack: list = field(default_factory=list)
     
     def touch(self):
-        """Actualiza timestamp de última actividad."""
+        """Actualiza timestamp de �ltima actividad."""
         self.last_activity = time.time()
     
     def is_expired(self, timeout_seconds: float = 3600) -> bool:
-        """Verifica si la sesión expiró por inactividad."""
+        """Verifica si la sesi�n expir� por inactividad."""
         return time.time() - self.last_activity > timeout_seconds
 
 
@@ -124,7 +121,7 @@ class SessionManager:
     Gestor de sesiones Heren MCP.
     
     Singleton que coordina todas las sesiones activas.
-    Mantiene Godot corriendo y gestiona caché.
+    Usa scripts GDScript temporales para comunicaci�n con Godot.
     """
     
     _instance: Optional["SessionManager"] = None
@@ -147,6 +144,7 @@ class SessionManager:
         self._sessions_lock = threading.RLock()
         self._cleanup_thread: Optional[threading.Thread] = None
         self._shutdown = False
+        self._temp_files: list[str] = []
         
         # Iniciar cleanup thread
         self._start_cleanup_thread()
@@ -170,7 +168,7 @@ class SessionManager:
                     expired.append(session_id)
         
         for session_id in expired:
-            logger.info(f"Sesión expirada: {session_id}")
+            logger.info(f"Sesi�n expirada: {session_id}")
             self.end_session(session_id)
     
     def start_session(
@@ -179,14 +177,14 @@ class SessionManager:
         godot_path: Optional[str] = None,
     ) -> Session:
         """
-        Inicia una nueva sesión con Godot.
+        Inicia una nueva sesi�n.
         
         Args:
             project_path: Ruta absoluta al proyecto Godot
             godot_path: Ruta al ejecutable de Godot (auto-detecta si no se proporciona)
         
         Returns:
-            Sesión activa
+            Sesi�n activa
         """
         project_path = os.path.abspath(project_path)
         
@@ -194,7 +192,7 @@ class SessionManager:
             raise ValueError(f"Proyecto no encontrado: {project_path}")
         
         if not os.path.exists(os.path.join(project_path, "project.godot")):
-            raise ValueError(f"No es un proyecto Godot válido: {project_path}")
+            raise ValueError(f"No es un proyecto Godot v�lido: {project_path}")
         
         # Auto-detectar Godot
         if godot_path is None:
@@ -203,7 +201,7 @@ class SessionManager:
         if not os.path.exists(godot_path):
             raise ValueError(f"Godot no encontrado: {godot_path}")
         
-        # Crear sesión
+        # Crear sesi�n
         session_id = str(uuid.uuid4())[:8]
         project_state = ProjectState(
             project_path=project_path,
@@ -216,13 +214,13 @@ class SessionManager:
             project_state=project_state,
         )
         
-        # Iniciar Godot
-        self._start_godot_process(session)
+        # Verificar que Godot funciona
+        self._verify_godot(godot_path)
         
         with self._sessions_lock:
             self._sessions[session_id] = session
         
-        logger.info(f"Sesión iniciada: {session_id} | Proyecto: {project_path}")
+        logger.info(f"Sesi�n iniciada: {session_id} | Proyecto: {project_path}")
         return session
     
     def _find_godot_executable(self) -> str:
@@ -254,81 +252,112 @@ class SessionManager:
                 return godot
         
         raise RuntimeError(
-            "Godot no encontrado. Proporciona godot_path o añade Godot al PATH."
+            "Godot no encontrado. Proporciona godot_path o a�ade Godot al PATH."
         )
     
-    def _start_godot_process(self, session: Session):
-        """Inicia el proceso Godot headless con el bridge."""
-        bridge_path = self._get_bridge_path()
+    def _verify_godot(self, godot_path: str):
+        """Verifica que Godot funciona."""
+        try:
+            result = subprocess.run(
+                [godot_path, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"Godot no responde: {result.stderr}")
+            logger.info(f"Godot version: {result.stdout.strip()}")
+        except Exception as e:
+            raise RuntimeError(f"No se pudo verificar Godot: {e}")
+    
+    def execute_gdscript(
+        self,
+        session_id: str,
+        script_content: str,
+        timeout: float = 30.0,
+    ) -> dict:
+        """
+        Ejecuta c�digo GDScript via Godot CLI --script.
         
-        cmd = [
-            session.project_state.godot_path,
-            "--headless",
-            "--path", session.project_path,
-            "--script", bridge_path,
-        ]
+        Args:
+            session_id: ID de la sesi�n
+            script_content: C�digo GDScript (debe extender SceneTree)
+            timeout: Timeout en segundos
+        
+        Returns:
+            Resultado con success, output, errors, test_output
+        """
+        session = self.get_session(session_id)
+        if not session:
+            return {"success": False, "error": f"Sesi�n no encontrada: {session_id}"}
+        
+        session.touch()
+        
+        # Crear archivo temporal
+        script_file = os.path.join(
+            tempfile.gettempdir(), f"heren_{session_id}_{uuid.uuid4().hex[:8]}.gd"
+        )
+        self._temp_files.append(script_file)
         
         try:
-            process = subprocess.Popen(
+            with open(script_file, "w", encoding="utf-8") as f:
+                f.write(script_content)
+            
+            # Ejecutar Godot
+            cmd = [
+                session.project_state.godot_path,
+                "--headless",
+                "--path", session.project_path,
+                "--script", script_file,
+            ]
+            
+            logger.debug(f"Ejecutando Godot: {' '.join(cmd)}")
+            
+            result = subprocess.run(
                 cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 text=True,
-                bufsize=1,  # Line buffered
+                timeout=timeout,
             )
             
-            session.godot_process = process
+            # Parsear output
+            output_lines = result.stdout.strip().split("\n") if result.stdout else []
+            error_lines = result.stderr.strip().split("\n") if result.stderr else []
             
-            # Esperar a que el bridge esté listo
-            self._wait_for_bridge_ready(session)
+            # Buscar TEST_OUTPUT
+            test_output = None
+            for line in output_lines:
+                if line.startswith("TEST_OUTPUT:"):
+                    try:
+                        test_output = json.loads(line[12:].strip())
+                    except json.JSONDecodeError:
+                        test_output = line[12:].strip()
+                    break
             
-            logger.info(f"Godot iniciado para sesión {session.id}")
+            return {
+                "success": result.returncode == 0,
+                "output": output_lines,
+                "errors": error_lines,
+                "test_output": test_output,
+                "exit_code": result.returncode,
+            }
             
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": f"Timeout ejecutando script (>{timeout}s)"}
         except Exception as e:
-            logger.error(f"Error iniciando Godot: {e}")
-            raise RuntimeError(f"No se pudo iniciar Godot: {e}")
-    
-    def _get_bridge_path(self) -> str:
-        """Obtiene la ruta al bridge GDScript."""
-        # El bridge está en src/heren/bridges/heren_bridge.gd
-        current_dir = Path(__file__).parent.parent
-        bridge_path = current_dir / "bridges" / "heren_bridge.gd"
-        
-        if not bridge_path.exists():
-            raise RuntimeError(f"Bridge no encontrado: {bridge_path}")
-        
-        return str(bridge_path.absolute())
-    
-    def _wait_for_bridge_ready(self, session: Session, timeout: float = 10.0):
-        """Espera a que el bridge GDScript esté listo."""
-        start = time.time()
-        
-        while time.time() - start < timeout:
-            if session.godot_process.poll() is not None:
-                # Godot terminó inesperadamente
-                stderr = session.godot_process.stderr.read()
-                raise RuntimeError(f"Godot terminó inesperadamente: {stderr}")
-            
-            # Leer stdout buscando señal de ready
-            import select
-            if sys.platform != "win32":
-                ready, _, _ = select.select([session.godot_process.stdout], [], [], 0.5)
-                if ready:
-                    line = session.godot_process.stdout.readline().strip()
-                    if line == "HEREN_BRIDGE_READY":
-                        return
-            else:
-                # Windows: polling
-                time.sleep(0.5)
-                line = session.godot_process.stdout.readline().strip()
-                if line == "HEREN_BRIDGE_READY":
-                    return
-        
-        raise RuntimeError("Timeout esperando a que el bridge esté listo")
+            logger.error(f"Error ejecutando GDScript: {e}")
+            return {"success": False, "error": str(e)}
+        finally:
+            # Limpiar archivo temporal
+            try:
+                if os.path.exists(script_file):
+                    os.remove(script_file)
+                    self._temp_files.remove(script_file)
+            except Exception:
+                pass
     
     def get_session(self, session_id: str) -> Optional[Session]:
-        """Obtiene una sesión por ID."""
+        """Obtiene una sesi�n por ID."""
         with self._sessions_lock:
             session = self._sessions.get(session_id)
             if session:
@@ -337,10 +366,10 @@ class SessionManager:
     
     def end_session(self, session_id: str) -> bool:
         """
-        Termina una sesión y cierra Godot.
+        Termina una sesi�n.
         
         Returns:
-            True si se cerró correctamente
+            True si se cerr� correctamente
         """
         with self._sessions_lock:
             session = self._sessions.pop(session_id, None)
@@ -348,94 +377,22 @@ class SessionManager:
         if not session:
             return False
         
-        # Cerrar Godot
-        if session.godot_process and session.godot_process.poll() is None:
-            try:
-                # Enviar comando de shutdown
-                self._send_command_raw(session, {"action": "shutdown"})
-                session.godot_process.wait(timeout=5)
-            except:
-                # Forzar kill
-                session.godot_process.kill()
-                session.godot_process.wait()
-        
-        # Limpiar caché
+        # Limpiar cach�
         session.scene_cache.clear()
         session.resource_cache.clear()
         
-        logger.info(f"Sesión terminada: {session_id}")
+        logger.info(f"Sesi�n terminada: {session_id}")
         return True
     
-    def send_command(
-        self,
-        session_id: str,
-        action: str,
-        params: dict = None,
-    ) -> dict:
-        """
-        Envía un comando a Godot y devuelve la respuesta.
-        
-        Args:
-            session_id: ID de la sesión
-            action: Nombre de la acción
-            params: Parámetros de la acción
-        
-        Returns:
-            Respuesta JSON de Godot
-        """
-        session = self.get_session(session_id)
-        if not session:
-            return {"success": False, "error": f"Sesión no encontrada: {session_id}"}
-        
-        cmd = {
-            "id": str(uuid.uuid4())[:8],
-            "action": action,
-            "params": params or {},
-        }
-        
-        return self._send_command_raw(session, cmd)
-    
-    def _send_command_raw(self, session: Session, cmd: dict) -> dict:
-        """Envía un comando crudo a Godot usando archivos temporales."""
-        import time
-        
-        with session.godot_lock:
-            if not session.godot_process or session.godot_process.poll() is not None:
-                return {"success": False, "error": "Godot no está corriendo"}
-            
+    def cleanup_temp_files(self):
+        """Limpia archivos temporales."""
+        for file_path in self._temp_files:
             try:
-                temp_dir = "D:\\Mis Juegos\\GodotMCP\\heren-mcp\\.temp"
-                cmd_file = os.path.join(temp_dir, "heren_cmd.json")
-                resp_file = os.path.join(temp_dir, "heren_resp.json")
-                
-                # Limpiar respuesta anterior
-                if os.path.exists(resp_file):
-                    os.remove(resp_file)
-                
-                # Escribir comando
-                with open(cmd_file, "w", encoding="utf-8") as f:
-                    f.write(json.dumps(cmd))
-                
-                # Esperar respuesta (polling)
-                timeout = 30.0
-                start = time.time()
-                while time.time() - start < timeout:
-                    if os.path.exists(resp_file):
-                        with open(resp_file, "r", encoding="utf-8") as f:
-                            response_line = f.read().strip()
-                        
-                        if response_line:
-                            return json.loads(response_line)
-                        else:
-                            return {"success": False, "error": "Respuesta vacía de Godot"}
-                    
-                    time.sleep(0.05)  # 50ms polling
-                
-                return {"success": False, "error": "Timeout esperando respuesta de Godot"}
-                
-            except Exception as e:
-                logger.error(f"Error enviando comando: {e}")
-                return {"success": False, "error": str(e)}
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+            except Exception:
+                pass
+        self._temp_files.clear()
     
     def shutdown_all(self):
         """Cierra todas las sesiones."""
@@ -447,6 +404,7 @@ class SessionManager:
         for session_id in session_ids:
             self.end_session(session_id)
         
+        self.cleanup_temp_files()
         logger.info("Todas las sesiones cerradas")
 
 
