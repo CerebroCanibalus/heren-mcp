@@ -21,6 +21,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+# GodotServer integration
+from heren.core.godot_server import GodotServer
+
 logger = logging.getLogger(__name__)
 
 
@@ -102,6 +105,9 @@ class Session:
     scene_cache: LRUCache = field(default_factory=lambda: LRUCache(max_size=50, ttl_seconds=300))
     resource_cache: LRUCache = field(default_factory=lambda: LRUCache(max_size=100, ttl_seconds=300))
     
+    # GodotServer (persistent HTTP server)
+    godot_server: Optional[GodotServer] = None
+    
     # Operation history
     operations: list = field(default_factory=list)
     undo_stack: list = field(default_factory=list)
@@ -175,6 +181,7 @@ class SessionManager:
         self,
         project_path: str,
         godot_path: Optional[str] = None,
+        use_server: bool = True,
     ) -> Session:
         """
         Inicia una nueva sesi�n.
@@ -193,6 +200,14 @@ class SessionManager:
         
         if not os.path.exists(os.path.join(project_path, "project.godot")):
             raise ValueError(f"No es un proyecto Godot v�lido: {project_path}")
+        
+        # Reutilizar sesi�n existente para el mismo proyecto
+        with self._sessions_lock:
+            for session in self._sessions.values():
+                if session.project_path == project_path:
+                    logger.info(f"Sesi�n reutilizada: {session.id} | Proyecto: {project_path}")
+                    session.touch()
+                    return session
         
         # Auto-detectar Godot
         if godot_path is None:
@@ -216,6 +231,21 @@ class SessionManager:
         
         # Verificar que Godot funciona
         self._verify_godot(godot_path)
+        
+        # Iniciar GodotServer (HTTP persistent server) si se solicita
+        if use_server:
+            try:
+                logger.info(f"Iniciando GodotServer para sesi�n {session_id}...")
+                session.godot_server = GodotServer(
+                    project_path=project_path,
+                    godot_exe=godot_path
+                )
+                logger.info(f"GodotServer iniciado en puerto {session.godot_server.port}")
+            except Exception as e:
+                logger.warning(f"No se pudo iniciar GodotServer: {e}. Usando scripts temporales.")
+                session.godot_server = None
+        else:
+            session.godot_server = None
         
         with self._sessions_lock:
             self._sessions[session_id] = session
@@ -356,6 +386,13 @@ class SessionManager:
             except Exception:
                 pass
     
+    def get_godot_server(self, session_id: str) -> Optional[GodotServer]:
+        """Obtiene el GodotServer de una sesi�n."""
+        session = self.get_session(session_id)
+        if session and session.godot_server and session.godot_server.is_alive():
+            return session.godot_server
+        return None
+    
     def get_session(self, session_id: str) -> Optional[Session]:
         """Obtiene una sesi�n por ID."""
         with self._sessions_lock:
@@ -376,6 +413,14 @@ class SessionManager:
         
         if not session:
             return False
+        
+        # Detener GodotServer
+        if session.godot_server:
+            try:
+                session.godot_server.stop()
+                logger.info(f"GodotServer detenido para sesi�n {session_id}")
+            except Exception as e:
+                logger.warning(f"Error deteniendo GodotServer: {e}")
         
         # Limpiar cach�
         session.scene_cache.clear()

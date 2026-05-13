@@ -1,0 +1,25 @@
+{
+  "scripts_temporal": {
+    "method": "scripts_temporal",
+    "get_scene_tree_avg_ms": 178.42240000027232,
+    "add_node_avg_ms": 178.42240000027232,
+    "set_property_avg_ms": 178.42240000027232,
+    "save_scene_ms": 177.8963999968255,
+    "sequence_5_ops_ms": 984.3611000032979
+  },
+  "godot_server": {
+    "method": "godot_server",
+    "server_init_ms": 38093.955000003916,
+    "get_scene_tree_cold_ms": 178.9621999996598,
+    "get_scene_tree_warm_avg_ms": 0.004529998841462657,
+    "add_node_warm_avg_ms": 252.27696000074502,
+    "set_property_warm_avg_ms": 177.67900000035297,
+    "save_scene_warm_ms": 177.49970000295434,
+    "sequence_5_ops_ms": 1073.2322999974713
+  },
+  "batch": {
+    "method": "batch",
+    "batch_5_ops_server_ms": 889.2500000001746,
+    "batch_5_ops_scripts_ms": 886.9880999991437
+  }
+}

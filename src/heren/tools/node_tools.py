@@ -10,6 +10,7 @@ import logging
 from typing import Any, Optional
 
 from heren.interfaces.godot_cli import create_interface
+from heren.tools.scene_tools import _execute_operation
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +37,13 @@ def heren_add_node(
     Returns:
         {"success": True, "node_path": "..."} o error
     """
-    interface = create_interface(session_id)
-    return interface.add_node(scene_path, parent_path, node_type, node_name, properties)
+    return _execute_operation(session_id, "add_node", {
+        "scene_path": scene_path,
+        "parent_path": parent_path,
+        "node_type": node_type,
+        "node_name": node_name,
+        "properties": properties or {}
+    })
 
 
 def heren_remove_node(session_id: str, scene_path: str, node_path: str) -> dict:
@@ -52,8 +58,10 @@ def heren_remove_node(session_id: str, scene_path: str, node_path: str) -> dict:
     Returns:
         {"success": True} o error
     """
-    interface = create_interface(session_id)
-    return interface.remove_node(scene_path, node_path)
+    return _execute_operation(session_id, "remove_node", {
+        "scene_path": scene_path,
+        "node_path": node_path
+    })
 
 
 def heren_set_property(
@@ -76,8 +84,12 @@ def heren_set_property(
     Returns:
         {"success": True} o error
     """
-    interface = create_interface(session_id)
-    return interface.set_property(scene_path, node_path, property_name, value)
+    return _execute_operation(session_id, "set_property", {
+        "scene_path": scene_path,
+        "node_path": node_path,
+        "property_name": property_name,
+        "value": value
+    })
 
 
 def heren_get_node_properties(session_id: str, scene_path: str, node_path: str) -> dict:
@@ -92,5 +104,7 @@ def heren_get_node_properties(session_id: str, scene_path: str, node_path: str) 
     Returns:
         {"success": True, "properties": {...}} o error
     """
-    interface = create_interface(session_id)
-    return interface.get_node_properties(scene_path, node_path)
+    return _execute_operation(session_id, "get_node_properties", {
+        "scene_path": scene_path,
+        "node_path": node_path
+    })

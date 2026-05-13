@@ -18,6 +18,7 @@ from fastmcp import FastMCP
 from heren.core.session_manager import get_session_manager
 from heren.tools.scene_tools import heren_start_session, heren_end_session, heren_get_scene_tree, heren_save_scene
 from heren.tools.node_tools import heren_add_node, heren_remove_node, heren_set_property
+from heren.tools.batch_tools import heren_batch
 
 logging.basicConfig(
     level=logging.INFO,
@@ -152,6 +153,44 @@ def set_property(
         {"success": True} o error
     """
     return heren_set_property(session_id, scene_path, node_path, property_name, value)
+
+
+@mcp.tool()
+def batch(
+    session_id: str,
+    operations: list[dict],
+    stop_on_error: bool = False,
+) -> dict:
+    """
+    Ejecuta múltiples operaciones en batch.
+    
+    Optimiza rendimiento ejecutando varias operaciones en una sola llamada.
+    
+    Args:
+        session_id: ID de sesion activa
+        operations: Lista de operaciones
+            Cada operacion es un dict con:
+            - "operation": str - Nombre de la operacion
+            - "params": dict - Parametros de la operacion
+        stop_on_error: Si True, detiene en el primer error
+    
+    Returns:
+        {
+            "success": bool,
+            "results": list[dict],
+            "errors": list[dict],
+            "success_count": int,
+            "error_count": int,
+        }
+    
+    Example:
+        batch(session_id, [
+            {"operation": "add_node", "params": {"scene_path": "...", "parent_path": ".", "node_type": "Sprite2D", "node_name": "Player"}},
+            {"operation": "set_property", "params": {"scene_path": "...", "node_path": "Player", "property_name": "position", "value": {"x": 100, "y": 200}}},
+            {"operation": "save_scene", "params": {"scene_path": "..."}},
+        ])
+    """
+    return heren_batch(session_id, operations, stop_on_error)
 
 
 def main():

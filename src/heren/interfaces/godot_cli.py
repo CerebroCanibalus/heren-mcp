@@ -55,8 +55,17 @@ class GodotInterface:
         if not self.session:
             return {"success": False, "error": "Sesi�n no activa"}
         
+        # Normalizar rutas a forward slashes para evitar problemas con JSON
+        normalized_kwargs = {}
+        for key, value in kwargs.items():
+            if isinstance(value, str) and ('\\' in value or '/' in value):
+                # Probablemente es una ruta
+                normalized_kwargs[key] = value.replace('\\', '/')
+            else:
+                normalized_kwargs[key] = value
+        
         # Generar script
-        script_content = TemplateEngine.render(template_name, **kwargs)
+        script_content = TemplateEngine.render(template_name, **normalized_kwargs)
         
         # Ejecutar
         result = self.session_manager.execute_gdscript(
@@ -65,11 +74,22 @@ class GodotInterface:
         )
         
         # Extraer test_output
-        if result.get("success") and result.get("test_output"):
-            return result["test_output"]
+        test_output = result.get("test_output")
+        
+        if result.get("success") and test_output:
+            # Asegurar que test_output sea un dict
+            if isinstance(test_output, dict):
+                return test_output
+            else:
+                # JSON malformado en TEST_OUTPUT
+                return {
+                    "success": False,
+                    "error": f"TEST_OUTPUT malformado: {test_output}",
+                    "godot_output": result.get("output", []),
+                }
         
         # Si el script ejecutó bien pero no hay test_output, puede ser error de sintaxis
-        if result.get("success") and not result.get("test_output"):
+        if result.get("success") and not test_output:
             # Revisar si hay errores en stderr
             errors = result.get("errors", [])
             script_errors = [e for e in errors if "SCRIPT ERROR" in e or "ERROR" in e]

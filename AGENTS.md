@@ -21,9 +21,9 @@ Este documento es la biblia para agentes que operan Heren MCP. Lee esto antes de
 
 | Pilar | Significado | Aplicación |
 |-------|-------------|------------|
-| **CENTRALIZADAS** | Un punto de entrada único para cada operación. | `scene_tools.py` para escenas, `node_tools.py` para nodos. Sin dispersión. |
-| **MODULARES** | Cada tool hace UNA cosa bien. Componible. | `add_node` solo añade. `set_property` solo modifica. Combinables en batch. |
-| **POTENTES** | Máximo poder con mínima complejidad. | Una tool = un script GDScript completo. Godot hace TODO el trabajo pesado. |
+| **CENTRALIZADAS** | Pocas tools que agrupan funcionalidad relacionada. | `scene_tools.py` maneja TODO lo de escenas. `node_tools.py` maneja TODO lo de nodos. |
+| **MODULARES** | Una tool con múltiples modos/comandos. Flexible. | `scene_tool` con `action="get_tree"` o `action="save"`. Un punto de entrada, múltiples operaciones. |
+| **POTENTES** | Máximo poder con mínima cantidad de tools. | Una tool puede crear, modificar, eliminar y consultar. Godot hace TODO el trabajo pesado. |
 
 ### Decisiones Arquitectónicas Derivadas
 
@@ -33,6 +33,7 @@ Este documento es la biblia para agentes que operan Heren MCP. Lee esto antes de
 4. **Cache en memoria.** Las escenas se mantienen en RAM. Invalidación explícita tras modificaciones.
 5. **Fail-fast.** Si Godot no responde en 30 segundos, error claro. Sin cuelgues.
 6. **Templates GDScript con f-strings.** Generación de código type-safe. Sin inyección de variables inválidas.
+7. **Tools multifuncionales.** Una tool = múltiples operaciones relacionadas. Menos tools, más poder.
 
 ---
 
@@ -66,18 +67,13 @@ Este documento es la biblia para agentes que operan Heren MCP. Lee esto antes de
 │  └──────────────┬──────────────────────┘   │
 │                 │                            │
 │  ┌──────────────▼──────────────────────┐   │
-│  │  CAPA 2: API TOOLS                  │   │
+│  │  CAPA 2: API TOOLS (3 tools)        │   │
 │  │  ├─ scene_tools.py                  │   │
-│  │  │   ├─ start_session               │   │
-│  │  │   ├─ end_session                 │   │
-│  │  │   ├─ get_scene_tree              │   │
-│  │  │   ├─ save_scene                  │   │
-│  │  │   └─ get_project_info            │   │
-│  │  └─ node_tools.py                   │   │
-│  │      ├─ add_node                    │   │
-│  │      ├─ remove_node                 │   │
-│  │      ├─ set_property                │   │
-│  │      └─ get_node_properties         │   │
+│  │  │   └─ scene_tool(action="...")     │   │
+│  │  ├─ node_tools.py                   │   │
+│  │  │   └─ node_tool(action="...")      │   │
+│  │  └─ session_tools.py                │   │
+│  │      └─ session_tool(action="...")   │   │
 │  └─────────────────────────────────────┘   │
 └─────────────────────────────────────────────┘
                │ subprocess (Godot CLI)
@@ -130,24 +126,31 @@ result = heren_get_scene_tree("res://scene.tscn")
 
 ### Regla 3: Las Tools son Centralizadas
 ```python
-# TODAS las operaciones de escena van a scene_tools.py
-# TODAS las operaciones de nodo van a node_tools.py
-# NO crear tools dispersas en múltiples archivos
+# POCAS tools que agrupan mucha funcionalidad
+# scene_tools.py → TODO lo de escenas (tree, save, info)
+# node_tools.py → TODO lo de nodos (add, remove, set, get)
+# NO dispersar en 20 archivos con 1 función cada uno
 ```
 
 ### Regla 4: Las Tools son Modulares
 ```python
-# Cada tool hace UNA cosa bien
-heren_add_node(...)      # Solo añade
-heren_set_property(...)  # Solo modifica
-heren_save_scene(...)    # Solo guarda
+# Una tool con múltiples modos via parámetros
+scene_tool(action="get_tree", scene_path="...")
+scene_tool(action="save", scene_path="...")
+scene_tool(action="get_info")
 
-# Combinar en secuencia para operaciones complejas
+node_tool(action="add", scene_path="...", node_type="Sprite2D")
+node_tool(action="remove", scene_path="...", node_path="...")
+node_tool(action="set_prop", scene_path="...", property="position")
+
+# Una tool, múltiples operaciones relacionadas
 ```
 
 ### Regla 5: Las Tools son Potentes
 ```python
-# Una sola tool puede generar un script GDScript de 50 líneas
+# Una sola tool puede hacer TODO un flujo de trabajo
+# Crear nodo + configurar propiedades + guardar escena
+# Todo en una sola llamada, un solo script GDScript
 # Godot ejecuta TODO el trabajo pesado
 # El agente solo dice QUÉ hacer, no CÓMO hacerlo
 ```
@@ -195,7 +198,16 @@ D:\Mis Juegos\GodotMCP\heren-mcp\
 │       └── bridges/
 │           └── heren_bridge.gd       # Bridge GDScript (backup)
 ├── .temp/                    # Archivos temporales (auto-limpieza)
-└── tests/                    # Tests (por implementar)
+├── tests/                    # Tests unificados por capa
+│   ├── conftest.py           # Fixtures compartidas
+│   ├── test_core/            # Tests Capa 0 (sin Godot)
+│   ├── test_interfaces/      # Tests Capa 1 (mock Godot)
+│   ├── test_tools/           # Tests Capa 2 (con Godot real)
+│   └── test_integration/     # Tests end-to-end
+└── benchmarks/               # Benchmarks de rendimiento
+    ├── benchmark_tools.py    # Benchmark por tool
+    ├── benchmark_cache.py    # Benchmark de cache
+    └── run_benchmarks.py     # Runner unificado
 ```
 
 ---
@@ -253,6 +265,8 @@ Medido con proyecto LAIKA (Godot 4.6.1):
 | 2026-05-12 | Templates con f-strings vs string.Template | f-strings son type-safe y permiten inyección de JSON válido. |
 | 2026-05-12 | Cache en memoria (no disco) | Velocidad. Invalidación explícita tras modificaciones. |
 | 2026-05-12 | packed_scene.pack() antes de save | Godot 4 requiere pack() para guardar instancias modificadas. |
+| 2026-05-12 | Arquitectura híbrida moderada (~20 tools) | Centralizar lo simple (session/scene/node), especializar lo complejo (animation/shader/tilemap). Evita parameter bloat. Ver PLAN_TOOLS.md. |
+| 2026-05-12 | Tests unificados + benchmarks | MCP anterior tenía 93 tools dispersas y tests fragmentados. Unificar testing en capas + benchmarks de rendimiento para detectar regresiones. |
 
 ---
 
@@ -266,10 +280,77 @@ Antes de entregar código:
 - [ ] ¿Se actualiza la caché después de modificaciones?
 - [ ] ¿Se limpian archivos temporales después de usar?
 - [ ] ¿Se cierra la sesión correctamente al final?
+- [ ] ¿Hay tests unitarios para la nueva funcionalidad?
+- [ ] ¿Los tests de integración pasan?
+- [ ] ¿El benchmark no muestra regresión de rendimiento?
 
 ---
 
-## 9. Filosofía de Tools en Detalle
+## 9. Testing y Benchmarking
+
+### Filosofía de Testing
+
+**Unificado pero no monolítico.** Tests organizados por capa arquitectónica:
+
+| Directorio | Qué testea | Requiere Godot | Velocidad |
+|------------|-----------|----------------|-----------|
+| `test_core/` | Session Manager, Cache, Helpers | ❌ No | ⚡ Instantáneo |
+| `test_interfaces/` | GodotInterface, TemplateEngine | ❌ Mock | ⚡ Rápido |
+| `test_tools/` | Tools MCP (scene, node, session) | ✅ Sí | 🐢 ~0.4s/test |
+| `test_integration/` | Workflows completos | ✅ Sí | 🐢 ~2-5s/test |
+
+**Reglas de Testing:**
+1. **Fixtures compartidas** en `conftest.py`: `temp_project`, `session_id`, `sample_scene`
+2. **Proyecto temporal Godot** por test: auto-crea `project.godot` + estructura mínima
+3. **Reset de estado** entre tests: `reset_session_manager` como fixture `autouse`
+4. **Tests independientes**: cada test debe poder ejecutarse solo
+5. **No mockar Godot** en tests de tools: si Godot falla, el test debe fallar
+
+### Filosofía de Benchmarking
+
+**Rendimiento es una feature.** Todo cambio que afecte performance debe ser medible:
+
+```python
+# Benchmark mínimo para cada tool
+@pytest.mark.benchmark
+class TestSceneToolBenchmark:
+    def test_get_scene_tree_cold(self, session_id, temp_project):
+        # 1 warm-up + 10 mediciones
+        times = measure_tool(scene_tool, action="get_tree", n=10)
+        assert avg(times) < 0.5  # 500ms máximo
+    
+    def test_get_scene_tree_cache(self, session_id, temp_project):
+        # Primera llamada calienta cache
+        scene_tool(action="get_tree", ...)
+        # Segunda llamada debe ser <1ms
+        times = measure_tool(scene_tool, action="get_tree", n=10)
+        assert avg(times) < 0.001  # 1ms máximo
+```
+
+**Métricas críticas:**
+| Métrica | Target | Alerta |
+|---------|--------|--------|
+| Tool cold | <500ms | >1000ms |
+| Tool cache hit | <1ms | >5ms |
+| Cache hit rate | >80% | <50% |
+| Memoria por sesión | <50MB | >100MB |
+| Archivos temporales | 0 después de test | >0 |
+
+**Runner de benchmarks:**
+```bash
+# Ejecutar benchmarks
+python -m benchmarks.run_benchmarks
+
+# Generar reporte JSON
+python -m benchmarks.run_benchmarks --output report.json
+
+# Comparar con baseline
+python -m benchmarks.run_benchmarks --compare baseline.json
+```
+
+---
+
+## 10. Filosofía de Tools en Detalle
 
 ### Centralizadas
 
@@ -277,30 +358,33 @@ Antes de entregar código:
 scene_tools.py  →  TODO lo relacionado con escenas
 node_tools.py   →  TODO lo relacionado con nodos
 
-NO dispersar funcionalidad.
-NO crear archivos por cada tool.
+NO dispersar funcionalidad en 20 archivos.
+NO crear una tool por cada operación atómica.
 ```
 
 ### Modulares
 
 ```python
-# Cada función es independiente y compostable
-def heren_add_node(...):      # Solo añade
-    pass
+# Una tool con múltiples modos via parámetro 'action'
+def scene_tool(action, **kwargs):
+    if action == "get_tree":
+        return get_scene_tree(**kwargs)
+    elif action == "save":
+        return save_scene(**kwargs)
+    elif action == "get_info":
+        return get_project_info(**kwargs)
 
-def heren_set_property(...):  # Solo modifica
-    pass
-
-# El agente las combina según necesidad
-heren_add_node(...)
-heren_set_property(...)
-heren_save_scene(...)
+# El agente usa UNA tool para múltiples operaciones
+scene_tool(action="get_tree", scene_path="...")
+scene_tool(action="save", scene_path="...")
 ```
 
 ### Potentes
 
 ```python
-# Una tool genera un script GDScript completo de 40+ líneas
+# Una tool puede hacer flujos completos
+# Crear nodo + configurar propiedades + guardar escena
+# Todo en una sola llamada, un solo script GDScript de 50+ líneas
 # Godot hace TODO: carga, modifica, pack, guarda, responde JSON
 # El agente solo declara la INTENCIÓN, no la IMPLEMENTACIÓN
 ```

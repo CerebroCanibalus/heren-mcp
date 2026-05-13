@@ -1,0 +1,91 @@
+{
+  "timestamp": 1778653660.3512745,
+  "python_version": "3.12.0 (tags/v3.12.0:0fb18b0, Oct  2 2023, 13:03:39) [MSC v.1935 64 bit (AMD64)]",
+  "godot_exe": "D:/Mis Juegos/Godot/Godot_v4.6.1-stable_win64.exe",
+  "results": [
+    {
+      "name": "start_session",
+      "avg_ms": 7.618540001567453,
+      "min_ms": 0.07570000161649659,
+      "max_ms": 37.66430000541732,
+      "iterations": 5
+    },
+    {
+      "name": "get_scene_tree (cold)",
+      "avg_ms": 36.252320000494365,
+      "min_ms": 0.0021999949240125716,
+      "max_ms": 181.23059999925317,
+      "iterations": 5
+    },
+    {
+      "name": "get_scene_tree (cache)",
+      "avg_ms": 0.0019250004697823897,
+      "min_ms": 0.0017999991541728377,
+      "max_ms": 0.0021999949240125716,
+      "iterations": 20
+    },
+    {
+      "name": "save_scene",
+      "avg_ms": 179.24288000212982,
+      "min_ms": 178.67929999920307,
+      "max_ms": 180.72020000545308,
+      "iterations": 5
+    },
+    {
+      "name": "add_node",
+      "avg_ms": 271.7497399979038,
+      "min_ms": 270.94329999818,
+      "max_ms": 272.61519999592565,
+      "iterations": 5
+    },
+    {
+      "name": "set_property",
+      "avg_ms": 178.29302000027383,
+      "min_ms": 177.82589999842457,
+      "max_ms": 179.27079999935813,
+      "iterations": 5
+    },
+    {
+      "name": "remove_node",
+      "avg_ms": 177.77689999881355,
+      "min_ms": 176.64769999828422,
+      "max_ms": 179.4166999970912,
+      "iterations": 3
+    },
+    {
+      "name": "cache_set_1000_avg_ns",
+      "avg_ms": 120.62879999575671,
+      "min_ms": 120.62879999575671,
+      "max_ms": 120.62879999575671,
+      "iterations": 1
+    },
+    {
+      "name": "cache_get_hit_avg_ns",
+      "avg_ms": 120.62879999575671,
+      "min_ms": 120.62879999575671,
+      "max_ms": 120.62879999575671,
+      "iterations": 1
+    },
+    {
+      "name": "cache_hit_rate",
+      "avg_ms": 1.0,
+      "min_ms": 1.0,
+      "max_ms": 1.0,
+      "iterations": 1
+    },
+    {
+      "name": "memory_1000_entries_mb",
+      "avg_ms": 0.4779367446899414,
+      "min_ms": 0.4779367446899414,
+      "max_ms": 0.4779367446899414,
+      "iterations": 1
+    },
+    {
+      "name": "memory_per_entry_kb",
+      "avg_ms": 0.4894072265625,
+      "min_ms": 0.4894072265625,
+      "max_ms": 0.4894072265625,
+      "iterations": 1
+    }
+  ]
+}

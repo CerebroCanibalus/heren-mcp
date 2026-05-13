@@ -58,43 +58,46 @@ func _init():
         quit()
         return
     
-    var tree_data = node_to_dict(scene, true)
+    var nodes = []
+    _collect_nodes(scene, nodes, "")
     scene.free()
     
     print('TEST_OUTPUT: ' + JSON.stringify({{
         "success": true,
         "scene_path": scene_path,
-        "tree": tree_data
+        "nodes": nodes
     }}))
     quit()
 
-func node_to_dict(node, is_root = false):
-    var result = {{
+func _collect_nodes(node, nodes_array, parent_path):
+    var path = node.name if parent_path == "" else parent_path + "/" + node.name
+    var parent_name = "." if parent_path == "" else parent_path.split("/")[-1]
+    
+    var node_data = {{
         "name": node.name,
         "type": node.get_class(),
-        "path": str(node.get_path()),
+        "path": path,
+        "parent": parent_name,
     }}
     
     if node is Node2D:
-        result["position"] = {{"x": node.position.x, "y": node.position.y}}
-        result["rotation"] = node.rotation
-        result["scale"] = {{"x": node.scale.x, "y": node.scale.y}}
+        node_data["position"] = {{"x": node.position.x, "y": node.position.y}}
+        node_data["rotation"] = node.rotation
+        node_data["scale"] = {{"x": node.scale.x, "y": node.scale.y}}
     elif node is Node3D:
-        result["position"] = {{"x": node.position.x, "y": node.position.y, "z": node.position.z}}
-        result["rotation"] = {{"x": node.rotation.x, "y": node.rotation.y, "z": node.rotation.z}}
-        result["scale"] = {{"x": node.scale.x, "y": node.scale.y, "z": node.scale.z}}
+        node_data["position"] = {{"x": node.position.x, "y": node.position.y, "z": node.position.z}}
+        node_data["rotation"] = {{"x": node.rotation.x, "y": node.rotation.y, "z": node.rotation.z}}
+        node_data["scale"] = {{"x": node.scale.x, "y": node.scale.y, "z": node.scale.z}}
     
     if node.get_script() != null:
-        result["script"] = str(node.get_script().resource_path)
+        node_data["script"] = str(node.get_script().resource_path)
     
-    result["groups"] = node.get_groups()
+    node_data["groups"] = node.get_groups()
     
-    var children = []
+    nodes_array.append(node_data)
+    
     for child in node.get_children():
-        children.append(node_to_dict(child))
-    result["children"] = children
-    
-    return result
+        _collect_nodes(child, nodes_array, path)
 '''
     
     @classmethod
@@ -141,30 +144,58 @@ func _init():
     var node_name = "{node_name_escaped}"
     
     var packed_scene = load(scene_path)
+    var scene
+    var new_node = null
+    var is_new_scene = false
+    
     if packed_scene == null:
-        print('TEST_OUTPUT: {{"success": false, "error": "No se pudo cargar la escena"}}')
-        quit()
-        return
+        # Crear nueva escena si no existe
+        if parent_path != "." and parent_path != "":
+            print('TEST_OUTPUT: {{"success": false, "error": "Escena no existe y parent no es root"}}')
+            quit()
+            return
+        scene = ClassDB.instantiate(node_type)
+        if scene == null:
+            print('TEST_OUTPUT: {{"success": false, "error": "No se pudo crear nodo de tipo: ' + node_type + '"}}')
+            quit()
+            return
+        scene.name = node_name
+        packed_scene = PackedScene.new()
+        new_node = scene
+        is_new_scene = true
+    else:
+        scene = packed_scene.instantiate()
     
-    var scene = packed_scene.instantiate()
-    var parent = scene.get_node_or_null(parent_path)
-    
-    if parent == null:
-        scene.free()
-        print('TEST_OUTPUT: {{"success": false, "error": "Nodo padre no encontrado: ' + parent_path + '"}}')
-        quit()
-        return
-    
-    var new_node = ClassDB.instantiate(node_type)
-    if new_node == null:
-        scene.free()
-        print('TEST_OUTPUT: {{"success": false, "error": "No se pudo crear nodo de tipo: ' + node_type + '"}}')
-        quit()
-        return
-    
-    new_node.name = node_name
-    parent.add_child(new_node)
-    new_node.owner = scene
+    if not is_new_scene:
+        var parent
+        if parent_path == scene.name or parent_path == "." or parent_path == "":
+            parent = scene
+        else:
+            parent = scene.get_node_or_null(parent_path)
+        
+        if parent == null:
+            scene.free()
+            print('TEST_OUTPUT: {{"success": false, "error": "Nodo padre no encontrado: ' + parent_path + '"}}')
+            quit()
+            return
+        
+        # Verificar duplicados
+        if parent.has_node(node_name):
+            scene.free()
+            print('TEST_OUTPUT: {{"success": false, "error": "Nodo ya existe: ' + node_name + '"}}')
+            quit()
+            return
+        
+        new_node = ClassDB.instantiate(node_type)
+        if new_node == null:
+            scene.free()
+            print('TEST_OUTPUT: {{"success": false, "error": "No se pudo crear nodo de tipo: ' + node_type + '"}}')
+            quit()
+            return
+        
+        new_node.name = node_name
+        parent.add_child(new_node)
+        new_node.owner = scene
     
     # Set properties
     var properties = JSON.parse_string('{properties_str}')
@@ -178,10 +209,12 @@ func _init():
     scene.free()
     
     if save_result == OK:
+        var node_path_result = node_name if is_new_scene else parent_path + "/" + node_name
         print('TEST_OUTPUT: ' + JSON.stringify({{
             "success": true,
             "scene_path": scene_path,
-            "node_path": parent_path + "/" + node_name
+            "node_name": node_name,
+            "node_path": node_path_result
         }}))
     else:
         print('TEST_OUTPUT: {{"success": false, "error": "Error guardando: ' + str(save_result) + '"}}')
@@ -189,14 +222,23 @@ func _init():
     quit()
 
 func dict_to_var(val):
-    if val is Dictionary and val.has("__type"):
-        match val["__type"]:
-            "Vector2":
-                return Vector2(val.get("x", 0), val.get("y", 0))
-            "Vector3":
-                return Vector3(val.get("x", 0), val.get("y", 0), val.get("z", 0))
-            "Color":
-                return Color(val.get("r", 0), val.get("g", 0), val.get("b", 0), val.get("a", 1))
+    if val is Dictionary:
+        # Auto-detectar Vector2/Vector3/Color sin __type
+        if val.has("x") and val.has("y") and val.has("z"):
+            return Vector3(val.get("x", 0), val.get("y", 0), val.get("z", 0))
+        elif val.has("x") and val.has("y"):
+            return Vector2(val.get("x", 0), val.get("y", 0))
+        elif val.has("r") and val.has("g") and val.has("b"):
+            return Color(val.get("r", 0), val.get("g", 0), val.get("b", 0), val.get("a", 1))
+        # Con __type expl�cito
+        elif val.has("__type"):
+            match val["__type"]:
+                "Vector2":
+                    return Vector2(val.get("x", 0), val.get("y", 0))
+                "Vector3":
+                    return Vector3(val.get("x", 0), val.get("y", 0), val.get("z", 0))
+                "Color":
+                    return Color(val.get("r", 0), val.get("g", 0), val.get("b", 0), val.get("a", 1))
     return val
 '''
     
@@ -227,18 +269,28 @@ func _init():
         quit()
         return
     
-    node.queue_free()
+    # Eliminar nodo y sus hijos
+    _remove_node_recursive(node)
     
     packed_scene.pack(scene)
     var save_result = ResourceSaver.save(packed_scene, scene_path)
     scene.free()
     
     if save_result == OK:
-        print('TEST_OUTPUT: {{"success": true, "removed_path": "' + node_path_str + '"}}')
+        print('TEST_OUTPUT: ' + JSON.stringify({{"success": true, "removed_path": node_path_str}}))
     else:
-        print('TEST_OUTPUT: {{"success": false, "error": "Error guardando: ' + str(save_result) + '"}}')
+        print('TEST_OUTPUT: ' + JSON.stringify({{"success": false, "error": "Error guardando: " + str(save_result)}}))
     
     quit()
+
+func _remove_node_recursive(node):
+    # Eliminar hijos primero
+    while node.get_child_count() > 0:
+        var child = node.get_child(0)
+        _remove_node_recursive(child)
+    # Eliminar nodo de su padre
+    node.get_parent().remove_child(node)
+    node.free()
 '''
     
     @classmethod
@@ -265,7 +317,13 @@ func _init():
         return
     
     var scene = packed_scene.instantiate()
-    var node = scene.get_node_or_null(node_path_str)
+    var node
+    
+    # Si node_path es el nombre del root o ".", usar scene directamente
+    if node_path_str == scene.name or node_path_str == ".":
+        node = scene
+    else:
+        node = scene.get_node_or_null(node_path_str)
     
     if node == null:
         scene.free()
