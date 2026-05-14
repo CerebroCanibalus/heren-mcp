@@ -94,13 +94,40 @@ Servidor MCP de alto rendimiento para **Godot Engine 4.x** que permite a IAs y a
 4. Necesitas instalar un addon en cada proyecto
 
 **Heren** funciona así:
-1. `session("open")` → Godot arranca **una sola vez** como daemon headless
-2. Tu IA pide "añade un nodo" → mensaje WebSocket directo
-3. Godot ya está vivo, no arranca nada → **~20ms**
-4. Si el daemon cae → fallback automático a scripts temporales
-5. No requiere plugin ni addon en tu proyecto
 
-**El secreto**: Godot nunca se cierra. Es como tener el editor abierto permanentemente, pero consumiendo solo ~75MB de RAM.
+**1. Abres una sesión**
+```python
+session("open", project_path="D:/MiJuego")
+```
+→ Heren arranca Godot en modo headless (sin ventana) con un script especial. Esto toma ~3 segundos **una sola vez**.
+
+**2. El daemon se mantiene vivo**
+→ Godot queda escuchando en un puerto WebSocket. No se cierra. No consume interfaz gráfica. Solo ~75MB de RAM.
+
+**3. Ejecutas tools**
+```python
+node("add", session_id="abc", scene_path="res://Player.tscn", ...)
+```
+→ Mensaje WebSocket directo al daemon. Godot ya está arrancado, no hay overhead. **~20ms**.
+
+**4. Cierras cuando quieras**
+```python
+session("close", session_id="abc")
+```
+→ El daemon se cierra limpiamente. O puedes dejarlo abierto todo el día.
+
+**El secreto**: Godot nunca se cierra entre operaciones. Es como tener el editor abierto permanentemente, pero sin interfaz gráfica y consumiendo solo ~75MB de RAM.
+
+### 🎯 Ventajas del sistema de sesiones
+
+| Ventaja | ¿Qué significa? |
+|---------|----------------|
+| **Persistencia** | Godot arranca una vez, no 100 veces |
+| **Aislamiento** | Cada proyecto tiene su propio daemon. No hay conflictos |
+| **Múltiples sesiones** | Puedes trabajar en 3 proyectos simultáneamente |
+| **Recuperación** | Si algo falla, fallback automático a scripts sin perder datos |
+| **Limpieza** | `session("close")` cierra todo limpiamente |
+| **Health check** | `session("health")` te dice si todo está funcionando |
 
 ### 📊 Comparativa de arquitecturas
 
@@ -113,24 +140,6 @@ Servidor MCP de alto rendimiento para **Godot Engine 4.x** que permite a IAs y a
 | **Dependencias** | Node.js + Godot | Node.js + Godot + Plugin | **Solo Python + Godot** |
 | **Proyecto limpio** | ✅ | ❌ (necesita addon) | **✅** |
 | **Fallback** | ❌ | ❌ | **✅ Automático** |
-
----
-
-## 🌍 Hecho para la comunidad hispanohablante y lusófona
-
-La comunidad de Godot en español y portugués es enorme, pero las herramientas de IA para desarrollo de juegos están diseñadas exclusivamente en inglés. Heren Godot MCP nace de esa realidad:
-
-- 🇪🇸 **España**
-- 🇲🇽 **México**
-- 🇦🇷 **Argentina**
-- 🇨🇴 **Colombia**
-- 🇧🇷 **Brasil**
-- 🇵🇹 **Portugal**
-- Y toda **Iberoamérica**
-
-> **Sin barrera idiomática**: porque hacer juegos no debería requerir hablar inglés.
-
-La documentación está en **español** e **inglés**. Los nombres de funciones y variables mantienen consistencia con Godot (inglés), pero toda la documentación, guías y comunicación están en nuestras lenguas.
 
 ---
 
@@ -487,9 +496,15 @@ Heren:        ██ 20ms
 
 <div align="center">
 
-**Hecho con ❤️ para la comunidad iberoamericana de Godot**
-
 ⭐ [Star en GitHub](https://github.com/tu-usuario/heren-mcp) · 🐛 [Reportar bug](https://github.com/tu-usuario/heren-mcp/issues) · 💡 [Proponer feature](https://github.com/tu-usuario/heren-mcp/issues)
+
+---
+
+**Por los trabajadores y los iberófonos del mundo** 🌍
+
+🇪🇸🇲🇽🇦🇷🇨🇴🇵🇪🇨🇱🇻🇪🇧🇴🇪🇨🇬🇹🇭🇳🇳🇮🇵🇾🇸🇻🇺🇾🇩🇴🇵🇷🇬🇶🇵🇭🇦🇩🇧🇿🇵🇹🇧🇷🇦🇴🇲🇿🇨🇻🇬🇼🇸🇹🇹🇱🇲🇴
+
+*Porque la creación no debería estar limitada al inglés.*
 
 🏰 **Plus Ultra: ir más allá.** 🐉
 

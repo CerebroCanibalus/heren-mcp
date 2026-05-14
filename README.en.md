@@ -96,13 +96,40 @@ High-performance MCP server for **Godot Engine 4.x** that enables AI agents and 
 4. You need to install an addon in every project
 
 **Heren** works like this:
-1. `session("open")` → Godot starts **once** as headless daemon
-2. Your AI asks "add a node" → direct WebSocket JSON message
-3. Godot is already alive, nothing starts → **~20ms**
-4. If daemon dies → automatic fallback to temporary scripts
-5. No plugin or addon required in your project
 
-**The secret**: Godot never closes. It's like having the editor permanently open, but using only ~75MB of RAM.
+**1. You open a session**
+```python
+session("open", project_path="D:/MyGame")
+```
+→ Heren starts Godot in headless mode (no window) with a special script. This takes ~3 seconds **just once**.
+
+**2. The daemon stays alive**
+→ Godot keeps listening on a WebSocket port. It doesn't close. No GUI. Only ~75MB RAM.
+
+**3. You execute tools**
+```python
+node("add", session_id="abc", scene_path="res://Player.tscn", ...)
+```
+→ Direct WebSocket message to the daemon. Godot is already running, no overhead. **~20ms**.
+
+**4. You close when you want**
+```python
+session("close", session_id="abc")
+```
+→ The daemon closes cleanly. Or you can leave it open all day.
+
+**The secret**: Godot never closes between operations. It's like having the editor permanently open, but without GUI and using only ~75MB of RAM.
+
+### 🎯 Session System Advantages
+
+| Advantage | What does it mean? |
+|-----------|-------------------|
+| **Persistence** | Godot starts once, not 100 times |
+| **Isolation** | Each project has its own daemon. No conflicts |
+| **Multiple sessions** | Work on 3 projects simultaneously |
+| **Recovery** | If something fails, automatic fallback to scripts without losing data |
+| **Cleanup** | `session("close")` shuts everything down cleanly |
+| **Health check** | `session("health")` tells you if everything is working |
 
 ### 📊 Architecture Comparison
 
@@ -115,24 +142,6 @@ High-performance MCP server for **Godot Engine 4.x** that enables AI agents and 
 | **Dependencies** | Node.js + Godot | Node.js + Godot + Plugin | **Python + Godot only** |
 | **Clean project** | ✅ | ❌ (needs addon) | **✅** |
 | **Fallback** | ❌ | ❌ | **✅ Automatic** |
-
----
-
-## 🌍 Made for the Spanish and Portuguese-speaking Community
-
-The Godot community in Spanish and Portuguese is huge, but AI tools for game development are designed exclusively in English. Heren Godot MCP is born from that reality:
-
-- 🇪🇸 **Spain**
-- 🇲🇽 **Mexico**
-- 🇦🇷 **Argentina**
-- 🇨🇴 **Colombia**
-- 🇧🇷 **Brazil**
-- 🇵🇹 **Portugal**
-- And all of **Ibero-America**
-
-> **No language barrier**: because making games shouldn't require speaking English.
-
-Documentation is in **Spanish** and **English**. Function and variable names maintain consistency with Godot (English), but all documentation, guides and communication are in our languages.
 
 ---
 
@@ -478,9 +487,15 @@ Contributions are welcome! Read [CONTRIBUTING.md](CONTRIBUTING.md) for:
 
 <div align="center">
 
-**Made with ❤️ for the Ibero-American Godot community**
-
 ⭐ [Star on GitHub](https://github.com/your-username/heren-mcp) · 🐛 [Report bug](https://github.com/your-username/heren-mcp/issues) · 💡 [Propose feature](https://github.com/your-username/heren-mcp/issues)
+
+---
+
+**By the workers and Iberophone people of the world** 🌍
+
+🇪🇸🇲🇽🇦🇷🇨🇴🇵🇪🇨🇱🇻🇪🇧🇴🇪🇨🇬🇹🇭🇳🇳🇮🇵🇾🇸🇻🇺🇾🇩🇴🇵🇷🇬🇶🇵🇭🇦🇩🇧🇿🇵🇹🇧🇷🇦🇴🇲🇿🇨🇻🇬🇼🇸🇹🇹🇱🇲🇴
+
+*Because creation should not be limited to English.*
 
 🏰 **Plus Ultra: go beyond.** 🐉
 
