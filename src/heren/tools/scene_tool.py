@@ -31,6 +31,7 @@ def scene_tool(
     wait_frames: int = 3,
     format: str = "png",
     quality: float = 0.9,
+    **kwargs,
 ) -> dict:
     """
     Tool centralizada para operaciones de escenas.
@@ -106,10 +107,32 @@ def scene_tool(
             resolution, wait_frames, format, quality
         )
     
+    elif action == "create":
+        return _execute_via_daemon_or_fallback(
+            manager, session_id, "create_scene", {
+                "scene_path": scene_path,
+                "root_type": kwargs.get("root_type", "Node2D"),
+                "root_name": kwargs.get("root_name", "Root")
+            }
+        )
+    
+    elif action == "delete":
+        return _execute_via_daemon_or_fallback(
+            manager, session_id, "delete_scene", {"scene_path": scene_path}
+        )
+    
+    elif action == "rename":
+        return _execute_via_daemon_or_fallback(
+            manager, session_id, "rename_scene", {
+                "scene_path": scene_path,
+                "new_path": kwargs.get("new_path", "")
+            }
+        )
+    
     else:
         return {
             "success": False,
-            "error": f"Action no soportada: '{action}'. Use: get_tree, save, load, unload, list_loaded, screenshot"
+            "error": f"Action no soportada: '{action}'. Use: get_tree, save, load, unload, list_loaded, screenshot, create, delete, rename"
         }
 
 
@@ -133,6 +156,19 @@ def _execute_via_daemon_or_fallback(manager, session_id: str, operation: str, pa
             return interface.get_scene_tree(params.get("scene_path", ""))
         elif operation == "save_scene":
             return interface.save_scene(params.get("scene_path", ""))
+        elif operation == "create_scene":
+            return interface.create_scene(
+                params.get("scene_path", ""),
+                params.get("root_type", "Node2D"),
+                params.get("root_name", "Root")
+            )
+        elif operation == "delete_scene":
+            return interface.delete_scene(params.get("scene_path", ""))
+        elif operation == "rename_scene":
+            return interface.rename_scene(
+                params.get("scene_path", ""),
+                params.get("new_path", "")
+            )
         else:
             return {"success": False, "error": f"Operación no soportada en fallback: {operation}"}
             

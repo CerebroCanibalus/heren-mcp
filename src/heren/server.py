@@ -4,6 +4,26 @@ Heren MCP Server
 Servidor MCP usando FastMCP para OpenCode.
 Expone las tools de Heren Godot MCP.
 
+FILOSOFÍA DE TOOLS:
+- Centralizadas: 10 tools que agrupan TODO
+- Modulares: múltiples modos via parámetro 'action'
+- Potentes: Godot hace el trabajo pesado
+
+Tools:
+1. session   - Gestión de sesiones (open, close, list, info, health)
+2. scene     - Operaciones de escenas (get_tree, save, load, unload, list_loaded, screenshot, create, delete, rename)
+3. node      - Operaciones de nodos (add, remove, set_prop, get_prop, duplicate, rename, move)
+4. batch     - Ejecución batch de múltiples operaciones
+5. resource  - Recursos .tres (create, read, update, delete, list)
+6. animation - Animaciones (create_player, create, add_track, add_key, state_machine)
+7. skeleton  - Esqueletos (create, add_bone, set_rest, skin, attachment)
+8. shader    - Shaders (create, edit, validate, material, uniform)
+9. tilemap   - TileMaps (inspect_set, inspect_map, set_cell, terrain, pattern)
+10. project  - Configuración (setting, autoload, shader_global)
+11. debug    - Depuración (breakpoint, stack_trace, watch, console)
+12. validate - Validación (scene, script, node, resource)
+13. index    - Índice de tools (list, info, example)
+
 Filosofia: Poder. Eficiencia. Rapidez.
 """
 
@@ -16,18 +36,19 @@ from typing import Any, Optional
 from fastmcp import FastMCP
 
 from heren.core.session_manager import get_session_manager
-from heren.tools.scene_tools import heren_start_session, heren_end_session, heren_get_scene_tree, heren_save_scene
-from heren.tools.node_tools import heren_add_node, heren_remove_node, heren_set_property
+from heren.tools.session_tool import session_tool
+from heren.tools.scene_tool import scene_tool
+from heren.tools.node_tool import node_tool
 from heren.tools.batch_tools import heren_batch
-from heren.tools.visual_tools import (
-    heren_screenshot,
-    heren_capture_viewport,
-    heren_performance_metrics,
-    heren_daemon_health,
-    heren_load_scene,
-    heren_unload_scene,
-    heren_get_loaded_scenes,
-)
+from heren.tools.resource_tool import resource
+from heren.tools.animation_tool import animation
+from heren.tools.skeleton_tool import skeleton
+from heren.tools.shader_tool import shader
+from heren.tools.tilemap_tool import tilemap
+from heren.tools.project_tool import project
+from heren.tools.debug_tool import debug
+from heren.tools.validate_tool import validate
+from heren.tools.tools_index import list_tools, get_tool_info, get_action_example
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,129 +61,193 @@ logger = logging.getLogger(__name__)
 mcp = FastMCP("heren-godot")
 
 
+# ============================================================
+# TOOL 1: SESSION TOOL (Gestión de Sesiones)
+# ============================================================
+
 @mcp.tool()
-def start_session(project_path: str) -> dict:
+def session(
+    action: str,
+    project_path: str = None,
+    session_id: str = None,
+    godot_path: str = None,
+    use_daemon: bool = True,
+) -> dict:
     """
-    Inicia una sesion con Godot.
+    Tool centralizada para TODAS las operaciones de sesión.
+    
+    FILOSOFÍA: Una tool, múltiples modos. Centralizada pero modular.
     
     Args:
-        project_path: Ruta absoluta al proyecto Godot
+        action: Operación a realizar
+            - "open": Inicia nueva sesión con Godot
+            - "close": Cierra sesión existente
+            - "list": Lista todas las sesiones activas
+            - "info": Obtiene información de una sesión
+            - "health": Verifica salud del daemon
+        project_path: (para action="open") Ruta absoluta al proyecto Godot
+        session_id: (para action="close|info|health") ID de sesión
+        godot_path: (opcional) Ruta al ejecutable Godot
+        use_daemon: (para action="open") Si True, usa GodotDaemon WebSocket (recomendado)
     
     Returns:
-        {"success": True, "session_id": "..."} o error
+        - open: {"success": True, "session_id": "...", "project_path": "...", "daemon_active": True}
+        - close: {"success": True}
+        - list: {"success": True, "count": 2, "sessions": [{"id": "...", "project": "..."}]}
+        - info: {"success": True, "session": {"id": "...", "daemon_active": True, ...}}
+        - health: {"success": True, "status": "healthy", "fps": 60, ...}
+    
+    Examples:
+        # Abrir sesión (inicia daemon automáticamente)
+        session("open", project_path="D:/MiJuego")
+        
+        # Cerrar sesión
+        session("close", session_id="abc123")
+        
+        # Listar sesiones
+        session("list")
+        
+        # Ver info
+        session("info", session_id="abc123")
+        
+        # Health check del daemon
+        session("health", session_id="abc123")
     """
-    return heren_start_session(project_path)
+    return session_tool(action, project_path, session_id, godot_path, use_daemon)
 
+
+# ============================================================
+# TOOL 2: SCENE TOOL (Operaciones de Escenas)
+# ============================================================
 
 @mcp.tool()
-def end_session(session_id: str) -> dict:
+def scene(
+    action: str,
+    session_id: str,
+    scene_path: str = None,
+    output_path: str = None,
+    resolution: tuple = (1920, 1080),
+    wait_frames: int = 3,
+    format: str = "png",
+    quality: float = 0.9,
+) -> dict:
     """
-    Termina una sesion.
+    Tool centralizada para TODAS las operaciones de escenas.
+    
+    CON DAEMON: Operaciones en ~20ms (cache en RAM)
+    SIN DAEMON: Fallback a scripts temporales (~370ms)
     
     Args:
-        session_id: ID de la sesion
+        action: Operación a realizar
+            - "get_tree": Obtiene árbol de nodos de la escena
+            - "save": Guarda escena en disco
+            - "load": Carga escena en cache del daemon (rápido)
+            - "unload": Descarga escena del cache
+            - "list_loaded": Lista escenas cargadas en cache
+            - "screenshot": Captura screenshot con rendering GPU
+        session_id: ID de sesión activa
+        scene_path: Ruta a la escena (res://Player.tscn)
+        output_path: (para screenshot) Ruta de salida. None = temp
+        resolution: (para screenshot) (width, height)
+        wait_frames: (para screenshot) Frames a esperar antes de capturar
+        format: (para screenshot) "png", "jpeg" o "webp"
+        quality: (para screenshot) Calidad 0.0-1.0
     
     Returns:
-        {"success": True} o error
+        - get_tree: {"success": True, "tree": {"name": "Root", "type": "Node2D", "children": [...]}}
+        - save: {"success": True}
+        - load: {"success": True, "cached": True, "node_count": 15}
+        - unload: {"success": True}
+        - list_loaded: {"success": True, "scenes": [{"path": "...", "type": "Node2D"}]}
+        - screenshot: {"success": True, "image_path": "...", "resolution": [1920, 1080]}
+    
+    Examples:
+        # Obtener árbol de nodos
+        scene("get_tree", session_id="abc", scene_path="res://Player.tscn")
+        
+        # Cargar en cache (primera vez ~3s, luego ~20ms)
+        scene("load", session_id="abc", scene_path="res://Player.tscn")
+        
+        # Screenshot con rendering GPU
+        scene("screenshot", session_id="abc", scene_path="res://Player.tscn", resolution=(1920, 1080))
     """
-    return heren_end_session(session_id)
+    return scene_tool(action, session_id, scene_path, output_path, resolution, wait_frames, format, quality)
 
+
+# ============================================================
+# TOOL 3: NODE TOOL (Operaciones de Nodos)
+# ============================================================
 
 @mcp.tool()
-def get_scene_tree(session_id: str, scene_path: str) -> dict:
-    """
-    Obtiene el arbol de nodos de una escena.
-    
-    Args:
-        session_id: ID de sesion activa
-        scene_path: Ruta a la escena (res:// o absoluta)
-    
-    Returns:
-        Estructura JSON del arbol de nodos
-    """
-    return heren_get_scene_tree(session_id, scene_path)
-
-
-@mcp.tool()
-def save_scene(session_id: str, scene_path: str) -> dict:
-    """
-    Guarda una escena.
-    
-    Args:
-        session_id: ID de sesion activa
-        scene_path: Ruta a la escena
-    
-    Returns:
-        {"success": True} o error
-    """
-    return heren_save_scene(session_id, scene_path)
-
-
-@mcp.tool()
-def add_node(
+def node(
+    action: str,
     session_id: str,
     scene_path: str,
-    parent_path: str,
-    node_type: str,
-    node_name: str,
+    node_path: str = None,
+    node_type: str = None,
+    node_name: str = None,
     properties: dict = None,
+    property_name: str = None,
+    value: Any = None,
+    new_name: str = None,
+    new_parent: str = None,
 ) -> dict:
     """
-    Anade un nodo a una escena.
+    Tool centralizada para TODAS las operaciones de nodos.
+    
+    CON DAEMON: ~20ms por operación
+    SIN DAEMON: Fallback automático a scripts (~370ms)
     
     Args:
-        session_id: ID de sesion activa
-        scene_path: Ruta a la escena
-        parent_path: Ruta al nodo padre ("." para root)
-        node_type: Tipo de nodo (Sprite2D, Node, etc.)
-        node_name: Nombre del nuevo nodo
-        properties: Propiedades iniciales
+        action: Operación a realizar
+            - "add": Añade nodo a la escena
+            - "remove": Elimina nodo
+            - "set_prop": Cambia propiedad del nodo
+            - "get_prop": Obtiene propiedad del nodo
+            - "duplicate": Duplica nodo
+            - "rename": Renombra nodo
+            - "move": Mueve nodo a otro padre
+        session_id: ID de sesión activa
+        scene_path: Ruta a la escena (res://Player.tscn)
+        node_path: Ruta al nodo (ej: "Player/Sprite2D")
+        node_type: (para add) Tipo de nodo (Sprite2D, Area2D, etc.)
+        node_name: (para add) Nombre del nuevo nodo
+        properties: (para add) Propiedades iniciales {"position": {"x": 100, "y": 200}}
+        property_name: (para set_prop/get_prop) Nombre de la propiedad
+        value: (para set_prop) Nuevo valor
+        new_name: (para rename) Nuevo nombre
+        new_parent: (para move) Nueva ruta padre
     
     Returns:
-        {"success": True, "node_path": "..."} o error
-    """
-    return heren_add_node(session_id, scene_path, parent_path, node_type, node_name, properties)
-
-
-@mcp.tool()
-def remove_node(session_id: str, scene_path: str, node_path: str) -> dict:
-    """
-    Elimina un nodo de una escena.
+        - add: {"success": True, "node_path": "Player/Sprite2D"}
+        - remove: {"success": True}
+        - set_prop: {"success": True}
+        - get_prop: {"success": True, "value": ...}
+        - duplicate: {"success": True, "node_path": "..."}
+        - rename: {"success": True}
+        - move: {"success": True}
     
-    Args:
-        session_id: ID de sesion activa
-        scene_path: Ruta a la escena
-        node_path: Ruta al nodo a eliminar
-    
-    Returns:
-        {"success": True} o error
+    Examples:
+        # Añadir Sprite2D
+        node("add", session_id="abc", scene_path="res://Player.tscn",
+             node_path=".", node_type="Sprite2D", node_name="Hat",
+             properties={"position": {"x": 0, "y": -50}})
+        
+        # Cambiar posición
+        node("set_prop", session_id="abc", scene_path="res://Player.tscn",
+             node_path="Player", property_name="position", value={"x": 100, "y": 200})
+        
+        # Eliminar nodo
+        node("remove", session_id="abc", scene_path="res://Player.tscn",
+             node_path="Player/OldNode")
     """
-    return heren_remove_node(session_id, scene_path, node_path)
+    return node_tool(action, session_id, scene_path, node_path, node_type, node_name,
+                     properties, property_name, value, new_name, new_parent)
 
 
-@mcp.tool()
-def set_property(
-    session_id: str,
-    scene_path: str,
-    node_path: str,
-    property_name: str,
-    value: Any,
-) -> dict:
-    """
-    Cambia una propiedad de un nodo.
-    
-    Args:
-        session_id: ID de sesion activa
-        scene_path: Ruta a la escena
-        node_path: Ruta al nodo
-        property_name: Nombre de la propiedad
-        value: Nuevo valor
-    
-    Returns:
-        {"success": True} o error
-    """
-    return heren_set_property(session_id, scene_path, node_path, property_name, value)
-
+# ============================================================
+# TOOL 4: BATCH TOOL (Operaciones en Batch)
+# ============================================================
 
 @mcp.tool()
 def batch(
@@ -171,167 +256,477 @@ def batch(
     stop_on_error: bool = False,
 ) -> dict:
     """
-    Ejecuta múltiples operaciones en batch.
+    Ejecuta múltiples operaciones en batch optimizado.
     
-    Optimiza rendimiento ejecutando varias operaciones en una sola llamada.
+    CON DAEMON: Envía todas las operaciones en UNA sola llamada WebSocket
+    SIN DAEMON: Ejecuta secuencialmente via scripts
+    
+    PERFECTO para:
+    - Crear escenas complejas (múltiples nodos)
+    - Refactorizaciones (mover, renombrar, modificar)
+    - Importaciones (crear estructura completa)
     
     Args:
-        session_id: ID de sesion activa
+        session_id: ID de sesión activa
         operations: Lista de operaciones
-            Cada operacion es un dict con:
-            - "operation": str - Nombre de la operacion
-            - "params": dict - Parametros de la operacion
+            Cada operación es un dict con:
+            - "action": str - Tipo de operación (add, remove, set_prop, etc.)
+            - "params": dict - Parámetros específicos
         stop_on_error: Si True, detiene en el primer error
     
     Returns:
         {
             "success": bool,
-            "results": list[dict],
-            "errors": list[dict],
+            "results": list[dict],  # Resultados de cada operación
+            "errors": list[dict],   # Errores si los hubo
             "success_count": int,
             "error_count": int,
         }
     
     Example:
-        batch(session_id, [
-            {"operation": "add_node", "params": {"scene_path": "...", "parent_path": ".", "node_type": "Sprite2D", "node_name": "Player"}},
-            {"operation": "set_property", "params": {"scene_path": "...", "node_path": "Player", "property_name": "position", "value": {"x": 100, "y": 200}}},
-            {"operation": "save_scene", "params": {"scene_path": "..."}},
+        batch(session_id="abc", operations=[
+            {
+                "action": "add",
+                "params": {
+                    "scene_path": "res://Player.tscn",
+                    "parent_path": ".",
+                    "node_type": "Sprite2D",
+                    "node_name": "Body",
+                    "properties": {"position": {"x": 100, "y": 200}}
+                }
+            },
+            {
+                "action": "add",
+                "params": {
+                    "scene_path": "res://Player.tscn",
+                    "parent_path": "Body",
+                    "node_type": "CollisionShape2D",
+                    "node_name": "Hitbox"
+                }
+            },
+            {
+                "action": "save",
+                "params": {"scene_path": "res://Player.tscn"}
+            }
         ])
     """
     return heren_batch(session_id, operations, stop_on_error)
 
 
 # ============================================================
-# VISUAL TOOLS (Requieren GodotDaemon)
+# TOOL 5: RESOURCE TOOL (Gestión de Recursos)
 # ============================================================
 
 @mcp.tool()
-def screenshot(
-    session_id: str,
-    scene_path: str,
-    output_path: str = None,
-    resolution: tuple = (1920, 1080),
-    wait_frames: int = 3,
-    format: str = "png",
-    quality: float = 0.9,
+def resource_tool(
+    action: str,
+    resource_path: str = None,
+    resource_type: str = "Resource",
+    properties: dict = None,
+    directory: str = "res://",
+    extension: str = "",
+    recursive: bool = False,
 ) -> dict:
     """
-    Captura un screenshot de una escena usando rendering GPU.
+    Tool centralizada para TODOS los recursos Godot (.tres, materiales, etc.)
     
-    REQUIERE GodotDaemon activo. Si no lo tienes, inicia sesion con use_daemon=True.
+    Actions:
+        - "create": Crear nuevo recurso .tres
+        - "read": Leer recurso existente
+        - "update": Actualizar propiedades
+        - "delete": Eliminar recurso
+        - "list": Listar recursos del proyecto
     
     Args:
-        session_id: ID de sesion activa
-        scene_path: Ruta a la escena (res://scenes/Main.tscn)
-        output_path: Ruta de salida. None = temp directory
-        resolution: (width, height)
-        wait_frames: Frames a esperar antes de capturar
-        format: "png", "jpeg" o "webp"
-        quality: Calidad JPEG/WebP (0.0-1.0)
+        action: Operación a realizar
+        resource_path: Ruta al recurso (res://materials/my_material.tres)
+        resource_type: Tipo de recurso (ShaderMaterial, PhysicsMaterial, etc.)
+        properties: Propiedades del recurso
+        directory: Directorio para listar
+        extension: Filtro de extensión
+        recursive: Buscar recursivamente
     
     Returns:
-        {"success": True, "image_path": "...", "resolution": [1920, 1080]}
+        Dict con resultado de la operación
     """
-    return heren_screenshot(session_id, scene_path, output_path, resolution, wait_frames, format, quality)
+    return resource(action=action, resource_path=resource_path, resource_type=resource_type,
+                   properties=properties, directory=directory, extension=extension, recursive=recursive)
 
+
+# ============================================================
+# TOOL 6: ANIMATION TOOL (Animaciones y State Machines)
+# ============================================================
 
 @mcp.tool()
-def capture_viewport(
-    session_id: str,
-    output_path: str = None,
-    format: str = "png",
-    quality: float = 0.9,
+def animation_tool(
+    action: str,
+    scene_path: str = None,
+    player_path: str = None,
+    anim_name: str = None,
+    length: float = 1.0,
+    loop: bool = False,
+    track_type: str = "value",
+    node_path: str = None,
+    property: str = None,
+    track_idx: int = 0,
+    time: float = 0.0,
+    value = None,
+    transition: float = 1.0,
+    states: list = None,
+    transitions: list = None,
 ) -> dict:
     """
-    Captura el viewport actual del daemon Godot.
+    Tool centralizada para animaciones y state machines.
     
-    Muestra lo que el daemon "ve" en su ventana en tiempo real.
-    
-    Args:
-        session_id: ID de sesion activa
-        output_path: Ruta de salida. None = temp directory
-        format: "png", "jpeg" o "webp"
-        quality: Calidad JPEG/WebP
-    
-    Returns:
-        {"success": True, "image_path": "...", "resolution": [1920, 1080]}
-    """
-    return heren_capture_viewport(session_id, output_path, format, quality)
-
-
-@mcp.tool()
-def performance_metrics(session_id: str) -> dict:
-    """
-    Obtiene metricas de rendimiento en tiempo real del daemon.
+    Actions:
+        - "create_player": Crear AnimationPlayer
+        - "create": Crear Animation
+        - "add_track": Añadir track
+        - "add_key": Añadir keyframe
+        - "state_machine": Crear AnimationNodeStateMachine
     
     Args:
-        session_id: ID de sesion activa
-    
-    Returns:
-        {"success": True, "metrics": {"fps": 60, "memory_mb": 150, ...}}
-    """
-    return heren_performance_metrics(session_id)
-
-
-@mcp.tool()
-def daemon_health(session_id: str) -> dict:
-    """
-    Verifica la salud del daemon Godot.
-    
-    Args:
-        session_id: ID de sesion activa
-    
-    Returns:
-        {"success": True, "status": "healthy", "scenes_cached": 5, ...}
-    """
-    return heren_daemon_health(session_id)
-
-
-@mcp.tool()
-def load_scene(session_id: str, scene_path: str) -> dict:
-    """
-    Carga una escena en el cache del daemon para operaciones rapidas.
-    
-    Una vez cargada, get_scene_tree y modificaciones son ~20ms.
-    
-    Args:
-        session_id: ID de sesion activa
-        scene_path: Ruta a la escena (res://scenes/Player.tscn)
-    
-    Returns:
-        {"success": True, "cached": true, "node_count": 42}
-    """
-    return heren_load_scene(session_id, scene_path)
-
-
-@mcp.tool()
-def unload_scene(session_id: str, scene_path: str) -> dict:
-    """
-    Descarga una escena del cache del daemon.
-    
-    Args:
-        session_id: ID de sesion activa
+        action: Operación a realizar
         scene_path: Ruta a la escena
-    
-    Returns:
-        {"success": True}
+        player_path: Ruta al AnimationPlayer
+        anim_name: Nombre de la animación
+        length: Duración en segundos
+        loop: Si loop o no
+        track_type: Tipo de track (value, position_3d, rotation_3d, scale_3d, method)
+        node_path: Ruta al nodo a animar
+        property: Propiedad a animar
+        track_idx: Índice del track
+        time: Tiempo del keyframe
+        value: Valor del keyframe
+        transition: Curva de transición
+        states: Lista de estados para state machine
+        transitions: Lista de transiciones
     """
-    return heren_unload_scene(session_id, scene_path)
+    return animation(action=action, scene_path=scene_path, player_path=player_path,
+                    anim_name=anim_name, length=length, loop=loop, track_type=track_type,
+                    node_path=node_path, property=property, track_idx=track_idx,
+                    time=time, value=value, transition=transition, states=states,
+                    transitions=transitions)
 
+
+# ============================================================
+# TOOL 7: SKELETON TOOL (Esqueletos 2D/3D)
+# ============================================================
 
 @mcp.tool()
-def get_loaded_scenes(session_id: str) -> dict:
+def skeleton_tool(
+    action: str,
+    scene_path: str = None,
+    parent_path: str = ".",
+    skeleton_name: str = "Skeleton2D",
+    is_3d: bool = False,
+    skeleton_path: str = None,
+    bone_name: str = None,
+    rest_transform: dict = None,
+    length: float = 32.0,
+    bone_angle: float = 0.0,
+    polygon_path: str = None,
+    bone_weights: dict = None,
+    attachment_name: str = "Attachment",
+) -> dict:
     """
-    Lista las escenas cargadas en el cache del daemon.
+    Tool centralizada para esqueletos y rigging.
+    
+    Actions:
+        - "create": Crear Skeleton2D/3D
+        - "add_bone": Añadir hueso
+        - "set_rest": Setear rest pose
+        - "skin": Configurar skinning Polygon2D
+        - "attachment": Añadir BoneAttachment3D
     
     Args:
-        session_id: ID de sesion activa
+        action: Operación a realizar
+        scene_path: Ruta a la escena
+        parent_path: Ruta al padre
+        skeleton_name: Nombre del skeleton
+        is_3d: True para Skeleton3D
+        skeleton_path: Ruta al skeleton existente
+        bone_name: Nombre del hueso
+        rest_transform: Transform de rest (dict con x, y, z, rotation)
+        length: Longitud del hueso (2D)
+        bone_angle: Ángulo del hueso (2D)
+        polygon_path: Ruta al Polygon2D para skinning
+        bone_weights: Pesos de huesos para skinning
+        attachment_name: Nombre del attachment
+    """
+    return skeleton(action=action, scene_path=scene_path, parent_path=parent_path,
+                   skeleton_name=skeleton_name, is_3d=is_3d, skeleton_path=skeleton_path,
+                   bone_name=bone_name, rest_transform=rest_transform, length=length,
+                   bone_angle=bone_angle, polygon_path=polygon_path,
+                   bone_weights=bone_weights, attachment_name=attachment_name)
+
+
+# ============================================================
+# TOOL 8: SHADER TOOL (Shaders y Materiales)
+# ============================================================
+
+@mcp.tool()
+def shader_tool(
+    action: str,
+    shader_path: str = None,
+    shader_type: str = "canvas_item",
+    code: str = "",
+    append: bool = False,
+    scene_path: str = None,
+    node_path: str = None,
+    material_name: str = "",
+    uniforms: dict = None,
+    uniform_name: str = None,
+    value = None,
+) -> dict:
+    """
+    Tool centralizada para shaders y materiales.
+    
+    Actions:
+        - "create": Crear .gdshader
+        - "edit": Editar código de shader
+        - "validate": Validar compilación
+        - "material": Crear ShaderMaterial
+        - "uniform": Setear uniform
+    
+    Args:
+        action: Operación a realizar
+        shader_path: Ruta al shader
+        shader_type: Tipo (canvas_item, spatial, particles)
+        code: Código GDShader
+        append: True para añadir al final
+        scene_path: Ruta a la escena (para material/uniform)
+        node_path: Ruta al nodo (para material/uniform)
+        material_name: Nombre del material
+        uniforms: Dict de uniforms
+        uniform_name: Nombre del uniform
+        value: Valor del uniform
+    """
+    return shader(action=action, shader_path=shader_path, shader_type=shader_type,
+                 code=code, append=append, scene_path=scene_path, node_path=node_path,
+                 material_name=material_name, uniforms=uniforms, uniform_name=uniform_name,
+                 value=value)
+
+
+# ============================================================
+# TOOL 9: TILEMAP TOOL (TileMaps y TileSets)
+# ============================================================
+
+@mcp.tool()
+def tilemap_tool(
+    action: str,
+    tileset_path: str = None,
+    scene_path: str = None,
+    tilemap_path: str = None,
+    layer: int = 0,
+    coords: dict = None,
+    atlas_coords: dict = None,
+    source_id: int = 0,
+    alternative_tile: int = 0,
+    cells: list = None,
+    terrain_set: int = 0,
+    terrain: int = 0,
+    region: dict = None,
+    pattern_name: str = "Pattern",
+) -> dict:
+    """
+    Tool centralizada para TileMaps y TileSets.
+    
+    Actions:
+        - "inspect_set": Inspeccionar TileSet
+        - "inspect_map": Inspeccionar TileMap
+        - "set_cell": Setear celda individual
+        - "terrain": Aplicar terrain painting
+        - "pattern": Crear/aplicar pattern
+    
+    Args:
+        action: Operación a realizar
+        tileset_path: Ruta al TileSet
+        scene_path: Ruta a la escena
+        tilemap_path: Ruta al TileMap
+        layer: Índice de layer
+        coords: Coordenadas de celda {x, y}
+        atlas_coords: Coordenadas de atlas {x, y}
+        source_id: ID de source
+        alternative_tile: Tile alternativo
+        cells: Lista de celdas para terrain
+        terrain_set: Índice de terrain set
+        terrain: Índice de terrain
+        region: Región para pattern {x, y, w, h}
+        pattern_name: Nombre del pattern
+    """
+    return tilemap(action=action, tileset_path=tileset_path, scene_path=scene_path,
+                  tilemap_path=tilemap_path, layer=layer, coords=coords,
+                  atlas_coords=atlas_coords, source_id=source_id,
+                  alternative_tile=alternative_tile, cells=cells,
+                  terrain_set=terrain_set, terrain=terrain, region=region,
+                  pattern_name=pattern_name)
+
+
+# ============================================================
+# TOOL 10: PROJECT TOOL (Configuración del Proyecto)
+# ============================================================
+
+@mcp.tool()
+def project_tool(
+    action: str,
+    setting_name: str = None,
+    value = None,
+    autoload_name: str = None,
+    script_path: str = None,
+    global_name: str = None,
+) -> dict:
+    """
+    Tool centralizada para configuración del proyecto Godot.
+    
+    Actions:
+        - "setting": Leer/escribir project setting
+        - "autoload": Añadir autoload
+        - "remove_autoload": Quitar autoload
+        - "shader_global": Setear shader global
+    
+    Args:
+        action: Operación a realizar
+        setting_name: Nombre del setting (ej: "display/window/size/viewport_width")
+        value: Valor a escribir (None para leer)
+        autoload_name: Nombre del autoload
+        script_path: Ruta al script del autoload
+        global_name: Nombre del shader global
     
     Returns:
-        {"success": True, "scenes": [{"path": "...", "type": "Node2D", "valid": true}]}
+        Dict con resultado de la operación
     """
-    return heren_get_loaded_scenes(session_id)
+    return project(action=action, setting_name=setting_name, value=value,
+                  autoload_name=autoload_name, script_path=script_path,
+                  global_name=global_name)
+
+
+# ============================================================
+# TOOL 11: DEBUG TOOL (Depuración)
+# ============================================================
+
+@mcp.tool()
+def debug_tool(
+    action: str,
+    session_id: str = None,
+    script_path: str = None,
+    line: int = 0,
+    variable_name: str = None,
+    lines: int = 100,
+) -> dict:
+    """
+    Tool centralizada para depuración de escenas Godot.
+    
+    Actions:
+        - "breakpoint": Setear/quitar breakpoint
+        - "stack_trace": Obtener stack trace
+        - "watch": Watch variable
+        - "console": Capturar output de consola
+    
+    Args:
+        action: Operación a realizar
+        session_id: ID de sesión activa
+        script_path: Ruta al script (para breakpoint)
+        line: Número de línea (para breakpoint)
+        variable_name: Nombre de variable (para watch)
+        lines: Cantidad de líneas de consola a capturar
+    """
+    return debug(action=action, session_id=session_id, script_path=script_path,
+                line=line, variable_name=variable_name, lines=lines)
+
+
+# ============================================================
+# TOOL 12: VALIDATE TOOL (Validación)
+# ============================================================
+
+@mcp.tool()
+def validate_tool(
+    action: str,
+    session_id: str = None,
+    scene_path: str = None,
+    script_path: str = None,
+    node_path: str = None,
+    resource_path: str = None,
+) -> dict:
+    """
+    Tool centralizada para validación de escenas, scripts y recursos.
+    
+    Actions:
+        - "scene": Validar archivo .tscn
+        - "script": Validar script GDScript
+        - "node": Validar nodo en escena
+        - "resource": Validar recurso .tres
+    
+    Args:
+        action: Operación a realizar
+        session_id: ID de sesión activa
+        scene_path: Ruta a la escena
+        script_path: Ruta al script
+        node_path: Ruta al nodo
+        resource_path: Ruta al recurso
+    """
+    return validate(action=action, session_id=session_id, scene_path=scene_path,
+                   script_path=script_path, node_path=node_path,
+                   resource_path=resource_path)
+
+
+# ============================================================
+# TOOL 13: INDEX (Índice de Tools)
+# ============================================================
+
+@mcp.tool()
+def index(
+    action: str = "list",
+    tool_name: str = None,
+    action_name: str = None,
+) -> dict:
+    """
+    Índice de todas las tools disponibles en Heren MCP.
+    
+    Usa esta tool para descubrir qué tools existen y cómo usarlas.
+    
+    Actions:
+        - "list": Lista todas las tools disponibles
+        - "info": Obtiene información detallada de una tool
+        - "example": Obtiene un ejemplo de uso
+    
+    Args:
+        action: Operación a realizar
+        tool_name: (para info/example) Nombre de la tool
+        action_name: (para example) Nombre del action
+    
+    Returns:
+        Dict con información de las tools
+    
+    Examples:
+        # Listar todas las tools
+        index(action="list")
+        
+        # Info de una tool
+        index(action="info", tool_name="scene")
+        
+        # Ejemplo de uso
+        index(action="example", tool_name="scene", action_name="create")
+    """
+    if action == "list":
+        return list_tools()
+    
+    elif action == "info":
+        if not tool_name:
+            return {"success": False, "error": "tool_name requerido para action='info'"}
+        info = get_tool_info(tool_name)
+        if "error" in info:
+            return {"success": False, "error": info["error"]}
+        return {"success": True, "tool": tool_name, **info}
+    
+    elif action == "example":
+        if not tool_name or not action_name:
+            return {"success": False, "error": "tool_name y action_name requeridos para action='example'"}
+        example = get_action_example(tool_name, action_name)
+        return {"success": True, "tool": tool_name, "action": action_name, "example": example}
+    
+    else:
+        return {"success": False, "error": f"Action no soportada: '{action}'. Use: list, info, example"}
 
 
 def main():
@@ -340,16 +735,20 @@ def main():
     
     args = parser.parse_args()
     
-    logger.info("HEREN MCP Server iniciando...")
+    logger.info("=" * 60)
+    logger.info("HEREN MCP Server v2.0 - GodotDaemon Edition")
+    logger.info("Filosofia: Centralizado. Modular. Potente.")
+    logger.info("=" * 60)
     
     if args.project_path:
-        result = heren_start_session(args.project_path)
+        result = session_tool("open", project_path=args.project_path)
         if result.get("success"):
             logger.info(f"Sesion iniciada: {result['session_id']}")
         else:
             logger.error(f"Error iniciando sesion: {result.get('error')}")
     
     # Iniciar servidor MCP
+    logger.info("Iniciando servidor MCP...")
     mcp.run()
 
 

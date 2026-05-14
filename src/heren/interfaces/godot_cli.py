@@ -142,6 +142,39 @@ class GodotInterface:
         
         return result
     
+    def create_scene(self, scene_path: str, root_type: str = "Node2D", root_name: str = "Root") -> dict:
+        """Crea una nueva escena."""
+        result = self._execute_template(
+            "create_scene",
+            scene_path=scene_path,
+            root_type=root_type,
+            root_name=root_name
+        )
+        return result
+    
+    def delete_scene(self, scene_path: str) -> dict:
+        """Elimina una escena."""
+        result = self._execute_template("delete_scene", scene_path=scene_path)
+        
+        if result.get("success"):
+            self.session.scene_cache.invalidate(f"scene_tree:{scene_path}")
+        
+        return result
+    
+    def rename_scene(self, scene_path: str, new_path: str) -> dict:
+        """Renombra una escena."""
+        result = self._execute_template(
+            "rename_scene",
+            scene_path=scene_path,
+            new_path=new_path
+        )
+        
+        if result.get("success"):
+            self.session.scene_cache.invalidate(f"scene_tree:{scene_path}")
+            self.session.scene_cache.invalidate(f"scene_tree:{new_path}")
+        
+        return result
+    
     # ============ Node Operations ============
     
     def add_node(

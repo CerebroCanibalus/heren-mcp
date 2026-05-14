@@ -475,6 +475,19 @@ class SessionManager:
                 session.touch()
             return session
     
+    def get_active_session(self) -> Optional[Session]:
+        """Obtiene la sesi�n m�s reciente (�ltima actividad)."""
+        with self._sessions_lock:
+            if not self._sessions:
+                return None
+            # Retornar la sesi�n con last_activity m�s reciente
+            return max(self._sessions.values(), key=lambda s: s.last_activity)
+    
+    def list_sessions(self) -> list[Session]:
+        """Lista todas las sesiones activas."""
+        with self._sessions_lock:
+            return list(self._sessions.values())
+    
     def end_session(self, session_id: str) -> bool:
         """
         Termina una sesi�n.

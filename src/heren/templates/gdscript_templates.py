@@ -451,3 +451,118 @@ func _init():
     }}))
     quit()
 '''
+    
+    @classmethod
+    def _render_create_scene(cls, scene_path: str, root_type: str = "Node2D", root_name: str = "Root", **kwargs) -> str:
+        """Template para crear una nueva escena."""
+        scene_path_escaped = _escape_gdscript_string(scene_path)
+        
+        return f'''extends SceneTree
+
+func _init():
+    var scene_path = "{scene_path_escaped}"
+    var root_type = "{root_type}"
+    var root_name = "{root_name}"
+    
+    # Check if file exists
+    if FileAccess.file_exists(scene_path):
+        print('TEST_OUTPUT: {{"success": false, "error": "Scene already exists"}}')
+        quit()
+        return
+    
+    # Create root node
+    var root = ClassDB.instantiate(root_type)
+    if root == null:
+        print('TEST_OUTPUT: {{"success": false, "error": "Invalid root type"}}')
+        quit()
+        return
+    
+    root.name = root_name
+    
+    # Create PackedScene
+    var packed = PackedScene.new()
+    var err = packed.pack(root)
+    if err != OK:
+        root.free()
+        print('TEST_OUTPUT: {{"success": false, "error": "Pack failed"}}')
+        quit()
+        return
+    
+    # Save
+    err = ResourceSaver.save(packed, scene_path)
+    root.free()
+    
+    if err != OK:
+        print('TEST_OUTPUT: {{"success": false, "error": "Save failed"}}')
+        quit()
+        return
+    
+    print('TEST_OUTPUT: ' + JSON.stringify({{
+        "success": true,
+        "scene_path": scene_path,
+        "root_type": root_type,
+        "root_name": root_name
+    }}))
+    quit()
+'''
+    
+    @classmethod
+    def _render_delete_scene(cls, scene_path: str, **kwargs) -> str:
+        """Template para eliminar una escena."""
+        scene_path_escaped = _escape_gdscript_string(scene_path)
+        
+        return f'''extends SceneTree
+
+func _init():
+    var scene_path = "{scene_path_escaped}"
+    
+    if not FileAccess.file_exists(scene_path):
+        print('TEST_OUTPUT: {{"success": false, "error": "Scene not found"}}')
+        quit()
+        return
+    
+    var err = DirAccess.remove_absolute(scene_path)
+    if err != OK:
+        print('TEST_OUTPUT: {{"success": false, "error": "Delete failed"}}')
+        quit()
+        return
+    
+    print('TEST_OUTPUT: {{"success": true, "deleted": "' + scene_path + '"}}')
+    quit()
+'''
+    
+    @classmethod
+    def _render_rename_scene(cls, scene_path: str, new_path: str, **kwargs) -> str:
+        """Template para renombrar una escena."""
+        scene_path_escaped = _escape_gdscript_string(scene_path)
+        new_path_escaped = _escape_gdscript_string(new_path)
+        
+        return f'''extends SceneTree
+
+func _init():
+    var scene_path = "{scene_path_escaped}"
+    var new_path = "{new_path_escaped}"
+    
+    if not FileAccess.file_exists(scene_path):
+        print('TEST_OUTPUT: {{"success": false, "error": "Scene not found"}}')
+        quit()
+        return
+    
+    if FileAccess.file_exists(new_path):
+        print('TEST_OUTPUT: {{"success": false, "error": "Destination exists"}}')
+        quit()
+        return
+    
+    var err = DirAccess.rename_absolute(scene_path, new_path)
+    if err != OK:
+        print('TEST_OUTPUT: {{"success": false, "error": "Rename failed"}}')
+        quit()
+        return
+    
+    print('TEST_OUTPUT: ' + JSON.stringify({{
+        "success": true,
+        "old_path": scene_path,
+        "new_path": new_path
+    }}))
+    quit()
+'''

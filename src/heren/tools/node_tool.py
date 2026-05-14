@@ -35,6 +35,7 @@ def node_tool(
     value: Any = None,
     new_name: str = None,
     new_parent: str = None,
+    **kwargs,
 ) -> dict:
     """
     Tool centralizada para operaciones de nodos.
@@ -178,12 +179,10 @@ def _action_get_prop(manager, session_id: str, scene_path: str, node_path: str,
             "error": "scene_path, node_path y property_name requeridos para action='get_prop'"
         }
     
-    # TODO: Implementar via daemon
-    return {
-        "success": False,
-        "error": "get_prop aún no implementado en daemon",
-        "message": "Use fallback a scripts temporales"
-    }
+    return _execute_via_daemon_or_fallback(
+        manager, session_id, "get_node_properties",
+        {"scene_path": scene_path, "node_path": node_path}
+    )
 
 
 def _action_duplicate(manager, session_id: str, scene_path: str, node_path: str) -> dict:
@@ -194,12 +193,10 @@ def _action_duplicate(manager, session_id: str, scene_path: str, node_path: str)
             "error": "scene_path y node_path requeridos para action='duplicate'"
         }
     
-    # TODO: Implementar via daemon
-    return {
-        "success": False,
-        "error": "duplicate aún no implementado en daemon",
-        "message": "Use fallback a scripts temporales"
-    }
+    return _execute_via_daemon_or_fallback(
+        manager, session_id, "duplicate_node",
+        {"scene_path": scene_path, "node_path": node_path}
+    )
 
 
 def _action_rename(manager, session_id: str, scene_path: str, node_path: str,
@@ -211,12 +208,10 @@ def _action_rename(manager, session_id: str, scene_path: str, node_path: str,
             "error": "scene_path, node_path y new_name requeridos para action='rename'"
         }
     
-    # TODO: Implementar via daemon
-    return {
-        "success": False,
-        "error": "rename aún no implementado en daemon",
-        "message": "Use fallback a scripts temporales"
-    }
+    return _execute_via_daemon_or_fallback(
+        manager, session_id, "rename_node",
+        {"scene_path": scene_path, "node_path": node_path, "new_name": new_name}
+    )
 
 
 def _action_move(manager, session_id: str, scene_path: str, node_path: str,
@@ -228,12 +223,10 @@ def _action_move(manager, session_id: str, scene_path: str, node_path: str,
             "error": "scene_path, node_path y new_parent requeridos para action='move'"
         }
     
-    # TODO: Implementar via daemon
-    return {
-        "success": False,
-        "error": "move aún no implementado en daemon",
-        "message": "Use fallback a scripts temporales"
-    }
+    return _execute_via_daemon_or_fallback(
+        manager, session_id, "move_node",
+        {"scene_path": scene_path, "node_path": node_path, "new_parent": new_parent}
+    )
 
 
 def _execute_via_daemon_or_fallback(manager, session_id: str, operation: str, params: dict) -> dict:
