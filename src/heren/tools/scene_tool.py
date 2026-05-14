@@ -11,6 +11,7 @@ Modos:
 - unload: Descarga del cache
 - list_loaded: Lista escenas cargadas
 - create: Crea nueva escena
+- set_editable_paths: Marca paths como editables
 """
 
 import logging
@@ -82,6 +83,15 @@ def scene_tool(
     if not session:
         return {"success": False, "error": f"Sesión no encontrada: {session_id}"}
     
+    # Validaciones específicas por acción
+    if action in ["get_tree", "save", "load", "unload", "screenshot", "create", "delete", "add_ext_resource", "set_editable_paths"]:
+        if not scene_path:
+            return {
+                "success": False,
+                "error": "missing_scene_path",
+                "message": f"action='{action}' requiere scene_path"
+            }
+    
     if action == "get_tree":
         return _execute_via_daemon_or_fallback(
             manager, session_id, "get_scene_tree", {"scene_path": scene_path}
@@ -122,6 +132,12 @@ def scene_tool(
         )
     
     elif action == "rename":
+        if not scene_path or not kwargs.get("new_path"):
+            return {
+                "success": False,
+                "error": "missing_params",
+                "message": "action='rename' requiere scene_path y new_path"
+            }
         return _execute_via_daemon_or_fallback(
             manager, session_id, "rename_scene", {
                 "scene_path": scene_path,
@@ -130,6 +146,12 @@ def scene_tool(
         )
     
     elif action == "add_ext_resource":
+        if not kwargs.get("resource_path"):
+            return {
+                "success": False,
+                "error": "missing_resource_path",
+                "message": "action='add_ext_resource' requiere resource_path"
+            }
         return _execute_via_daemon_or_fallback(
             manager, session_id, "add_ext_resource", {
                 "scene_path": scene_path,
@@ -138,10 +160,25 @@ def scene_tool(
             }
         )
     
+    elif action == "set_editable_paths":
+        if not kwargs.get("paths"):
+            return {
+                "success": False,
+                "error": "missing_paths",
+                "message": "action='set_editable_paths' requiere paths (lista)"
+            }
+        return _execute_via_daemon_or_fallback(
+            manager, session_id, "set_editable_paths", {
+                "scene_path": scene_path,
+                "paths": kwargs.get("paths", []),
+                "editable": kwargs.get("editable", True)
+            }
+        )
+    
     else:
         return {
             "success": False,
-            "error": f"Action no soportada: '{action}'. Use: get_tree, save, load, unload, list_loaded, screenshot, create, delete, rename, add_ext_resource"
+            "error": f"Action no soportada: '{action}'. Use: get_tree, save, load, unload, list_loaded, screenshot, create, delete, rename, add_ext_resource, set_editable_paths"
         }
 
 

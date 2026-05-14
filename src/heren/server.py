@@ -11,16 +11,16 @@ FILOSOFÍA DE TOOLS:
 
 Tools:
 1. session   - Gestión de sesiones (open, close, list, info, health)
-2. scene     - Operaciones de escenas (get_tree, save, load, unload, list_loaded, screenshot, create, delete, rename, add_ext_resource)
-3. node      - Operaciones de nodos (add, remove, set_prop, get_prop, duplicate, rename, move)
+2. scene     - Operaciones de escenas (get_tree, save, load, unload, list_loaded, screenshot, create, delete, rename, add_ext_resource, set_editable_paths)
+3. node      - Operaciones de nodos (add, remove, set_prop, get_prop, duplicate, rename, move, array_append, array_remove)
 4. batch     - Ejecución batch de múltiples operaciones
 5. resource  - Recursos .tres y .gd (create, read, update, delete, list, create_script, read_script, edit_script)
 6. animation - Animaciones (create_player, create, add_track, add_key, state_machine)
 7. skeleton  - Esqueletos (create, add_bone, set_rest, skin, attachment)
 8. shader    - Shaders (create, edit, validate, material, uniform)
 9. tilemap   - TileMaps (inspect_set, inspect_map, set_cell, terrain, pattern)
-10. project  - Configuración (setting, autoload, shader_global)
-11. debug    - Depuración (breakpoint, stack_trace, watch, console)
+10. project  - Configuración (create, setting, autoload, remove_autoload, shader_global)
+11. debug    - Depuración (breakpoint, stack_trace, watch, console, run_scene, stop_scene, get_editor_errors, execute_editor_script)
 12. validate - Validación (scene, script, node, resource)
 13. signal   - Señales entre nodos (connect, disconnect, list, set_script)
 14. global   - Configuración global (autoload, project_setting, shader_global)
@@ -149,6 +149,7 @@ def scene(
             - "unload": Descarga escena del cache
             - "list_loaded": Lista escenas cargadas en cache
             - "screenshot": Captura screenshot con rendering GPU
+            - "set_editable_paths": Marca paths de instancias como editables
         session_id: ID de sesión activa
         scene_path: Ruta a la escena (res://Player.tscn)
         output_path: (para screenshot) Ruta de salida. None = temp
@@ -164,6 +165,7 @@ def scene(
         - unload: {"success": True}
         - list_loaded: {"success": True, "scenes": [{"path": "...", "type": "Node2D"}]}
         - screenshot: {"success": True, "image_path": "...", "resolution": [1920, 1080]}
+        - set_editable_paths: {"success": True, "paths": [...], "editable": true}
     
     Examples:
         # Obtener árbol de nodos
@@ -195,6 +197,7 @@ def node(
     value: Any = None,
     new_name: str = None,
     new_parent: str = None,
+    index: int = -1,
 ) -> dict:
     """
     Tool centralizada para TODAS las operaciones de nodos.
@@ -211,16 +214,19 @@ def node(
             - "duplicate": Duplica nodo
             - "rename": Renombra nodo
             - "move": Mueve nodo a otro padre
+            - "array_append": Añade elemento a array property
+            - "array_remove": Remueve elemento de array property
         session_id: ID de sesión activa
         scene_path: Ruta a la escena (res://Player.tscn)
         node_path: Ruta al nodo (ej: "Player/Sprite2D")
         node_type: (para add) Tipo de nodo (Sprite2D, Area2D, etc.)
         node_name: (para add) Nombre del nuevo nodo
         properties: (para add) Propiedades iniciales {"position": {"x": 100, "y": 200}}
-        property_name: (para set_prop/get_prop) Nombre de la propiedad
-        value: (para set_prop) Nuevo valor
+        property_name: (para set_prop/get_prop/array_*) Nombre de la propiedad
+        value: (para set_prop/array_append/array_remove) Nuevo valor
         new_name: (para rename) Nuevo nombre
         new_parent: (para move) Nueva ruta padre
+        index: (para array_remove) Índice del elemento a remover
     
     Returns:
         - add: {"success": True, "node_path": "Player/Sprite2D"}
@@ -230,6 +236,8 @@ def node(
         - duplicate: {"success": True, "node_path": "..."}
         - rename: {"success": True}
         - move: {"success": True}
+        - array_append: {"success": True, "array_size": N}
+        - array_remove: {"success": True, "removed_value": ...}
     
     Examples:
         # Añadir Sprite2D
@@ -244,9 +252,13 @@ def node(
         # Eliminar nodo
         node("remove", session_id="abc", scene_path="res://Player.tscn",
              node_path="Player/OldNode")
+        
+        # Añadir a array
+        node("array_append", session_id="abc", scene_path="res://Player.tscn",
+             node_path="Player", property_name="inventory", value="sword")
     """
     return node_tool(action, session_id, scene_path, node_path, node_type, node_name,
-                     properties, property_name, value, new_name, new_parent)
+                     properties, property_name, value, new_name, new_parent, index)
 
 
 # ============================================================
@@ -581,11 +593,21 @@ def project_tool(
     autoload_name: str = None,
     script_path: str = None,
     global_name: str = None,
+    project_path: str = None,
+    project_name: str = None,
+    renderer: str = "forward_plus",
+    viewport_width: int = 1280,
+    viewport_height: int = 720,
+    window_mode: str = "windowed",
+    fps_max: int = 0,
+    vsync: bool = True,
+    scale_mode: str = "canvas_items",
 ) -> dict:
     """
     Tool centralizada para configuración del proyecto Godot.
     
     Actions:
+        - "create": Crear nuevo proyecto Godot
         - "setting": Leer/escribir project setting
         - "autoload": Añadir autoload
         - "remove_autoload": Quitar autoload
@@ -593,6 +615,15 @@ def project_tool(
     
     Args:
         action: Operación a realizar
+        project_path: (para create) Ruta donde crear el proyecto
+        project_name: (para create) Nombre del proyecto
+        renderer: (para create) Renderer: "forward_plus", "mobile", "compatibility"
+        viewport_width: (para create) Ancho de ventana
+        viewport_height: (para create) Alto de ventana
+        window_mode: (para create) Modo: "windowed", "fullscreen", "exclusive_fullscreen"
+        fps_max: (para create) FPS máximo (0 = ilimitado)
+        vsync: (para create) Activar VSync
+        scale_mode: (para create) Modo de escala: "canvas_items", "viewport", "disabled"
         setting_name: Nombre del setting (ej: "display/window/size/viewport_width")
         value: Valor a escribir (None para leer)
         autoload_name: Nombre del autoload
@@ -604,7 +635,11 @@ def project_tool(
     """
     return project(action=action, setting_name=setting_name, value=value,
                   autoload_name=autoload_name, script_path=script_path,
-                  global_name=global_name)
+                  global_name=global_name, project_path=project_path,
+                  project_name=project_name, renderer=renderer,
+                  viewport_width=viewport_width, viewport_height=viewport_height,
+                  window_mode=window_mode, fps_max=fps_max, vsync=vsync,
+                  scale_mode=scale_mode)
 
 
 # ============================================================
@@ -619,6 +654,9 @@ def debug_tool(
     line: int = 0,
     variable_name: str = None,
     lines: int = 100,
+    scene_path: str = None,
+    script_code: str = None,
+    context: dict = None,
 ) -> dict:
     """
     Tool centralizada para depuración de escenas Godot.
@@ -628,6 +666,10 @@ def debug_tool(
         - "stack_trace": Obtener stack trace
         - "watch": Watch variable
         - "console": Capturar output de consola
+        - "run_scene": Ejecutar escena (current o específica)
+        - "stop_scene": Detener ejecución
+        - "get_editor_errors": Obtener errores del editor
+        - "execute_editor_script": Ejecutar GDScript arbitrario
     
     Args:
         action: Operación a realizar
@@ -636,9 +678,13 @@ def debug_tool(
         line: Número de línea (para breakpoint)
         variable_name: Nombre de variable (para watch)
         lines: Cantidad de líneas de consola a capturar
+        scene_path: Ruta a la escena (para run_scene, opcional)
+        script_code: Código GDScript a ejecutar (para execute_editor_script)
+        context: Variables de contexto (para execute_editor_script)
     """
     return debug(action=action, session_id=session_id, script_path=script_path,
-                line=line, variable_name=variable_name, lines=lines)
+                line=line, variable_name=variable_name, lines=lines, scene_path=scene_path,
+                script_code=script_code, context=context)
 
 
 # ============================================================

@@ -2,6 +2,7 @@
 Project Tool - Gestión centralizada de configuración del proyecto.
 
 Actions:
+- create: Crear nuevo proyecto Godot
 - setting: Leer/escribir project setting
 - autoload: Añadir/quitar autoload
 - group: Gestión de grupos globales
@@ -19,6 +20,7 @@ def project(action: str, **kwargs) -> dict:
     session_manager = get_session_manager()
     
     actions_map = {
+        "create": _action_create,
         "setting": _action_setting,
         "autoload": _action_autoload,
         "remove_autoload": _action_remove_autoload,
@@ -36,6 +38,32 @@ def project(action: str, **kwargs) -> dict:
     except Exception as e:
         logger.error(f"Error en project({action}): {e}")
         return {"success": False, "error": str(e)}
+
+
+def _action_create(session_manager, project_path: str, project_name: str, 
+                   renderer: str = "forward_plus", viewport_width: int = 1280,
+                   viewport_height: int = 720, window_mode: str = "windowed",
+                   fps_max: int = 0, vsync: bool = True, **kwargs) -> dict:
+    """Crear un nuevo proyecto Godot."""
+    session = session_manager.get_active_session()
+    if not session:
+        return {"success": False, "error": "No hay sesión activa"}
+    
+    daemon = session_manager.get_godot_daemon(session.id)
+    if not daemon:
+        return {"success": False, "error": "Daemon no disponible"}
+    
+    return daemon.call("create_project", {
+        "project_path": project_path,
+        "project_name": project_name,
+        "renderer": renderer,
+        "viewport_width": viewport_width,
+        "viewport_height": viewport_height,
+        "window_mode": window_mode,
+        "fps_max": fps_max,
+        "vsync": vsync,
+        "scale_mode": kwargs.get("scale_mode", "canvas_items")
+    })
 
 
 def _action_setting(session_manager, setting_name: str = None, value = None, **kwargs) -> dict:

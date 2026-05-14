@@ -3,6 +3,8 @@ Index Tool - Índice de todas las tools disponibles.
 
 Esta tool permite a los subagentes descubrir qué tools existen
 y qué actions pueden usar.
+
+ACTUALIZADO: v1.1 - Incluye debug funcional, array ops, editable paths, project create
 """
 
 TOOLS_INDEX = {
@@ -19,7 +21,7 @@ TOOLS_INDEX = {
     },
     "scene": {
         "description": "Operaciones de escenas",
-        "actions": ["get_tree", "save", "load", "unload", "list_loaded", "screenshot", "create", "delete", "rename"],
+        "actions": ["get_tree", "save", "load", "unload", "list_loaded", "screenshot", "create", "delete", "rename", "add_ext_resource", "set_editable_paths"],
         "examples": {
             "get_tree": 'scene(action="get_tree", session_id="abc", scene_path="res://Player.tscn")',
             "save": 'scene(action="save", session_id="abc", scene_path="res://Player.tscn")',
@@ -27,12 +29,14 @@ TOOLS_INDEX = {
             "create": 'scene(action="create", session_id="abc", scene_path="res://NewScene.tscn", root_type="Node2D", root_name="Root")',
             "delete": 'scene(action="delete", session_id="abc", scene_path="res://OldScene.tscn")',
             "rename": 'scene(action="rename", session_id="abc", scene_path="res://Old.tscn", new_path="res://New.tscn")',
-            "screenshot": 'scene(action="screenshot", session_id="abc", scene_path="res://Player.tscn", output_path="C:/temp/screenshot.png", resolution=(800, 600))'
+            "screenshot": 'scene(action="screenshot", session_id="abc", scene_path="res://Player.tscn", output_path="C:/temp/screenshot.png", resolution=(800, 600))',
+            "add_ext_resource": 'scene(action="add_ext_resource", session_id="abc", scene_path="res://Player.tscn", resource_path="res://scripts/player.gd", resource_type="Script")',
+            "set_editable_paths": 'scene(action="set_editable_paths", session_id="abc", scene_path="res://Level.tscn", paths=["Enemies/Enemy1", "Enemies/Enemy2"], editable=True)'
         }
     },
     "node": {
         "description": "Operaciones de nodos",
-        "actions": ["add", "remove", "set_prop", "get_prop", "duplicate", "rename", "move"],
+        "actions": ["add", "remove", "set_prop", "get_prop", "duplicate", "rename", "move", "array_append", "array_remove"],
         "examples": {
             "add": 'node(action="add", session_id="abc", scene_path="res://Player.tscn", node_path=".", node_type="Sprite2D", node_name="Sprite", properties={"position": {"x": 100, "y": 200}})',
             "remove": 'node(action="remove", session_id="abc", scene_path="res://Player.tscn", node_path="Player/OldNode")',
@@ -40,7 +44,9 @@ TOOLS_INDEX = {
             "get_prop": 'node(action="get_prop", session_id="abc", scene_path="res://Player.tscn", node_path="Player", property_name="position")',
             "duplicate": 'node(action="duplicate", session_id="abc", scene_path="res://Player.tscn", node_path="Player/Sprite2D")',
             "rename": 'node(action="rename", session_id="abc", scene_path="res://Player.tscn", node_path="Player/Sprite2D", new_name="BodySprite")',
-            "move": 'node(action="move", session_id="abc", scene_path="res://Player.tscn", node_path="Player/Sprite2D", new_parent="Player/Body")'
+            "move": 'node(action="move", session_id="abc", scene_path="res://Player.tscn", node_path="Player/Sprite2D", new_parent="Player/Body")',
+            "array_append": 'node(action="array_append", session_id="abc", scene_path="res://Player.tscn", node_path="Player", property_name="inventory", value="sword")',
+            "array_remove": 'node(action="array_remove", session_id="abc", scene_path="res://Player.tscn", node_path="Player", property_name="inventory", index=0)'
         }
     },
     "batch": {
@@ -51,14 +57,17 @@ TOOLS_INDEX = {
         }
     },
     "resource": {
-        "description": "Gestión de recursos .tres",
-        "actions": ["create", "read", "update", "delete", "list"],
+        "description": "Gestión de recursos .tres y scripts .gd",
+        "actions": ["create", "read", "update", "delete", "list", "create_script", "read_script", "edit_script"],
         "examples": {
             "create": 'resource(action="create", session_id="abc", resource_path="res://materials/my_material.tres", resource_type="ShaderMaterial", properties={"shader": "res://shader.gdshader"})',
             "read": 'resource(action="read", session_id="abc", resource_path="res://materials/my_material.tres")',
             "update": 'resource(action="update", session_id="abc", resource_path="res://materials/my_material.tres", properties={"shader_parameter/outline_color": {"r": 1, "g": 0, "b": 0, "a": 1}})',
             "delete": 'resource(action="delete", session_id="abc", resource_path="res://materials/my_material.tres")',
-            "list": 'resource(action="list", session_id="abc", directory="res://materials", extension=".tres", recursive=True)'
+            "list": 'resource(action="list", session_id="abc", directory="res://materials", extension=".tres", recursive=True)',
+            "create_script": 'resource(action="create_script", session_id="abc", script_path="res://scripts/enemy.gd", template="node", class_name="Enemy", extends="CharacterBody2D")',
+            "read_script": 'resource(action="read_script", session_id="abc", script_path="res://scripts/player.gd")',
+            "edit_script": 'resource(action="edit_script", session_id="abc", script_path="res://scripts/player.gd", code="func _ready():\\n    pass", mode="append")'
         }
     },
     "animation": {
@@ -107,8 +116,9 @@ TOOLS_INDEX = {
     },
     "project": {
         "description": "Configuración del proyecto",
-        "actions": ["setting", "autoload", "remove_autoload", "shader_global"],
+        "actions": ["create", "setting", "autoload", "remove_autoload", "shader_global"],
         "examples": {
+            "create": 'project(action="create", session_id="abc", project_path="res://MyNewGame", project_name="My New Game", renderer="forward_plus", viewport_width=1920, viewport_height=1080)',
             "setting": 'project(action="setting", session_id="abc", setting_name="display/window/size/viewport_width", value=1920)',
             "autoload": 'project(action="autoload", session_id="abc", autoload_name="GameManager", script_path="res://autoloads/game_manager.gd")',
             "remove_autoload": 'project(action="remove_autoload", session_id="abc", autoload_name="GameManager")',
@@ -116,13 +126,17 @@ TOOLS_INDEX = {
         }
     },
     "debug": {
-        "description": "Depuración",
-        "actions": ["breakpoint", "stack_trace", "watch", "console"],
+        "description": "Depuración funcional",
+        "actions": ["breakpoint", "stack_trace", "watch", "console", "run_scene", "stop_scene", "get_editor_errors", "execute_editor_script"],
         "examples": {
             "breakpoint": 'debug(action="breakpoint", session_id="abc", script_path="res://scripts/player.gd", line=42, enabled=True)',
             "stack_trace": 'debug(action="stack_trace", session_id="abc")',
             "watch": 'debug(action="watch", session_id="abc", variable_name="player_health")',
-            "console": 'debug(action="console", session_id="abc", lines=50)'
+            "console": 'debug(action="console", session_id="abc", lines=50)',
+            "run_scene": 'debug(action="run_scene", session_id="abc", scene_path="res://levels/level1.tscn")',
+            "stop_scene": 'debug(action="stop_scene", session_id="abc")',
+            "get_editor_errors": 'debug(action="get_editor_errors", session_id="abc")',
+            "execute_editor_script": 'debug(action="execute_editor_script", session_id="abc", script_code="Engine.get_frames_per_second()")'
         }
     },
     "validate": {

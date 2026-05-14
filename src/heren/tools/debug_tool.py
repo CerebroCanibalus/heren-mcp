@@ -5,7 +5,11 @@ Actions:
 - breakpoint: Setear breakpoint en script GDScript
 - stack_trace: Obtener stack trace
 - watch: Watch variable
-- console_output: Capturar output de consola
+- console: Capturar output de consola
+- run_scene: Ejecutar escena (current o específica)
+- stop_scene: Detener ejecución
+- get_editor_errors: Obtener errores del editor
+- execute_editor_script: Ejecutar GDScript arbitrario en el editor
 """
 
 import logging
@@ -35,6 +39,10 @@ def debug(action: str, session_id: str = None, **kwargs) -> dict:
         "stack_trace": _action_stack_trace,
         "watch": _action_watch,
         "console": _action_console,
+        "run_scene": _action_run_scene,
+        "stop_scene": _action_stop_scene,
+        "get_editor_errors": _action_get_editor_errors,
+        "execute_editor_script": _action_execute_editor_script,
     }
     
     if action not in actions_map:
@@ -72,3 +80,26 @@ def _action_watch(daemon, variable_name: str, **kwargs) -> dict:
 def _action_console(daemon, lines: int = 100, **kwargs) -> dict:
     """Capturar output de consola."""
     return daemon.call("get_console_output", {"lines": lines})
+
+
+def _action_run_scene(daemon, scene_path: str = "", **kwargs) -> dict:
+    """Ejecutar escena. Si scene_path está vacío, ejecuta la escena actual."""
+    return daemon.call("run_scene", {"scene_path": scene_path})
+
+
+def _action_stop_scene(daemon, **kwargs) -> dict:
+    """Detener ejecución de la escena."""
+    return daemon.call("stop_scene", {})
+
+
+def _action_get_editor_errors(daemon, **kwargs) -> dict:
+    """Obtener errores y warnings del editor."""
+    return daemon.call("get_editor_errors", {})
+
+
+def _action_execute_editor_script(daemon, script_code: str = "", context: dict = None, **kwargs) -> dict:
+    """Ejecutar GDScript arbitrario en el editor."""
+    return daemon.call("execute_editor_script", {
+        "script_code": script_code,
+        "context": context or {}
+    })

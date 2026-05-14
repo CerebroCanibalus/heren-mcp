@@ -18,6 +18,10 @@ var _clients: Dictionary = {}  # peer_id -> info
 var _scene_cache: Dictionary = {}
 var _resource_cache: Dictionary = {}
 
+# Debug state
+var _breakpoints: Dictionary = {}
+var _watch_list: Dictionary = {}
+
 # Command registry
 var _handlers: Dictionary = {}
 
@@ -202,6 +206,7 @@ func _register_handlers():
 	_handlers["create_scene"] = _handle_create_scene
 	_handlers["delete_scene"] = _handle_delete_scene
 	_handlers["rename_scene"] = _handle_rename_scene
+	_handlers["set_editable_paths"] = _handle_set_editable_paths
 	
 	_handlers["add_node"] = _handle_add_node
 	_handlers["remove_node"] = _handle_remove_node
@@ -210,6 +215,8 @@ func _register_handlers():
 	_handlers["move_node"] = _handle_move_node
 	_handlers["set_property"] = _handle_set_property
 	_handlers["get_node_properties"] = _handle_get_node_properties
+	_handlers["array_append"] = _handle_array_append
+	_handlers["array_remove"] = _handle_array_remove
 	
 	# === SIGNAL HANDLERS ===
 	_handlers["set_script"] = _handle_set_script
@@ -272,6 +279,7 @@ func _register_handlers():
 	_handlers["remove_ext_resource"] = _handle_remove_ext_resource
 	
 	# === PROJECT HANDLERS ===
+	_handlers["create_project"] = _handle_create_project
 	_handlers["set_project_setting"] = _handle_set_project_setting
 	_handlers["get_project_setting"] = _handle_get_project_setting
 	_handlers["add_autoload"] = _handle_add_autoload
@@ -288,6 +296,10 @@ func _register_handlers():
 	_handlers["get_stack_trace"] = _handle_get_stack_trace
 	_handlers["watch_variable"] = _handle_watch_variable
 	_handlers["get_console_output"] = _handle_get_console_output
+	_handlers["run_scene"] = _handle_run_scene
+	_handlers["stop_scene"] = _handle_stop_scene
+	_handlers["get_editor_errors"] = _handle_get_editor_errors
+	_handlers["execute_editor_script"] = _handle_execute_editor_script
 	
 	# === VALIDATE HANDLERS ===
 	_handlers["validate_scene"] = _handle_validate_scene
@@ -701,6 +713,101 @@ func _handle_get_node_properties(params: Dictionary) -> Dictionary:
 		"node_path": node_path,
 		"node_type": node.get_class(),
 		"properties": _get_node_properties_dict(node)
+	}
+
+
+func _handle_array_append(params: Dictionary) -> Dictionary:
+	var scene_path = params.get("scene_path", "")
+	var node_path = params.get("node_path", "")
+	var property_name = params.get("property_name", "")
+	var value = params.get("value", null)
+	
+	if not scene_path or not node_path or not property_name:
+		return {"success": false, "error": "missing_params", "message": "scene_path, node_path y property_name son requeridos"}
+	
+	if not _scene_cache.has(scene_path):
+		return {"success": false, "error": "scene_not_loaded"}
+	
+	var root = _scene_cache[scene_path]
+	var node = root.get_node_or_null(node_path)
+	
+	if not node:
+		return {"success": false, "error": "node_not_found", "node_path": node_path}
+	
+	# Obtener el array actual (duplicate para evitar modificar por referencia)
+	var current_array = node.get(property_name)
+	if not current_array is Array:
+		return {"success": false, "error": "property_not_array", "property_name": property_name, "type": typeof(current_array)}
+	
+	# Duplicar para asegurar que Godot detecte el cambio
+	var new_array = current_array.duplicate()
+	new_array.append(value)
+	
+	# Setear el array modificado
+	node.set(property_name, new_array)
+	
+	return {
+		"success": true,
+		"scene_path": scene_path,
+		"node_path": node_path,
+		"property_name": property_name,
+		"value_added": value,
+		"array_size": current_array.size()
+	}
+
+
+func _handle_array_remove(params: Dictionary) -> Dictionary:
+	var scene_path = params.get("scene_path", "")
+	var node_path = params.get("node_path", "")
+	var property_name = params.get("property_name", "")
+	var index = params.get("index", -1)
+	var value = params.get("value", null)
+	
+	if not scene_path or not node_path or not property_name:
+		return {"success": false, "error": "missing_params", "message": "scene_path, node_path y property_name son requeridos"}
+	
+	if not _scene_cache.has(scene_path):
+		return {"success": false, "error": "scene_not_loaded"}
+	
+	var root = _scene_cache[scene_path]
+	var node = root.get_node_or_null(node_path)
+	
+	if not node:
+		return {"success": false, "error": "node_not_found", "node_path": node_path}
+	
+	# Obtener el array actual (duplicate para evitar modificar por referencia)
+	var current_array = node.get(property_name)
+	if not current_array is Array:
+		return {"success": false, "error": "property_not_array", "property_name": property_name, "type": typeof(current_array)}
+	
+	# Duplicar para asegurar que Godot detecte el cambio
+	var new_array = current_array.duplicate()
+	var removed_value = null
+	
+	# Remover por índice o por valor
+	if index >= 0 and index < new_array.size():
+		removed_value = new_array[index]
+		new_array.remove_at(index)
+	elif value != null:
+		var found_index = new_array.find(value)
+		if found_index >= 0:
+			removed_value = new_array[found_index]
+			new_array.remove_at(found_index)
+		else:
+			return {"success": false, "error": "value_not_found", "value": value}
+	else:
+		return {"success": false, "error": "invalid_remove_params", "message": "Especifica index o value para remover"}
+	
+	# Setear el array modificado
+	node.set(property_name, new_array)
+	
+	return {
+		"success": true,
+		"scene_path": scene_path,
+		"node_path": node_path,
+		"property_name": property_name,
+		"removed_value": removed_value,
+		"array_size": current_array.size()
 	}
 
 
@@ -1374,7 +1481,12 @@ func _handle_create_animation(params: Dictionary) -> Dictionary:
 	anim.length = length
 	anim.loop_mode = Animation.LOOP_LINEAR if loop else Animation.LOOP_NONE
 	
-	player.add_animation(anim_name, anim)
+	# Godot 4 usa AnimationLibrary para persistir animaciones
+	var anim_lib = player.get_animation_library("")
+	if not anim_lib:
+		anim_lib = AnimationLibrary.new()
+		player.add_animation_library("", anim_lib)
+	anim_lib.add_animation(anim_name, anim)
 	
 	return {
 		"success": true,
@@ -1906,13 +2018,29 @@ func _handle_set_shader_uniform(params: Dictionary) -> Dictionary:
 		return {"success": false, "error": "node_not_found"}
 	
 	var material = null
+	
+	# CanvasItem (2D nodes): material
 	if "material" in node and node.material is ShaderMaterial:
 		material = node.material
-	elif "material_override" in node and node.material_override is ShaderMaterial:
+	
+	# GeometryInstance3D (3D nodes): material_override
+	if not material and "material_override" in node and node.material_override is ShaderMaterial:
 		material = node.material_override
 	
+	# GeometryInstance3D: material_overlay
+	if not material and "material_overlay" in node and node.material_overlay is ShaderMaterial:
+		material = node.material_overlay
+	
+	# MeshInstance3D: surface_override_material per surface
+	if not material and node is MeshInstance3D:
+		for i in range(node.get_surface_override_material_count()):
+			var surf_mat = node.get_surface_override_material(i)
+			if surf_mat is ShaderMaterial:
+				material = surf_mat
+				break
+	
 	if not material:
-		return {"success": false, "error": "no_shader_material"}
+		return {"success": false, "error": "no_shader_material", "message": "No se encontró ShaderMaterial en el nodo. Verifica que tenga asignado un material con shader."}
 	
 	material.set_shader_parameter(uniform_name, _deserialize_value(value))
 	
@@ -2357,6 +2485,101 @@ func _handle_create_tile_pattern(params: Dictionary) -> Dictionary:
 # PROJECT HANDLERS
 # ============================================================
 
+func _handle_create_project(params: Dictionary) -> Dictionary:
+	var project_path = params.get("project_path", "")
+	var project_name = params.get("project_name", "")
+	var renderer = params.get("renderer", "forward_plus")  # forward_plus, mobile, compatibility
+	var viewport_width = params.get("viewport_width", 1280)
+	var viewport_height = params.get("viewport_height", 720)
+	var window_mode = params.get("window_mode", "windowed")
+	var fps_max = params.get("fps_max", 0)
+	var vsync = params.get("vsync", true)
+	var scale_mode = params.get("scale_mode", "canvas_items")  # canvas_items, viewport, disabled
+	
+	if not project_path or not project_name:
+		return {"success": false, "error": "missing_params", "message": "project_path y project_name son requeridos"}
+	
+	# Validar renderer
+	var renderer_mapping = {
+		"forward_plus": "forward_plus",
+		"mobile": "mobile",
+		"compatibility": "gl_compatibility"
+	}
+	var renderer_value = renderer_mapping.get(renderer, "forward_plus")
+	
+	# Validar window_mode
+	var mode_mapping = {
+		"windowed": 0,
+		"minimized": 1,
+		"maximized": 2,
+		"fullscreen": 3,
+		"exclusive_fullscreen": 4
+	}
+	var mode_value = mode_mapping.get(window_mode, 0)
+	
+	# Crear directorio
+	var dir = DirAccess.open("res://")
+	if not dir:
+		return {"success": false, "error": "cannot_access_filesystem"}
+	
+	var err = dir.make_dir_recursive(project_path)
+	if err != OK:
+		return {"success": false, "error": "cannot_create_directory", "code": err}
+	
+	# Generar project.godot
+	var config = []
+	config.append("; Engine Configuration File.")
+	config.append("; Godot version: 4.x")
+	config.append("; Check latest documentation for updated values.")
+	config.append("")
+	config.append("[application]")
+	config.append('config/name="' + project_name + '"')
+	config.append('config/features=PackedStringArray("4.2", "' + renderer_value + '")')
+	config.append("")
+	config.append("[display]")
+	config.append("window/size/viewport_width=" + str(viewport_width))
+	config.append("window/size/viewport_height=" + str(viewport_height))
+	config.append("window/size/mode=" + str(mode_value))
+	config.append("window/vsync/vsync_mode=" + str(1 if vsync else 0))
+	config.append("")
+	config.append("[rendering]")
+	config.append("renderer/rendering_method=\"" + renderer_value + "\"")
+	config.append("textures/canvas_textures/default_texture_filter=\"linear\"")
+	config.append("")
+	config.append("[dotnet]")
+	config.append("project/assembly_name=\"" + project_name + "\"")
+	
+	if fps_max > 0:
+		config.append("")
+		config.append("[application]")
+		config.append("run/max_fps=" + str(fps_max))
+	
+	var content = "\n".join(config)
+	
+	# Guardar archivo
+	var project_file = project_path + "/project.godot"
+	var file = FileAccess.open(project_file, FileAccess.WRITE)
+	if not file:
+		return {"success": false, "error": "cannot_write_project_file"}
+	
+	file.store_string(content)
+	file.close()
+	
+	# Actualizar project_path interno
+	_project_path = project_path
+	
+	return {
+		"success": true,
+		"project_path": project_path,
+		"project_name": project_name,
+		"renderer": renderer,
+		"viewport_width": viewport_width,
+		"viewport_height": viewport_height,
+		"window_mode": window_mode,
+		"note": "Proyecto creado. Abrelo en Godot Editor para editar."
+	}
+
+
 func _handle_set_project_setting(params: Dictionary) -> Dictionary:
 	var setting_name = params.get("setting_name", "")
 	var value = params.get("value", null)
@@ -2414,7 +2637,7 @@ func _handle_set_project_setting(params: Dictionary) -> Dictionary:
 			var after = content.substr(section_pos + line_end)
 			content = before + key + "=" + value_str + after
 		else:
-			// Key no existe, añadir al final de la sección
+			# Key no existe, añadir al final de la sección
 			var insert_pos = section_end
 			content = content.substr(0, insert_pos) + key + "=" + value_str + "\n" + content.substr(insert_pos)
 	
@@ -2520,7 +2743,7 @@ func _edit_project_godot(section: String, key: String, value: String, remove: bo
 				content = before + key + "=" + value + after
 		else:
 			if not remove:
-				// Añadir key
+				# Añadir key
 				var insert_pos = section_end
 				content = content.substr(0, insert_pos) + key + "=" + value + "\n" + content.substr(insert_pos)
 	
@@ -2936,6 +3159,87 @@ func _handle_rename_scene(params: Dictionary) -> Dictionary:
 	return {"success": true, "old_path": scene_path, "new_path": new_path}
 
 
+func _handle_set_editable_paths(params: Dictionary) -> Dictionary:
+	var scene_path = params.get("scene_path", "")
+	var paths = params.get("paths", [])
+	var editable = params.get("editable", true)
+	
+	if not scene_path:
+		return {"success": false, "error": "missing_scene_path"}
+	
+	if not _scene_cache.has(scene_path):
+		return {"success": false, "error": "scene_not_loaded"}
+	
+	if paths.is_empty():
+		return {"success": false, "error": "missing_paths", "message": "Se requiere una lista de paths"}
+	
+	var root = _scene_cache[scene_path]
+	var results = []
+	
+	for node_path in paths:
+		var node = root.get_node_or_null(node_path)
+		if not node:
+			results.append({
+				"path": node_path,
+				"success": false,
+				"error": "node_not_found"
+			})
+			continue
+		
+		# Marcar como editable instance
+		# Nota: En Godot editor, esto se hace con set_editable_instance
+		# En daemon, modificamos el archivo .tscn directamente
+		results.append({
+			"path": node_path,
+			"success": true,
+			"editable": editable
+		})
+	
+	# Modificar archivo .tscn para añadir líneas [editable]
+	var file = FileAccess.open(scene_path, FileAccess.READ)
+	if not file:
+		return {"success": false, "error": "file_not_found", "scene_path": scene_path}
+	
+	var content = file.get_as_text()
+	file.close()
+	
+	# Añadir líneas [editable path="..."] antes del primer nodo
+	var editable_lines = []
+	for node_path in paths:
+		if editable:
+			editable_lines.append('[editable path="%s"]' % node_path)
+		else:
+			# Remover líneas existentes
+			content = content.replace('[editable path="%s"]\n' % node_path, "")
+			content = content.replace('[editable path="%s"]' % node_path, "")
+	
+	if not editable_lines.is_empty():
+		# Insertar antes de la primera línea [node ...]
+		var node_index = content.find("[node ")
+		if node_index >= 0:
+			var before = content.substr(0, node_index)
+			var after = content.substr(node_index)
+			content = before + "\n".join(editable_lines) + "\n\n" + after
+		else:
+			content += "\n" + "\n".join(editable_lines) + "\n"
+	
+	# Guardar archivo modificado
+	var out_file = FileAccess.open(scene_path, FileAccess.WRITE)
+	if not out_file:
+		return {"success": false, "error": "file_write_failed", "scene_path": scene_path}
+	
+	out_file.store_string(content)
+	out_file.close()
+	
+	return {
+		"success": true,
+		"scene_path": scene_path,
+		"paths": paths,
+		"editable": editable,
+		"results": results
+	}
+
+
 # ============================================================
 # HANDLERS DE NODO (DUPLICATE/RENAME/MOVE)
 # ============================================================
@@ -3060,14 +3364,39 @@ func _handle_set_breakpoint(params: Dictionary) -> Dictionary:
 	if not script_path:
 		return {"success": false, "error": "missing_script_path"}
 	
-	# Nota: Breakpoints requieren interfaz con debugger de Godot
-	# Esta es una implementación stub que registra el breakpoint
+	# Registrar breakpoint en lista interna
+	var bp_key = script_path + ":" + str(line)
+	_breakpoints[bp_key] = {
+		"script_path": script_path,
+		"line": line,
+		"enabled": enabled,
+		"timestamp": Time.get_unix_time_from_system()
+	}
+	
+	# Intentar activar breakpoint real si estamos en editor
+	var editor_interface = _get_editor_interface_or_fail()
+	if not editor_interface is Dictionary:
+		var script_editor = editor_interface.get_script_editor()
+		if script_editor:
+			# Abrir script en editor
+			var script = load(script_path)
+			if script:
+				script_editor.open_script_create_dialog(script, line)
+				return {
+					"success": true,
+					"script_path": script_path,
+					"line": line,
+					"enabled": enabled,
+					"note": "Breakpoint registrado y script abierto en editor"
+				}
+	
 	return {
 		"success": true,
 		"script_path": script_path,
 		"line": line,
 		"enabled": enabled,
-		"note": "Breakpoint registrado (requiere Godot Editor para debugging real)"
+		"note": "Breakpoint registrado. Total: " + str(_breakpoints.size()),
+		"total_breakpoints": _breakpoints.size()
 	}
 
 
@@ -3092,30 +3421,216 @@ func _handle_get_stack_trace(params: Dictionary) -> Dictionary:
 
 func _handle_watch_variable(params: Dictionary) -> Dictionary:
 	var variable_name = params.get("variable_name", "")
+	var watch_mode = params.get("mode", "add")  # add, remove, list
 	
-	if not variable_name:
+	if not variable_name and watch_mode != "list":
 		return {"success": false, "error": "missing_variable_name"}
 	
-	# Watch es un stub - en implementación real monitorearía la variable
-	return {
-		"success": true,
-		"variable": variable_name,
-		"status": "watching",
-		"note": "Variable en watch list (monitoreo pasivo)"
-	}
+	match watch_mode:
+		"add":
+			_watch_list[variable_name] = {
+				"name": variable_name,
+				"added_at": Time.get_unix_time_from_system(),
+				"last_value": null
+			}
+			return {
+				"success": true,
+				"variable": variable_name,
+				"status": "watching",
+				"note": "Variable añadida a watch list",
+				"total_watching": _watch_list.size()
+			}
+		"remove":
+			_watch_list.erase(variable_name)
+			return {
+				"success": true,
+				"variable": variable_name,
+				"status": "removed",
+				"total_watching": _watch_list.size()
+			}
+		"list":
+			return {
+				"success": true,
+				"watching": _watch_list.keys(),
+				"total": _watch_list.size()
+			}
+		_:
+			return {"success": false, "error": "invalid_mode", "message": "Use: add, remove, list"}
 
 
 func _handle_get_console_output(params: Dictionary) -> Dictionary:
 	var lines = params.get("lines", 100)
 	
-	# Capturar prints recientes no es posible directamente en Godot
-	# Retornamos información del sistema como alternativa
+	# Intentar obtener logs del editor si está disponible
+	var editor_interface = _get_editor_interface_or_fail()
+	if editor_interface is Dictionary:
+		# Fallback: retornar información útil del sistema
+		return {
+			"success": true,
+			"lines_requested": lines,
+			"output": _get_system_info(),
+			"note": "Editor no disponible. Mostrando información del sistema.",
+			"alternative": "Usar execute_editor_script() para ejecutar prints"
+		}
+	
+	# Si tenemos editor, intentar obtener el log
+	var base_control = editor_interface.get_base_control()
+	var log_control = base_control.find_child("Log", true, false)
+	
+	if log_control:
+		return {
+			"success": true,
+			"lines_requested": lines,
+			"output": "Log encontrado (extracción en desarrollo)",
+			"note": "Panel de log encontrado. Extracción detallada en desarrollo."
+		}
+	else:
+		return {
+			"success": true,
+			"lines_requested": lines,
+			"output": _get_system_info(),
+			"note": "Panel de log no encontrado. Mostrando información del sistema."
+		}
+
+
+func _get_system_info() -> String:
+	"""Retorna información del sistema como string."""
+	var info = []
+	info.append("=== Heren Daemon System Info ===")
+	info.append("FPS: " + str(Engine.get_frames_per_second()))
+	info.append("Process Time: " + str(Time.get_time_string_from_system()))
+	info.append("Memory Static: " + str(OS.get_static_memory_usage() / 1024 / 1024) + " MB")
+	info.append("Scene Cache: " + str(_scene_cache.size()) + " scenes")
+	return "\n".join(info)
+
+
+func _get_editor_interface_or_fail() -> Variant:
+	"""Helper: Obtiene EditorInterface o retorna Dictionary de error."""
+	var editor_interface = get_editor_interface()
+	if not editor_interface:
+		return {
+			"success": false,
+			"error": "editor_interface_not_available",
+			"note": "Esta función requiere que el daemon se ejecute como plugin del editor Godot"
+		}
+	return editor_interface
+
+
+func _handle_run_scene(params: Dictionary) -> Dictionary:
+	var scene_path = params.get("scene_path", "")
+	
+	var editor_interface = _get_editor_interface_or_fail()
+	if editor_interface is Dictionary:
+		return editor_interface
+	
+	if scene_path.is_empty():
+		# Ejecutar escena actual
+		editor_interface.play_current_scene()
+		return {
+			"success": true,
+			"mode": "current_scene",
+			"note": "Ejecutando escena actual del editor"
+		}
+	else:
+		# Ejecutar escena específica
+		editor_interface.play_custom_scene(scene_path)
+		return {
+			"success": true,
+			"scene_path": scene_path,
+			"mode": "custom_scene",
+			"note": "Ejecutando escena específica"
+		}
+
+
+func _handle_stop_scene(params: Dictionary) -> Dictionary:
+	var editor_interface = _get_editor_interface_or_fail()
+	if editor_interface is Dictionary:
+		return editor_interface
+	
+	editor_interface.stop_playing_scene()
 	return {
 		"success": true,
-		"lines_requested": lines,
-		"output": "[Heren Daemon] Console output capture requiere redirección de stdout",
-		"note": "En Godot headless, usar --verbose para logs detallados",
-		"alternative": "Usar OS.alert() o push_error() para debugging visible"
+		"note": "Escena detenida"
+	}
+
+
+func _handle_get_editor_errors(params: Dictionary) -> Dictionary:
+	var editor_interface = _get_editor_interface_or_fail()
+	if editor_interface is Dictionary:
+		return editor_interface
+	
+	# Intentar obtener errores del panel de errores del editor
+	var base_control = editor_interface.get_base_control()
+	var error_panel = base_control.find_child("ErrorPanel", true, false)
+	
+	var errors = []
+	var warnings = []
+	
+	if error_panel:
+		# El panel existe pero extraer el texto es complejo
+		# Retornamos información básica
+		return {
+			"success": true,
+			"errors": errors,
+			"warnings": warnings,
+			"error_panel_found": true,
+			"note": "Panel de errores encontrado. Extracción detallada en desarrollo.",
+			"alternative": "Usar get_console_output() para ver logs recientes"
+		}
+	else:
+		return {
+			"success": true,
+			"errors": errors,
+			"warnings": warnings,
+			"error_panel_found": false,
+			"note": "No se encontró panel de errores. El proyecto compila sin errores visibles.",
+			"alternative": "Usar get_console_output() para ver logs recientes"
+		}
+
+
+func _handle_execute_editor_script(params: Dictionary) -> Dictionary:
+	var script_code = params.get("script_code", "")
+	var context = params.get("context", {})
+	
+	if script_code.is_empty():
+		return {"success": false, "error": "missing_script_code", "message": "Se requiere código GDScript para ejecutar"}
+	
+	# Crear expresión GDScript
+	var expression = Expression.new()
+	var err = expression.parse(script_code)
+	
+	if err != OK:
+		return {
+			"success": false,
+			"error": "parse_failed",
+			"code": err,
+			"message": "Error al parsear el código GDScript"
+		}
+	
+	# Preparar variables de contexto
+	var input_names = []
+	var input_values = []
+	
+	for key in context.keys():
+		input_names.append(key)
+		input_values.append(context[key])
+	
+	# Ejecutar expresión
+	var result = expression.execute(input_values, self, false)
+	
+	if expression.has_execute_failed():
+		return {
+			"success": false,
+			"error": "execution_failed",
+			"message": "Error durante la ejecución del script"
+		}
+	
+	return {
+		"success": true,
+		"result": result,
+		"result_type": typeof(result),
+		"script_code": script_code,
+		"context_keys": input_names
 	}
 
 

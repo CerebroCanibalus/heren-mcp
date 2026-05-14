@@ -12,6 +12,8 @@ Modos:
 - duplicate: Duplica nodo
 - rename: Renombra nodo
 - move: Mueve nodo en el árbol
+- array_append: Añade elemento a array
+- array_remove: Remueve elemento de array
 """
 
 import logging
@@ -35,6 +37,7 @@ def node_tool(
     value: Any = None,
     new_name: str = None,
     new_parent: str = None,
+    index: int = -1,
     **kwargs,
 ) -> dict:
     """
@@ -49,16 +52,19 @@ def node_tool(
             - "duplicate": Duplica nodo
             - "rename": Renombra nodo
             - "move": Mueve nodo a otro padre
+            - "array_append": Añade elemento a array property
+            - "array_remove": Remueve elemento de array property
         session_id: ID de sesión activa
         scene_path: Ruta a la escena
         node_path: Ruta al nodo (ej: "Player/Sprite2D")
         node_type: (para add) Tipo de nodo (Sprite2D, Node, etc.)
         node_name: (para add) Nombre del nuevo nodo
         properties: (para add) Propiedades iniciales
-        property_name: (para set_prop/get_prop) Nombre de propiedad
-        value: (para set_prop) Nuevo valor
+        property_name: (para set_prop/get_prop/array_*) Nombre de propiedad
+        value: (para set_prop/array_append/array_remove) Nuevo valor
         new_name: (para rename) Nuevo nombre
         new_parent: (para move) Nueva ruta padre
+        index: (para array_remove) Índice del elemento a remover
     
     Returns:
         Según el action:
@@ -69,6 +75,8 @@ def node_tool(
         - duplicate: {"success": True, "node_path": "..."}
         - rename: {"success": True}
         - move: {"success": True}
+        - array_append: {"success": True, "array_size": N}
+        - array_remove: {"success": True, "removed_value": ...}
     
     Examples:
         # Añadir nodo
@@ -78,6 +86,10 @@ def node_tool(
         # Cambiar propiedad
         node_tool("set_prop", session_id="abc", scene_path="res://Player.tscn",
                   node_path="Player", property_name="position", value={"x": 100, "y": 200})
+        
+        # Añadir a array
+        node_tool("array_append", session_id="abc", scene_path="res://Player.tscn",
+                  node_path="Player", property_name="inventory", value="sword")
     """
     
     manager = get_session_manager()
@@ -108,10 +120,16 @@ def node_tool(
     elif action == "move":
         return _action_move(manager, session_id, scene_path, node_path, new_parent)
     
+    elif action == "array_append":
+        return _action_array_append(manager, session_id, scene_path, node_path, property_name, value)
+    
+    elif action == "array_remove":
+        return _action_array_remove(manager, session_id, scene_path, node_path, property_name, value, index)
+    
     else:
         return {
             "success": False,
-            "error": f"Action no soportada: '{action}'. Use: add, remove, set_prop, get_prop, duplicate, rename, move"
+            "error": f"Action no soportada: '{action}'. Use: add, remove, set_prop, get_prop, duplicate, rename, move, array_append, array_remove"
         }
 
 
@@ -226,6 +244,56 @@ def _action_move(manager, session_id: str, scene_path: str, node_path: str,
     return _execute_via_daemon_or_fallback(
         manager, session_id, "move_node",
         {"scene_path": scene_path, "node_path": node_path, "new_parent": new_parent}
+    )
+
+
+def _action_array_append(manager, session_id: str, scene_path: str, node_path: str,
+                         property_name: str, value: Any) -> dict:
+    """Añade elemento a array property."""
+    if not all([scene_path, node_path, property_name]):
+        return {
+            "success": False,
+            "error": "scene_path, node_path y property_name requeridos para action='array_append'"
+        }
+    
+    return _execute_via_daemon_or_fallback(
+        manager, session_id, "array_append",
+        {
+            "scene_path": scene_path,
+            "node_path": node_path,
+            "property_name": property_name,
+            "value": value
+        }
+    )
+
+
+def _action_array_remove(manager, session_id: str, scene_path: str, node_path: str,
+                         property_name: str, value: Any, index: int) -> dict:
+    """Remueve elemento de array property."""
+    if not all([scene_path, node_path, property_name]):
+        return {
+            "success": False,
+            "error": "scene_path, node_path y property_name requeridos para action='array_remove'"
+        }
+    
+    params = {
+        "scene_path": scene_path,
+        "node_path": node_path,
+        "property_name": property_name
+    }
+    
+    if index >= 0:
+        params["index"] = index
+    elif value is not None:
+        params["value"] = value
+    else:
+        return {
+            "success": False,
+            "error": "index o value requerido para action='array_remove'"
+        }
+    
+    return _execute_via_daemon_or_fallback(
+        manager, session_id, "array_remove", params
     )
 
 
