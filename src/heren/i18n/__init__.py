@@ -126,6 +126,11 @@ def get_text(key: str, lang: str = "", **kwargs) -> str:
         >>> get_text("daemon_not_running", lang="en")
         'GodotDaemon is not running. Start a session with use_daemon=True.'
     """
+    # Usar idioma forzado si existe
+    global _forced_language
+    if _forced_language:
+        lang = _forced_language
+    
     # Detectar idioma si no se proporciona
     if not lang:
         lang = _detect_system_language()

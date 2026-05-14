@@ -48,6 +48,9 @@ def resource(action: str, session_id: str = None, **kwargs) -> dict:
         "update": _action_update,
         "delete": _action_delete,
         "list": _action_list,
+        "create_script": _action_create_script,
+        "read_script": _action_read_script,
+        "edit_script": _action_edit_script,
     }
     
     if action not in actions_map:
@@ -110,5 +113,37 @@ def _action_list(session_manager, session, directory: str = "res://", extension:
             "directory": directory,
             "extension": extension,
             "recursive": recursive
+        })
+    return {"success": False, "error": "Daemon no disponible"}
+
+
+def _action_create_script(session_manager, session, script_path: str, template: str = "", content: str = "", **kwargs) -> dict:
+    """Crear un script GDScript"""
+    daemon = session_manager.get_godot_daemon(session.id)
+    if daemon:
+        return daemon.call("create_script", {
+            "script_path": script_path,
+            "template": template,
+            "content": content
+        })
+    return {"success": False, "error": "Daemon no disponible"}
+
+
+def _action_read_script(session_manager, session, script_path: str, **kwargs) -> dict:
+    """Leer un script GDScript"""
+    daemon = session_manager.get_godot_daemon(session.id)
+    if daemon:
+        return daemon.call("read_script", {"script_path": script_path})
+    return {"success": False, "error": "Daemon no disponible"}
+
+
+def _action_edit_script(session_manager, session, script_path: str, content: str = "", append: bool = False, **kwargs) -> dict:
+    """Editar un script GDScript"""
+    daemon = session_manager.get_godot_daemon(session.id)
+    if daemon:
+        return daemon.call("edit_script", {
+            "script_path": script_path,
+            "content": content,
+            "append": append
         })
     return {"success": False, "error": "Daemon no disponible"}

@@ -394,6 +394,45 @@ class GodotDaemon:
         self.port = 0
         logger.info("[Daemon] Daemon detenido")
     
+    def kill(self):
+        """Fuerza el cierre del daemon inmediatamente (para limpieza de sesiones muertas)."""
+        logger.info("[Daemon] Forzando cierre del daemon...")
+        
+        # Cerrar WebSocket
+        if self.ws:
+            try:
+                self.ws.close()
+            except Exception:
+                pass
+        
+        self.ws = None
+        self._is_connected = False
+        
+        # Matar proceso
+        if self.process:
+            try:
+                import signal
+                # Enviar SIGTERM primero
+                if hasattr(self.process, 'send_signal'):
+                    self.process.send_signal(signal.SIGTERM)
+                else:
+                    self.process.terminate()
+                
+                # Esperar un poco
+                try:
+                    self.process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    # Forzar kill
+                    if hasattr(self.process, 'kill'):
+                        self.process.kill()
+                    self.process.wait(timeout=2)
+            except Exception:
+                pass
+        
+        self.process = None
+        self.port = 0
+        logger.info("[Daemon] Daemon cerrado forzosamente")
+    
     def __enter__(self):
         self.start()
         return self

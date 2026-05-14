@@ -129,10 +129,19 @@ def scene_tool(
             }
         )
     
+    elif action == "add_ext_resource":
+        return _execute_via_daemon_or_fallback(
+            manager, session_id, "add_ext_resource", {
+                "scene_path": scene_path,
+                "resource_path": kwargs.get("resource_path", ""),
+                "resource_type": kwargs.get("resource_type", "Script")
+            }
+        )
+    
     else:
         return {
             "success": False,
-            "error": f"Action no soportada: '{action}'. Use: get_tree, save, load, unload, list_loaded, screenshot, create, delete, rename"
+            "error": f"Action no soportada: '{action}'. Use: get_tree, save, load, unload, list_loaded, screenshot, create, delete, rename, add_ext_resource"
         }
 
 

@@ -64,7 +64,7 @@ def signal_tool(
         signal_tool("list", session_id="abc", scene_path="res://Player.tscn",
                    from_node="Player/Area2D")
         
-        # Asignar script
+        # Asignar script a un nodo
         signal_tool("set_script", session_id="abc", scene_path="res://Player.tscn",
                    node_path="Player", script_path="res://scripts/player.gd")
     """

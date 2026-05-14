@@ -11,10 +11,10 @@ FILOSOFÍA DE TOOLS:
 
 Tools:
 1. session   - Gestión de sesiones (open, close, list, info, health)
-2. scene     - Operaciones de escenas (get_tree, save, load, unload, list_loaded, screenshot, create, delete, rename)
+2. scene     - Operaciones de escenas (get_tree, save, load, unload, list_loaded, screenshot, create, delete, rename, add_ext_resource)
 3. node      - Operaciones de nodos (add, remove, set_prop, get_prop, duplicate, rename, move)
 4. batch     - Ejecución batch de múltiples operaciones
-5. resource  - Recursos .tres (create, read, update, delete, list)
+5. resource  - Recursos .tres y .gd (create, read, update, delete, list, create_script, read_script, edit_script)
 6. animation - Animaciones (create_player, create, add_track, add_key, state_machine)
 7. skeleton  - Esqueletos (create, add_bone, set_rest, skin, attachment)
 8. shader    - Shaders (create, edit, validate, material, uniform)
@@ -472,6 +472,7 @@ def skeleton_tool(
 @mcp.tool()
 def shader_tool(
     action: str,
+    session_id: str = None,
     shader_path: str = None,
     shader_type: str = "canvas_item",
     code: str = "",
@@ -495,6 +496,7 @@ def shader_tool(
     
     Args:
         action: Operación a realizar
+        session_id: ID de sesión activa
         shader_path: Ruta al shader
         shader_type: Tipo (canvas_item, spatial, particles)
         code: Código GDShader
@@ -506,7 +508,7 @@ def shader_tool(
         uniform_name: Nombre del uniform
         value: Valor del uniform
     """
-    return shader(action=action, shader_path=shader_path, shader_type=shader_type,
+    return shader(action=action, session_id=session_id, shader_path=shader_path, shader_type=shader_type,
                  code=code, append=append, scene_path=scene_path, node_path=node_path,
                  material_name=material_name, uniforms=uniforms, uniform_name=uniform_name,
                  value=value)

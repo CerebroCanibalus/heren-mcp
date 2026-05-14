@@ -15,9 +15,18 @@ from heren.core.session_manager import get_session_manager
 logger = logging.getLogger(__name__)
 
 
-def shader(action: str, **kwargs) -> dict:
+def shader(action: str, session_id: str = None, **kwargs) -> dict:
     """Tool centralizada para shaders."""
     session_manager = get_session_manager()
+    
+    # Obtener sesión explícita o activa
+    if session_id:
+        session = session_manager.get_session(session_id)
+    else:
+        session = session_manager.get_active_session()
+    
+    if not session:
+        return {"success": False, "error": "No hay sesión activa. Proporcione session_id."}
     
     actions_map = {
         "create": _action_create,
@@ -34,17 +43,13 @@ def shader(action: str, **kwargs) -> dict:
         }
     
     try:
-        return actions_map[action](session_manager, **kwargs)
+        return actions_map[action](session_manager, session, **kwargs)
     except Exception as e:
         logger.error(f"Error en shader({action}): {e}")
         return {"success": False, "error": str(e)}
 
 
-def _action_create(session_manager, shader_path: str, shader_type: str = "canvas_item", code: str = "", **kwargs) -> dict:
-    session = session_manager.get_active_session()
-    if not session:
-        return {"success": False, "error": "No hay sesión activa"}
-    
+def _action_create(session_manager, session, shader_path: str, shader_type: str = "canvas_item", code: str = "", **kwargs) -> dict:
     daemon = session_manager.get_godot_daemon(session.id)
     if daemon:
         return daemon.call("create_shader", {
@@ -55,11 +60,7 @@ def _action_create(session_manager, shader_path: str, shader_type: str = "canvas
     return {"success": False, "error": "Daemon no disponible"}
 
 
-def _action_edit(session_manager, shader_path: str, code: str, append: bool = False, **kwargs) -> dict:
-    session = session_manager.get_active_session()
-    if not session:
-        return {"success": False, "error": "No hay sesión activa"}
-    
+def _action_edit(session_manager, session, shader_path: str, code: str, append: bool = False, **kwargs) -> dict:
     daemon = session_manager.get_godot_daemon(session.id)
     if daemon:
         return daemon.call("edit_shader", {
@@ -70,22 +71,14 @@ def _action_edit(session_manager, shader_path: str, code: str, append: bool = Fa
     return {"success": False, "error": "Daemon no disponible"}
 
 
-def _action_validate(session_manager, shader_path: str, **kwargs) -> dict:
-    session = session_manager.get_active_session()
-    if not session:
-        return {"success": False, "error": "No hay sesión activa"}
-    
+def _action_validate(session_manager, session, shader_path: str, **kwargs) -> dict:
     daemon = session_manager.get_godot_daemon(session.id)
     if daemon:
         return daemon.call("validate_shader", {"shader_path": shader_path})
     return {"success": False, "error": "Daemon no disponible"}
 
 
-def _action_material(session_manager, scene_path: str, node_path: str, shader_path: str = "", material_name: str = "", uniforms: dict = None, **kwargs) -> dict:
-    session = session_manager.get_active_session()
-    if not session:
-        return {"success": False, "error": "No hay sesión activa"}
-    
+def _action_material(session_manager, session, scene_path: str, node_path: str, shader_path: str = "", material_name: str = "", uniforms: dict = None, **kwargs) -> dict:
     daemon = session_manager.get_godot_daemon(session.id)
     if daemon:
         return daemon.call("create_shader_material", {
@@ -98,11 +91,7 @@ def _action_material(session_manager, scene_path: str, node_path: str, shader_pa
     return {"success": False, "error": "Daemon no disponible"}
 
 
-def _action_uniform(session_manager, scene_path: str, node_path: str, uniform_name: str, value, **kwargs) -> dict:
-    session = session_manager.get_active_session()
-    if not session:
-        return {"success": False, "error": "No hay sesión activa"}
-    
+def _action_uniform(session_manager, session, scene_path: str, node_path: str, uniform_name: str, value, **kwargs) -> dict:
     daemon = session_manager.get_godot_daemon(session.id)
     if daemon:
         return daemon.call("set_shader_uniform", {

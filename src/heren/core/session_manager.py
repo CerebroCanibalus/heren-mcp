@@ -174,14 +174,46 @@ class SessionManager:
     def _cleanup_expired_sessions(self):
         """Limpia sesiones expiradas."""
         expired = []
+        dead_daemons = []
+        
         with self._sessions_lock:
             for session_id, session in list(self._sessions.items()):
                 if session.is_expired():
                     expired.append(session_id)
+                elif session.godot_daemon and not session.godot_daemon.is_alive():
+                    dead_daemons.append(session_id)
         
         for session_id in expired:
             logger.info(f"Sesi�n expirada: {session_id}")
             self.end_session(session_id)
+        
+        for session_id in dead_daemons:
+            logger.warning(f"[Daemon] Sesi�n {session_id} tiene daemon muerto. Limpiando...")
+            self._cleanup_dead_session(self._sessions.get(session_id))
+    
+    def _cleanup_dead_session(self, session: Session):
+        """Limpia una sesi�n con daemon muerto."""
+        if not session:
+            return
+        
+        session_id = session.id
+        
+        # Forzar cierre del proceso Godot si sigue vivo
+        if session.godot_daemon:
+            try:
+                session.godot_daemon.kill()
+            except Exception:
+                pass
+        
+        # Limpiar cach�
+        session.scene_cache.clear()
+        session.resource_cache.clear()
+        
+        # Eliminar de sesiones activas
+        with self._sessions_lock:
+            self._sessions.pop(session_id, None)
+        
+        logger.info(f"[Daemon] Sesi�n muerta limpiada: {session_id}")
     
     def start_session(
         self,
@@ -208,13 +240,20 @@ class SessionManager:
         if not os.path.exists(os.path.join(project_path, "project.godot")):
             raise ValueError(f"No es un proyecto Godot v�lido: {project_path}")
         
-        # Reutilizar sesi�n existente para el mismo proyecto
+        # Reutilizar sesi�n existente para el mismo proyecto (solo si daemon sigue vivo)
         with self._sessions_lock:
-            for session in self._sessions.values():
+            for session in list(self._sessions.values()):
                 if session.project_path == project_path:
-                    logger.info(f"Sesi�n reutilizada: {session.id} | Proyecto: {project_path}")
-                    session.touch()
-                    return session
+                    # Verificar si el daemon sigue vivo
+                    if session.godot_daemon and session.godot_daemon.is_alive():
+                        logger.info(f"Sesi�n reutilizada: {session.id} | Proyecto: {project_path}")
+                        session.touch()
+                        return session
+                    else:
+                        # Daemon muri�, limpiar sesi�n vieja
+                        logger.warning(f"[Daemon] Sesi�n {session.id} tiene daemon muerto. Limpiando...")
+                        self._cleanup_dead_session(session)
+                        break
         
         # Auto-detectar Godot
         if godot_path is None:

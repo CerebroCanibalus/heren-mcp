@@ -91,6 +91,37 @@
     "select_language": "Select language / Selecciona idioma (en/es): "
   },
   
+  "installer": {
+    "welcome": "Welcome to Heren MCP Installer",
+    "detected_os": "Detected operating system: {os}",
+    "godot_found": "Godot found: {path}",
+    "godot_not_found": "Godot not found. Provide it with --godot-path",
+    "project_found": "Valid Godot project: {path}",
+    "project_invalid": "Path does not appear to be a valid Godot project: {path}",
+    "installing_deps": "Installing Python dependencies...",
+    "deps_installed": "Dependencies installed successfully",
+    "deps_error": "Error installing dependencies: {error}",
+    "configuring_daemon": "Configuring Godot Daemon...",
+    "daemon_configured": "Godot Daemon configured at: {path}",
+    "mcp_config": "MCP Server Configuration",
+    "instructions": "Instructions:",
+    "step1": "1. Make sure Python 3.10+ is installed",
+    "step2": "2. Verify dependencies are installed",
+    "step3": "3. Configure your MCP client (OpenCode, Claude Desktop, etc.)",
+    "step4": "4. Open your Godot project before using Heren MCP",
+    "step5": "5. Start a session: session(action='open', project_path='D:/YourProject')",
+    "step6": "6. Ready! Use index(action='list') to see available tools.",
+    "summary_title": "Installation Summary",
+    "summary_os": "Operating System: {os}",
+    "summary_python": "Python: {version}",
+    "summary_godot": "Godot: {path}",
+    "summary_project": "Project: {path}",
+    "summary_status": "Status: {status}",
+    "status_success": "SUCCESS",
+    "status_error": "WITH ERRORS",
+    "ready": "Heren MCP is ready to use"
+  },
+  
   "ui": {
     "title_installer": "Heren MCP Installer",
     "title_main": "Heren MCP - Godot Engine Tool",

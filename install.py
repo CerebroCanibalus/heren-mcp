@@ -26,6 +26,16 @@ import sys
 import textwrap
 from pathlib import Path
 
+# Forzar UTF-8 en Windows
+if sys.platform == "win32":
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
+# Importar sistema i18n
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+from heren.i18n import get_text, get_current_language
+
 # Banner ASCII
 BANNER = r"""
                                                      
@@ -70,10 +80,17 @@ BANNER = r"""
 
 def print_banner():
     """Muestra el banner ASCII."""
-    print(BANNER)
+    try:
+        print(BANNER)
+    except UnicodeEncodeError:
+        # Fallback para terminales sin soporte Unicode
+        print("\n" + "=" * 70)
+        print("  HEREN MCP")
+        print("  Godot Engine Model Context Protocol Server")
+        print("=" * 70 + "\n")
     print("\n" + "=" * 70)
-    print("  Heren MCP - Godot Engine Model Context Protocol Server")
-    print("  Versión: 2.0.0")
+    print(f"  {get_text('ui.title_main')}")
+    print("  Version: 2.0.0")
     print("=" * 70 + "\n")
 
 
@@ -147,12 +164,12 @@ def find_godot(os_type):
 
 def install_python_dependencies():
     """Instala dependencias Python desde requirements.txt."""
-    print("📦 Instalando dependencias Python...")
+    print(f"📦 {get_text('installer.installing_deps')}")
     
     requirements_file = Path(__file__).parent / "requirements.txt"
     
     if not requirements_file.exists():
-        print("⚠️  requirements.txt no encontrado. Creando uno básico...")
+        print("⚠️  requirements.txt not found. Creating basic one...")
         with open(requirements_file, "w") as f:
             f.write("fastmcp>=1.0.0\n")
             f.write("pydantic>=2.0.0\n")
@@ -164,25 +181,25 @@ def install_python_dependencies():
             check=True,
             capture_output=False,
         )
-        print("✅ Dependencias instaladas correctamente")
+        print(f"✅ {get_text('installer.deps_installed')}")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"❌ Error instalando dependencias: {e}")
+        print(f"❌ {get_text('installer.deps_error', error=str(e))}")
         return False
     except FileNotFoundError:
-        print("❌ pip no encontrado. Instala pip primero.")
+        print("❌ pip not found. Please install pip first.")
         return False
 
 
 def setup_godot_daemon(project_path=None):
     """Configura Godot Daemon en el proyecto."""
-    print("🔌 Configurando Godot Daemon...")
+    print(f"🔌 {get_text('installer.configuring_daemon')}")
     
     # Buscar el archivo del daemon
     daemon_source = Path(__file__).parent / "src" / "heren" / "daemon" / "godot_daemon.py"
     
     if not daemon_source.exists():
-        print("⚠️  godot_daemon.py no encontrado en la instalación")
+        print("⚠️  godot_daemon.py not found in installation")
         return False
     
     if project_path:
@@ -197,8 +214,8 @@ def setup_godot_daemon(project_path=None):
 class_name HerenDaemon
 
 # Heren MCP - Godot Daemon
-# Este script se ejecuta dentro del editor de Godot
-# para permitir comunicación WebSocket con Heren MCP
+# This script runs inside Godot editor
+# to allow WebSocket communication with Heren MCP
 
 const PORT = 9742
 var server: TCPServer
@@ -206,22 +223,22 @@ var peers: Array[StreamPeerTCP] = []
 var websocket: WebSocketPeer
 
 func _ready():
-    print("[HerenDaemon] Iniciando...")
+    print("[HerenDaemon] Starting...")
     start_server()
 
 func start_server():
     server = TCPServer.new()
     var err = server.listen(PORT)
     if err != OK:
-        push_error("[HerenDaemon] No se pudo iniciar servidor en puerto " + str(PORT))
+        push_error("[HerenDaemon] Could not start server on port " + str(PORT))
         return
-    print("[HerenDaemon] Servidor WebSocket escuchando en puerto " + str(PORT))
+    print("[HerenDaemon] WebSocket server listening on port " + str(PORT))
 
 func _process(delta):
     if server and server.is_connection_available():
         var peer = server.take_connection()
         peers.append(peer)
-        print("[HerenDaemon] Cliente conectado")
+        print("[HerenDaemon] Client connected")
     
     for peer in peers:
         if peer.get_available_bytes() > 0:
@@ -235,22 +252,22 @@ func handle_message(data: String, peer: StreamPeerTCP):
 func _exit_tree():
     if server:
         server.stop()
-    print("[HerenDaemon] Servidor detenido")
+    print("[HerenDaemon] Server stopped")
 '''
         with open(daemon_gd, "w") as f:
             f.write(daemon_gd_content)
         
-        print(f"✅ Godot Daemon configurado en: {project_daemon_dir}")
+        print(f"✅ {get_text('installer.daemon_configured', path=str(project_daemon_dir))}")
         return True
     else:
-        print("ℹ️  No se proporcionó project_path. Omite configuración del daemon.")
+        print("ℹ️  No project_path provided. Skipping daemon setup.")
         return True
 
 
 def configure_mcp_server(project_path=None, godot_path=None):
     """Muestra instrucciones de configuración MCP."""
     print("\n" + "=" * 70)
-    print("  CONFIGURACIÓN MCP SERVER")
+    print(f"  {get_text('installer.mcp_config')}")
     print("=" * 70 + "\n")
     
     config = {
@@ -274,103 +291,116 @@ def configure_mcp_server(project_path=None, godot_path=None):
     if godot_path:
         config["mcpServers"]["heren-godot"]["env"]["GODOT_PATH"] = str(godot_path)
     
-    print("Añade esto a tu configuración de MCP (opencode.jsonc o similar):\n")
+    print("Add this to your MCP configuration (opencode.jsonc or similar):\n")
     print(json.dumps(config, indent=2))
     
     print("\n" + "-" * 70)
-    print("INSTRUCCIONES:")
+    print(f"{get_text('installer.instructions')}")
     print("-" * 70)
-    print("""
-1. Asegúrate de que Python 3.10+ esté instalado
-2. Verifica que las dependencias estén instaladas:
+    print(f"""
+{get_text('installer.step1')}
+{get_text('installer.step2')}:
    pip install -r requirements.txt
 
-3. Configura tu cliente MCP (OpenCode, Claude Desktop, etc.)
-   con la configuración mostrada arriba.
+{get_text('installer.step3')}
+   with the configuration shown above.
 
-4. Abre tu proyecto Godot antes de usar Heren MCP.
+{get_text('installer.step4')}
 
-5. Inicia una sesión:
-   session(action="open", project_path="D:/TuProyecto")
+{get_text('installer.step5')}
 
-6. ¡Listo! Puedes usar todas las tools disponibles.
-   Usa index(action="list") para ver las tools.
+{get_text('installer.step6')}
 """)
 
 
 def print_summary(os_type, godot_path, project_path, success):
     """Muestra resumen de la instalación."""
     print("\n" + "=" * 70)
-    print("  RESUMEN DE INSTALACIÓN")
+    print(f"  {get_text('installer.summary_title')}")
     print("=" * 70 + "\n")
     
-    print(f"Sistema Operativo: {os_type.upper()}")
-    print(f"Python: {sys.version.split()[0]}")
-    print(f"Godot: {godot_path if godot_path else 'NO ENCONTRADO ⚠️'}")
-    print(f"Proyecto: {project_path if project_path else 'No configurado'}")
-    print(f"Estado: {'✅ ÉXITO' if success else '❌ CON ERRORES'}")
+    print(get_text('installer.summary_os', os=os_type.upper()))
+    print(get_text('installer.summary_python', version=sys.version.split()[0]))
+    print(get_text('installer.summary_godot', path=godot_path if godot_path else 'NOT FOUND ⚠️'))
+    print(get_text('installer.summary_project', path=project_path if project_path else 'Not configured'))
+    status = get_text('installer.status_success') if success else get_text('installer.status_error')
+    print(get_text('installer.summary_status', status=status))
     
     print("\n" + "=" * 70)
-    print("  Heren MCP está listo para usar")
+    print(f"  {get_text('installer.ready')}")
     print("=" * 70 + "\n")
 
 
 def main():
+    # Detectar idioma del sistema para i18n
+    current_lang = get_current_language()
+    print(f"🌍 Language / Idioma: {current_lang.upper()}\n")
+    
     parser = argparse.ArgumentParser(
-        description="Instalador de Heren MCP para Godot Engine",
+        description="Heren MCP Installer for Godot Engine",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Ejemplos:
-  python install.py                          # Instalación básica
-  python install.py --project-path D:/Juego  # Con proyecto Godot
-  python install.py --godot-path /usr/bin/godot  # Godot específico
+Examples / Ejemplos:
+  python install.py                          # Basic installation
+  python install.py --project-path D:/Game   # With Godot project
+  python install.py --godot-path /usr/bin/godot  # Specific Godot
         """
     )
     
     parser.add_argument(
         "--project-path",
-        help="Ruta al proyecto Godot (opcional)"
+        help="Path to Godot project (optional) / Ruta al proyecto Godot (opcional)"
     )
     parser.add_argument(
         "--godot-path",
-        help="Ruta al ejecutable de Godot (auto-detecta si no se proporciona)"
+        help="Path to Godot executable (auto-detect if not provided) / Ruta al ejecutable de Godot"
     )
     parser.add_argument(
         "--skip-deps",
         action="store_true",
-        help="Omitir instalación de dependencias Python"
+        help="Skip Python dependencies installation / Omitir instalación de dependencias"
     )
     parser.add_argument(
         "--skip-daemon",
         action="store_true",
-        help="Omitir configuración del Godot Daemon"
+        help="Skip Godot Daemon configuration / Omitir configuración del daemon"
+    )
+    parser.add_argument(
+        "--lang",
+        choices=["es", "en"],
+        help="Force language / Forzar idioma (es/en)"
     )
     
     args = parser.parse_args()
+    
+    # Forzar idioma si se proporciona
+    if args.lang:
+        from heren.i18n import set_language
+        set_language(args.lang)
+        print(f"🌍 Language forced to / Idioma forzado a: {args.lang.upper()}\n")
     
     # Mostrar banner
     print_banner()
     
     # Detectar OS
     os_type = detect_os()
-    print(f"🖥️  Sistema operativo detectado: {os_type.upper()}\n")
+    print(f"🖥️  {get_text('installer.detected_os', os=os_type.upper())}\n")
     
     # Detectar Godot
     godot_path = args.godot_path or find_godot(os_type)
     if godot_path:
-        print(f"✅ Godot encontrado: {godot_path}\n")
+        print(f"✅ {get_text('installer.godot_found', path=godot_path)}\n")
     else:
-        print("⚠️  Godot no encontrado en las rutas comunes.")
-        print("   Puedes proporcionarlo con --godot-path\n")
+        print(f"⚠️  {get_text('installer.godot_not_found')}\n")
     
     # Verificar proyecto
     project_path = None
     if args.project_path:
         project_path = os.path.abspath(args.project_path)
         if os.path.exists(os.path.join(project_path, "project.godot")):
-            print(f"✅ Proyecto Godot válido: {project_path}\n")
+            print(f"✅ {get_text('installer.project_found', path=project_path)}\n")
         else:
-            print(f"⚠️  La ruta no parece ser un proyecto Godot válido: {project_path}\n")
+            print(f"⚠️  {get_text('installer.project_invalid', path=project_path)}\n")
             project_path = None
     
     # Instalar dependencias

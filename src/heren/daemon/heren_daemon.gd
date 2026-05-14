@@ -211,6 +211,12 @@ func _register_handlers():
 	_handlers["set_property"] = _handle_set_property
 	_handlers["get_node_properties"] = _handle_get_node_properties
 	
+	# === SIGNAL HANDLERS ===
+	_handlers["set_script"] = _handle_set_script
+	_handlers["connect_signal"] = _handle_connect_signal
+	_handlers["disconnect_signal"] = _handle_disconnect_signal
+	_handlers["list_signals"] = _handle_list_signals
+	
 	_handlers["load_scene"] = _handle_load_scene
 	_handlers["unload_scene"] = _handle_unload_scene
 	_handlers["get_loaded_scenes"] = _handle_get_loaded_scenes
@@ -255,6 +261,15 @@ func _register_handlers():
 	_handlers["set_tilemap_cell"] = _handle_set_tilemap_cell
 	_handlers["apply_terrain"] = _handle_apply_terrain
 	_handlers["create_tile_pattern"] = _handle_create_tile_pattern
+	
+	# === SCRIPT HANDLERS ===
+	_handlers["create_script"] = _handle_create_script
+	_handlers["read_script"] = _handle_read_script
+	_handlers["edit_script"] = _handle_edit_script
+	
+	# === EXT_RESOURCE HANDLERS ===
+	_handlers["add_ext_resource"] = _handle_add_ext_resource
+	_handlers["remove_ext_resource"] = _handle_remove_ext_resource
 	
 	# === PROJECT HANDLERS ===
 	_handlers["set_project_setting"] = _handle_set_project_setting
@@ -369,8 +384,8 @@ func _handle_load_scene(params: Dictionary) -> Dictionary:
 	if not scene_instance:
 		return {"success": false, "error": "instantiate_failed", "scene_path": scene_path}
 	
-	# Agregar a árbol pero oculto y deshabilitado
-	scene_instance.process_mode = Node.PROCESS_MODE_DISABLED
+	# Agregar a árbol pero oculto para no renderizar mientras editamos
+	# NO deshabilitamos process_mode para que los nodos nuevos funcionen correctamente
 	scene_instance.hide()
 	get_root().add_child(scene_instance)
 	
@@ -521,10 +536,17 @@ func _serialize_value(value) -> Variant:
 
 func _handle_add_node(params: Dictionary) -> Dictionary:
 	var scene_path = params.get("scene_path", "")
-	var parent_path = params.get("parent_path", ".")
+	var parent_path = params.get("parent_path", "")
 	var node_type = params.get("node_type", "Node")
 	var node_name = params.get("node_name", "")
 	var properties = params.get("properties", {})
+	
+	# Compatibilidad: si no hay parent_path pero sí node_path, usar node_path como parent_path
+	if not parent_path and params.has("node_path"):
+		parent_path = params.get("node_path", ".")
+	
+	if not parent_path:
+		parent_path = "."
 	
 	if not scene_path or not node_name:
 		return {"success": false, "error": "missing_params", "message": "scene_path y node_name son requeridos"}
@@ -538,12 +560,21 @@ func _handle_add_node(params: Dictionary) -> Dictionary:
 	var root = _scene_cache[scene_path]
 	var parent: Node
 	
-	if parent_path == "." or parent_path == root.name:
+	# Normalizar path
+	if parent_path == "." or parent_path == root.name or parent_path == "/root/" + root.name:
 		parent = root
 	else:
-		parent = root.get_node_or_null(parent_path)
+		# Quitar prefijos /root/ si existen
+		var normalized_path = parent_path
+		if normalized_path.begins_with("/root/"):
+			normalized_path = normalized_path.substr(6)
+		# Quitar nombre del root si está al inicio
+		if normalized_path.begins_with(root.name + "/"):
+			normalized_path = normalized_path.substr(root.name.length() + 1)
+		
+		parent = root.get_node_or_null(normalized_path)
 		if not parent:
-			return {"success": false, "error": "parent_not_found", "parent_path": parent_path}
+			return {"success": false, "error": "parent_not_found", "parent_path": parent_path, "normalized": normalized_path}
 	
 	# Verificar que no exista
 	if parent.get_node_or_null(node_name):
@@ -556,10 +587,14 @@ func _handle_add_node(params: Dictionary) -> Dictionary:
 	
 	new_node.name = node_name
 	
+	# Asegurar process_mode normal para nodos nuevos (no heredar el deshabilitado del cache)
+	if new_node is Node:
+		new_node.process_mode = Node.PROCESS_MODE_INHERIT
+	
 	# Aplicar propiedades
 	for prop_name in properties.keys():
 		var deserialized = _deserialize_value(properties[prop_name])
-		if prop_name in new_node or prop_name in ["position", "rotation", "scale", "size", "text", "visible", "modulate", "self_modulate"]:
+		if prop_name in new_node or prop_name in ["position", "rotation", "scale", "size", "text", "visible", "modulate", "self_modulate", "process_mode"]:
 			new_node.set(prop_name, deserialized)
 	
 	parent.add_child(new_node)
@@ -668,6 +703,168 @@ func _handle_get_node_properties(params: Dictionary) -> Dictionary:
 		"properties": _get_node_properties_dict(node)
 	}
 
+
+# ============================================================
+# HANDLERS DE SEÑALES Y SCRIPTS
+# ============================================================
+
+func _handle_set_script(params: Dictionary) -> Dictionary:
+	var scene_path = params.get("scene_path", "")
+	var node_path = params.get("node_path", "")
+	var script_path = params.get("script_path", "")
+	
+	if not scene_path or not node_path or not script_path:
+		return {"success": false, "error": "missing_params", "message": "scene_path, node_path y script_path son requeridos"}
+	
+	if not _scene_cache.has(scene_path):
+		return {"success": false, "error": "scene_not_loaded"}
+	
+	var root = _scene_cache[scene_path]
+	var node = root.get_node_or_null(node_path)
+	
+	if not node:
+		return {"success": false, "error": "node_not_found", "node_path": node_path}
+	
+	# Cargar el script
+	var script = load(script_path)
+	if not script:
+		return {"success": false, "error": "script_not_found", "script_path": script_path}
+	
+	# Asignar script al nodo
+	node.set_script(script)
+	
+	return {
+		"success": true,
+		"scene_path": scene_path,
+		"node_path": node_path,
+		"script_path": script_path,
+		"script_type": script.get_class() if script else "null"
+	}
+
+
+func _handle_connect_signal(params: Dictionary) -> Dictionary:
+	var scene_path = params.get("scene_path", "")
+	var from_node = params.get("from_node", "")
+	var signal_name = params.get("signal_name", "")
+	var to_node = params.get("to_node", "")
+	var method = params.get("method", "")
+	
+	if not scene_path or not from_node or not signal_name or not to_node or not method:
+		return {"success": false, "error": "missing_params"}
+	
+	if not _scene_cache.has(scene_path):
+		return {"success": false, "error": "scene_not_loaded"}
+	
+	var root = _scene_cache[scene_path]
+	var source = root.get_node_or_null(from_node)
+	var target = root.get_node_or_null(to_node)
+	
+	if not source:
+		return {"success": false, "error": "node_not_found", "node": from_node}
+	if not target:
+		return {"success": false, "error": "node_not_found", "node": to_node}
+	
+	# Verificar que la señal existe
+	if not source.has_signal(signal_name):
+		return {"success": false, "error": "signal_not_found", "signal": signal_name}
+	
+	# Conectar la señal
+	var err = source.connect(signal_name, Callable(target, method))
+	if err != OK:
+		return {"success": false, "error": "connect_failed", "code": err}
+	
+	return {
+		"success": true,
+		"scene_path": scene_path,
+		"from_node": from_node,
+		"signal": signal_name,
+		"to_node": to_node,
+		"method": method
+	}
+
+
+func _handle_disconnect_signal(params: Dictionary) -> Dictionary:
+	var scene_path = params.get("scene_path", "")
+	var from_node = params.get("from_node", "")
+	var signal_name = params.get("signal_name", "")
+	var to_node = params.get("to_node", "")
+	var method = params.get("method", "")
+	
+	if not scene_path or not from_node or not signal_name:
+		return {"success": false, "error": "missing_params"}
+	
+	if not _scene_cache.has(scene_path):
+		return {"success": false, "error": "scene_not_loaded"}
+	
+	var root = _scene_cache[scene_path]
+	var source = root.get_node_or_null(from_node)
+	
+	if not source:
+		return {"success": false, "error": "node_not_found", "node": from_node}
+	
+	# Desconectar todas las conexiones de esta señal si no se especifica target
+	if to_node and method:
+		var target = root.get_node_or_null(to_node)
+		if target:
+			source.disconnect(signal_name, Callable(target, method))
+	else:
+		# Desconectar todas las conexiones de esta señal
+		var connections = source.get_signal_connection_list(signal_name)
+		for conn in connections:
+			source.disconnect(signal_name, conn["callable"])
+	
+	return {
+		"success": true,
+		"scene_path": scene_path,
+		"from_node": from_node,
+		"signal": signal_name
+	}
+
+
+func _handle_list_signals(params: Dictionary) -> Dictionary:
+	var scene_path = params.get("scene_path", "")
+	var node_path = params.get("node_path", "")
+	
+	if not scene_path or not node_path:
+		return {"success": false, "error": "missing_params"}
+	
+	if not _scene_cache.has(scene_path):
+		return {"success": false, "error": "scene_not_loaded"}
+	
+	var root = _scene_cache[scene_path]
+	var node = root.get_node_or_null(node_path)
+	
+	if not node:
+		return {"success": false, "error": "node_not_found", "node_path": node_path}
+	
+	# Obtener señales del nodo
+	var signals = []
+	var signal_list = node.get_signal_list()
+	for sig in signal_list:
+		var connections = node.get_signal_connection_list(sig["name"])
+		var conn_list = []
+		for conn in connections:
+			conn_list.append({
+				"target": str(conn["callable"].get_object()),
+				"method": conn["callable"].get_method()
+			})
+		signals.append({
+			"name": sig["name"],
+			"args": sig.get("args", []),
+			"connections": conn_list
+		})
+	
+	return {
+		"success": true,
+		"scene_path": scene_path,
+		"node_path": node_path,
+		"signals": signals
+	}
+
+
+# ============================================================
+# HANDLERS DE ESCENA
+# ============================================================
 
 func _handle_save_scene(params: Dictionary) -> Dictionary:
 	var scene_path = params.get("scene_path", "")
@@ -1727,6 +1924,229 @@ func _handle_set_shader_uniform(params: Dictionary) -> Dictionary:
 
 
 # ============================================================
+# SCRIPT HANDLERS
+# ============================================================
+
+func _handle_create_script(params: Dictionary) -> Dictionary:
+	var script_path = params.get("script_path", "")
+	var template = params.get("template", "")
+	var content = params.get("content", "")
+	
+	if not script_path:
+		return {"success": false, "error": "missing_script_path"}
+	
+	# Asegurar extensión .gd
+	if not script_path.ends_with(".gd"):
+		script_path += ".gd"
+	
+	# Verificar que no exista
+	if FileAccess.file_exists(script_path):
+		return {"success": false, "error": "script_exists", "path": script_path}
+	
+	# Crear directorio si no existe
+	var base_dir = script_path.get_base_dir()
+	if base_dir != "res://" and base_dir != ".":
+		DirAccess.make_dir_recursive_absolute(base_dir)
+	
+	# Generar contenido si no se proporciona
+	var script_content = content
+	if script_content.is_empty():
+		match template:
+			"node2d":
+				script_content = "extends Node2D\n\nfunc _ready():\n\tpass\n"
+			"character":
+				script_content = "extends CharacterBody2D\n\nvar speed = 200.0\n\nfunc _physics_process(delta):\n\tpass\n"
+			"area":
+				script_content = "extends Area2D\n\nfunc _on_body_entered(body):\n\tpass\n"
+			_:
+				script_content = "extends Node\n\nfunc _ready():\n\tpass\n"
+	
+	# Guardar archivo
+	var file = FileAccess.open(script_path, FileAccess.WRITE)
+	if not file:
+		return {"success": false, "error": "cannot_write_script"}
+	file.store_string(script_content)
+	file.close()
+	
+	return {
+		"success": true,
+		"script_path": script_path,
+		"template": template,
+		"lines": script_content.split("\n").size()
+	}
+
+
+func _handle_read_script(params: Dictionary) -> Dictionary:
+	var script_path = params.get("script_path", "")
+	
+	if not script_path:
+		return {"success": false, "error": "missing_script_path"}
+	
+	if not FileAccess.file_exists(script_path):
+		return {"success": false, "error": "script_not_found", "path": script_path}
+	
+	var file = FileAccess.open(script_path, FileAccess.READ)
+	if not file:
+		return {"success": false, "error": "cannot_read_script"}
+	
+	var content = file.get_as_text()
+	file.close()
+	
+	return {
+		"success": true,
+		"script_path": script_path,
+		"content": content,
+		"lines": content.split("\n").size()
+	}
+
+
+func _handle_edit_script(params: Dictionary) -> Dictionary:
+	var script_path = params.get("script_path", "")
+	var content = params.get("content", "")
+	var append = params.get("append", false)
+	
+	if not script_path:
+		return {"success": false, "error": "missing_script_path"}
+	
+	var existing_content = ""
+	if append and FileAccess.file_exists(script_path):
+		var file = FileAccess.open(script_path, FileAccess.READ)
+		if file:
+			existing_content = file.get_as_text()
+			file.close()
+	
+	var new_content = existing_content + content
+	
+	var file = FileAccess.open(script_path, FileAccess.WRITE)
+	if not file:
+		return {"success": false, "error": "cannot_write_script"}
+	file.store_string(new_content)
+	file.close()
+	
+	return {
+		"success": true,
+		"script_path": script_path,
+		"lines": new_content.split("\n").size(),
+		"appended": append
+	}
+
+
+# ============================================================
+# EXT_RESOURCE HANDLERS
+# ============================================================
+
+func _handle_add_ext_resource(params: Dictionary) -> Dictionary:
+	var scene_path = params.get("scene_path", "")
+	var resource_path = params.get("resource_path", "")
+	var resource_type = params.get("resource_type", "Script")
+	
+	if not scene_path or not resource_path:
+		return {"success": false, "error": "missing_params"}
+	
+	if not FileAccess.file_exists(scene_path):
+		return {"success": false, "error": "scene_not_found"}
+	
+	# Leer archivo .tscn
+	var file = FileAccess.open(scene_path, FileAccess.READ)
+	if not file:
+		return {"success": false, "error": "cannot_read_scene"}
+	var content = file.get_as_text()
+	file.close()
+	
+	# Buscar siguiente ID disponible
+	var max_id = 0
+	var regex = RegEx.new()
+	regex.compile(r"\\[ext_resource type=\\\"(\w+)\\\" path=\\\"([^\"]+)\\\" id=\\\"(\w+)\\\"\\]")
+	var results = regex.search_all(content)
+	for res in results:
+		var id_str = res.get_string(3)
+		if id_str.begins_with("res_"):
+			var id_num = id_str.substr(4).to_int()
+			if id_num > max_id:
+				max_id = id_num
+	
+	var new_id = "res_" + str(max_id + 1)
+	
+	# Verificar si ya existe
+	for res in results:
+		if res.get_string(2) == resource_path:
+			return {
+				"success": true,
+				"scene_path": scene_path,
+				"resource_path": resource_path,
+				"resource_id": res.get_string(3),
+				"already_exists": true
+			}
+	
+	# Insertar ext_resource después de [gd_scene ...]
+	var gd_scene_end = content.find("\n", content.find("[gd_scene"))
+	if gd_scene_end == -1:
+		gd_scene_end = content.find("\n")
+	
+	var ext_resource_line = '[ext_resource type="' + resource_type + '" path="' + resource_path + '" id="' + new_id + '"]' + "\n"
+	content = content.substr(0, gd_scene_end + 1) + ext_resource_line + content.substr(gd_scene_end + 1)
+	
+	# Guardar
+	file = FileAccess.open(scene_path, FileAccess.WRITE)
+	if not file:
+		return {"success": false, "error": "cannot_write_scene"}
+	file.store_string(content)
+	file.close()
+	
+	return {
+		"success": true,
+		"scene_path": scene_path,
+		"resource_path": resource_path,
+		"resource_id": new_id,
+		"already_exists": false
+	}
+
+
+func _handle_remove_ext_resource(params: Dictionary) -> Dictionary:
+	var scene_path = params.get("scene_path", "")
+	var resource_id = params.get("resource_id", "")
+	
+	if not scene_path or not resource_id:
+		return {"success": false, "error": "missing_params"}
+	
+	if not FileAccess.file_exists(scene_path):
+		return {"success": false, "error": "scene_not_found"}
+	
+	# Leer archivo
+	var file = FileAccess.open(scene_path, FileAccess.READ)
+	if not file:
+		return {"success": false, "error": "cannot_read_scene"}
+	var content = file.get_as_text()
+	file.close()
+	
+	# Eliminar línea de ext_resource
+	var lines = content.split("\n")
+	var new_lines = []
+	var removed = false
+	for line in lines:
+		if '[ext_resource' in line and 'id="' + resource_id + '"' in line:
+			removed = true
+			continue
+		new_lines.append(line)
+	
+	if not removed:
+		return {"success": false, "error": "resource_not_found", "resource_id": resource_id}
+	
+	# Guardar
+	file = FileAccess.open(scene_path, FileAccess.WRITE)
+	if not file:
+		return {"success": false, "error": "cannot_write_scene"}
+	file.store_string("\n".join(new_lines))
+	file.close()
+	
+	return {
+		"success": true,
+		"scene_path": scene_path,
+		"resource_id": resource_id
+	}
+
+
+# ============================================================
 # TILEMAP HANDLERS
 # ============================================================
 
@@ -1944,12 +2364,69 @@ func _handle_set_project_setting(params: Dictionary) -> Dictionary:
 	if not setting_name:
 		return {"success": false, "error": "missing_setting_name"}
 	
-	var deserialized = _deserialize_value(value)
-	ProjectSettings.set_setting(setting_name, deserialized)
+	# Edición quirúrgica del project.godot sin sobrescribir todo
+	var project_file = _project_path + "/project.godot"
+	if not FileAccess.file_exists(project_file):
+		return {"success": false, "error": "project_not_found", "path": project_file}
 	
-	var err = ProjectSettings.save()
-	if err != OK:
-		return {"success": false, "error": "save_failed", "code": err}
+	# Leer archivo existente
+	var file = FileAccess.open(project_file, FileAccess.READ)
+	if not file:
+		return {"success": false, "error": "cannot_read_project"}
+	
+	var content = file.get_as_text()
+	file.close()
+	
+	# Parsear setting_name (formato: "section/key")
+	var parts = setting_name.split("/")
+	if parts.size() < 2:
+		return {"success": false, "error": "invalid_setting_format", "expected": "section/key"}
+	
+	var section = parts[0]
+	var key = parts[1]
+	var deserialized = _deserialize_value(value)
+	var value_str = _value_to_godot_config(deserialized)
+	
+	# Verificar si la sección existe
+	var section_pattern = "[" + section + "]"
+	var section_pos = content.find(section_pattern)
+	
+	if section_pos == -1:
+		# Sección no existe, añadir al final
+		content += "\n" + section_pattern + "\n" + key + "=" + value_str + "\n"
+	else:
+		# Sección existe, buscar la key
+		var next_section = content.find("[", section_pos + 1)
+		var section_end = next_section if next_section != -1 else content.length()
+		var section_content = content.substr(section_pos, section_end - section_pos)
+		
+		var key_pattern = key + "="
+		var key_pos = section_content.find(key_pattern)
+		
+		if key_pos != -1:
+			# Key existe, reemplazar
+			var line_start = section_content.rfind("\n", key_pos) + 1
+			var line_end = section_content.find("\n", key_pos)
+			if line_end == -1:
+				line_end = section_content.length()
+			
+			var before = content.substr(0, section_pos + line_start)
+			var after = content.substr(section_pos + line_end)
+			content = before + key + "=" + value_str + after
+		else:
+			// Key no existe, añadir al final de la sección
+			var insert_pos = section_end
+			content = content.substr(0, insert_pos) + key + "=" + value_str + "\n" + content.substr(insert_pos)
+	
+	# Guardar
+	file = FileAccess.open(project_file, FileAccess.WRITE)
+	if not file:
+		return {"success": false, "error": "cannot_write_project"}
+	file.store_string(content)
+	file.close()
+	
+	# También actualizar en memoria para consistencia
+	ProjectSettings.set_setting(setting_name, deserialized)
 	
 	return {
 		"success": true,
@@ -1977,6 +2454,85 @@ func _handle_get_project_setting(params: Dictionary) -> Dictionary:
 	}
 
 
+func _value_to_godot_config(value) -> String:
+	"""Convierte un valor de Godot al formato de project.godot."""
+	if value is String:
+		return "\"" + value + "\""
+	elif value is bool:
+		return "true" if value else "false"
+	elif value is int or value is float:
+		return str(value)
+	elif value is Vector2:
+		return "Vector2(" + str(value.x) + ", " + str(value.y) + ")"
+	elif value is Vector2i:
+		return "Vector2i(" + str(value.x) + ", " + str(value.y) + ")"
+	elif value is Vector3:
+		return "Vector3(" + str(value.x) + ", " + str(value.y) + ", " + str(value.z) + ")"
+	elif value is Color:
+		return "Color(" + str(value.r) + ", " + str(value.g) + ", " + str(value.b) + ", " + str(value.a) + ")"
+	else:
+		return "\"" + str(value) + "\""
+
+
+func _edit_project_godot(section: String, key: String, value: String, remove: bool = false) -> Dictionary:
+	"""Edita el project.godot de forma quirúrgica."""
+	var project_file = _project_path + "/project.godot"
+	if not FileAccess.file_exists(project_file):
+		return {"success": false, "error": "project_not_found"}
+	
+	var file = FileAccess.open(project_file, FileAccess.READ)
+	if not file:
+		return {"success": false, "error": "cannot_read"}
+	var content = file.get_as_text()
+	file.close()
+	
+	var section_pattern = "[" + section + "]"
+	var section_pos = content.find(section_pattern)
+	
+	if section_pos == -1:
+		if remove:
+			return {"success": true, "removed": key}
+		# Añadir sección
+		content += "\n" + section_pattern + "\n" + key + "=" + value + "\n"
+	else:
+		var next_section = content.find("[", section_pos + 1)
+		var section_end = next_section if next_section != -1 else content.length()
+		var section_content = content.substr(section_pos, section_end - section_pos)
+		
+		var key_pattern = key + "="
+		var key_pos = section_content.find(key_pattern)
+		
+		if key_pos != -1:
+			var line_start = section_content.rfind("\n", key_pos) + 1
+			var line_end = section_content.find("\n", key_pos)
+			if line_end == -1:
+				line_end = section_content.length()
+			
+			if remove:
+				# Eliminar línea
+				var before = content.substr(0, section_pos + line_start)
+				var after = content.substr(section_pos + line_end + 1)
+				content = before + after
+			else:
+				# Reemplazar
+				var before = content.substr(0, section_pos + line_start)
+				var after = content.substr(section_pos + line_end)
+				content = before + key + "=" + value + after
+		else:
+			if not remove:
+				// Añadir key
+				var insert_pos = section_end
+				content = content.substr(0, insert_pos) + key + "=" + value + "\n" + content.substr(insert_pos)
+	
+	file = FileAccess.open(project_file, FileAccess.WRITE)
+	if not file:
+		return {"success": false, "error": "cannot_write"}
+	file.store_string(content)
+	file.close()
+	
+	return {"success": true}
+
+
 func _handle_add_autoload(params: Dictionary) -> Dictionary:
 	var autoload_name = params.get("autoload_name", "")
 	var script_path = params.get("script_path", "")
@@ -1984,11 +2540,11 @@ func _handle_add_autoload(params: Dictionary) -> Dictionary:
 	if not autoload_name or not script_path:
 		return {"success": false, "error": "missing_params"}
 	
-	ProjectSettings.set_setting("autoload/" + autoload_name, "*" + script_path)
+	var result = _edit_project_godot("autoload", autoload_name, "*" + script_path)
+	if not result.success:
+		return result
 	
-	var err = ProjectSettings.save()
-	if err != OK:
-		return {"success": false, "error": "save_failed"}
+	ProjectSettings.set_setting("autoload/" + autoload_name, "*" + script_path)
 	
 	return {
 		"success": true,
@@ -2003,11 +2559,11 @@ func _handle_remove_autoload(params: Dictionary) -> Dictionary:
 	if not autoload_name:
 		return {"success": false, "error": "missing_autoload_name"}
 	
-	ProjectSettings.set_setting("autoload/" + autoload_name, null)
+	var result = _edit_project_godot("autoload", autoload_name, "", true)
+	if not result.success:
+		return result
 	
-	var err = ProjectSettings.save()
-	if err != OK:
-		return {"success": false, "error": "save_failed"}
+	ProjectSettings.set_setting("autoload/" + autoload_name, null)
 	
 	return {"success": true, "removed": autoload_name}
 
