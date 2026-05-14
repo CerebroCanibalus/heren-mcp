@@ -1,6 +1,6 @@
 ﻿<div align="center">
 
-![Heren Godot MCP Banner](assets/banner.png)
+![Heren Godot MCP Banner](assets/HerenGodotBanner.png)
 
 <p>
   <a href="README.md">🇪🇸 Español</a> •
