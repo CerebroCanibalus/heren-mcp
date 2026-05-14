@@ -1,0 +1,16 @@
+include LICENSE
+include CHANGELOG.md
+include CONTRIBUTING.md
+include README.md
+include AGENTS.md
+
+recursive-include heren/daemon *.gd
+recursive-include heren/templates *.j2 *.tscn *.gd
+recursive-include docs *.md *.rst
+recursive-include benchmarks *.py *.md
+
+exclude tests/*
+exclude .github/*
+exclude .gitignore
+exclude *.bat
+exclude *.ps1

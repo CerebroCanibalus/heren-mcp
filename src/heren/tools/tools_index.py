@@ -134,6 +134,25 @@ TOOLS_INDEX = {
             "node": 'validate(action="node", session_id="abc", scene_path="res://Player.tscn", node_path="Player/Sprite2D")',
             "resource": 'validate(action="resource", session_id="abc", resource_path="res://materials/my_material.tres")'
         }
+    },
+    "signal": {
+        "description": "Señales entre nodos",
+        "actions": ["connect", "disconnect", "list", "set_script"],
+        "examples": {
+            "connect": 'signal(action="connect", session_id="abc", scene_path="res://Player.tscn", from_node="Player/Area2D", signal_name="body_entered", to_node="Player", method="_on_area_body_entered")',
+            "disconnect": 'signal(action="disconnect", session_id="abc", scene_path="res://Player.tscn", from_node="Player/Area2D", signal_name="body_entered", to_node="Player", method="_on_area_body_entered")',
+            "list": 'signal(action="list", session_id="abc", scene_path="res://Player.tscn", from_node="Player/Area2D")',
+            "set_script": 'signal(action="set_script", session_id="abc", scene_path="res://Player.tscn", node_path="Player", script_path="res://scripts/player.gd")'
+        }
+    },
+    "global": {
+        "description": "Configuración global del proyecto",
+        "actions": ["autoload", "project_setting", "shader_global"],
+        "examples": {
+            "autoload": 'global_tool(action="autoload", session_id="abc", autoload_name="GameManager", script_path="res://autoloads/game_manager.gd")',
+            "project_setting": 'global_tool(action="project_setting", session_id="abc", setting_name="display/window/size/viewport_width", value=1920)',
+            "shader_global": 'global_tool(action="shader_global", session_id="abc", global_name="time", value=0.0)'
+        }
     }
 }
 

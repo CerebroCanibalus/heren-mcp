@@ -243,6 +243,58 @@ class GodotInterface:
             node_path=node_path,
         )
     
+    # ============ Signal Operations ============
+    
+    def connect_signal(self, scene_path: str, from_node: str, signal_name: str,
+                       to_node: str, method: str) -> dict:
+        """Conecta una señal entre nodos."""
+        result = self._execute_template(
+            "connect_signal",
+            scene_path=scene_path,
+            from_node=from_node,
+            signal_name=signal_name,
+            to_node=to_node,
+            method=method,
+        )
+        if result.get("success"):
+            self.session.scene_cache.invalidate(f"scene_tree:{scene_path}")
+        return result
+    
+    def disconnect_signal(self, scene_path: str, from_node: str, signal_name: str,
+                          to_node: str, method: str) -> dict:
+        """Desconecta una señal entre nodos."""
+        result = self._execute_template(
+            "disconnect_signal",
+            scene_path=scene_path,
+            from_node=from_node,
+            signal_name=signal_name,
+            to_node=to_node,
+            method=method,
+        )
+        if result.get("success"):
+            self.session.scene_cache.invalidate(f"scene_tree:{scene_path}")
+        return result
+    
+    def list_signals(self, scene_path: str, node_path: str) -> dict:
+        """Lista las señales de un nodo."""
+        return self._execute_template(
+            "list_signals",
+            scene_path=scene_path,
+            node_path=node_path,
+        )
+    
+    def set_script(self, scene_path: str, node_path: str, script_path: str) -> dict:
+        """Asigna un script a un nodo."""
+        result = self._execute_template(
+            "set_script",
+            scene_path=scene_path,
+            node_path=node_path,
+            script_path=script_path,
+        )
+        if result.get("success"):
+            self.session.scene_cache.invalidate(f"scene_tree:{scene_path}")
+        return result
+    
     # ============ Project Operations ============
     
     def get_project_info(self) -> dict:

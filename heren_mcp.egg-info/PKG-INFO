@@ -1,0 +1,317 @@
+Metadata-Version: 2.4
+Name: heren-mcp
+Version: 1.0.0
+Summary: Servidor MCP de alto rendimiento para Godot Engine 4.x con daemon persistente vía WebSocket
+Author: Heren MCP Contributors
+License: MIT
+Project-URL: Homepage, https://github.com/tu-usuario/heren-mcp
+Project-URL: Documentation, https://github.com/tu-usuario/heren-mcp#readme
+Project-URL: Repository, https://github.com/tu-usuario/heren-mcp.git
+Project-URL: Issues, https://github.com/tu-usuario/heren-mcp/issues
+Project-URL: Changelog, https://github.com/tu-usuario/heren-mcp/blob/main/CHANGELOG.md
+Keywords: godot,mcp,model-context-protocol,game-development,gamedev,websocket,daemon,gdscript
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: Developers
+Classifier: Topic :: Software Development :: Build Tools
+Classifier: Topic :: Games/Entertainment
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Operating System :: OS Independent
+Classifier: Natural Language :: Spanish
+Classifier: Natural Language :: Portuguese
+Classifier: Natural Language :: English
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: websocket-client>=1.6.0
+Requires-Dist: fastmcp>=1.0.0
+Requires-Dist: jinja2>=3.1.0
+Requires-Dist: watchdog>=3.0.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0.0; extra == "dev"
+Requires-Dist: black>=23.0.0; extra == "dev"
+Requires-Dist: flake8>=6.0.0; extra == "dev"
+Requires-Dist: mypy>=1.0.0; extra == "dev"
+Requires-Dist: pre-commit>=3.0.0; extra == "dev"
+Provides-Extra: docs
+Requires-Dist: mkdocs>=1.5.0; extra == "docs"
+Requires-Dist: mkdocs-material>=9.0.0; extra == "docs"
+Dynamic: license-file
+
+﻿<div align="center">
+
+```
+                                                      
+   	   ▄█    █▄       ▄████████    ▄████████    ▄████████ ███▄▄▄▄        
+   	  ███    ███     ███    ███   ███    ███   ███    ███ ███▀▀▀██▄      
+  	  ███    ███     ███    █▀    ███    ███   ███    █▀  ███   ███      
+ 	 ▄███▄▄▄▄███▄▄  ▄███▄▄▄      ▄███▄▄▄▄██▀  ▄███▄▄▄     ███   ███      
+	▀▀███▀▀▀▀███▀  ▀▀███▀▀▀     ▀▀███▀▀▀▀▀   ▀▀███▀▀▀     ███   ███      
+	  ███    ███     ███    █▄  ▀███████████   ███    █▄  ███   ███      
+  	  ███    ███     ███    ███   ███    ███   ███    ███ ███   ███      
+	  ███    █▀      ██████████   ███    ███   ██████████  ▀█   █▀       
+                               ███    ███ 
+
+	 ▄████   ▄▄▄  ▄▄▄▄   ▄▄▄ ▄▄▄▄▄▄   ██▄  ▄██ ▄█████ █████▄ 
+	██  ▄▄▄ ██▀██ ██▀██ ██▀██  ██     ██ ▀▀ ██ ██     ██▄▄█▀ 
+	 ▀███▀  ▀███▀ ████▀ ▀███▀  ██     ██    ██ ▀█████ ██     
+                                                           
+	                     -,,,__
+                      \    ``~~--,,__                /   /
+                      /              ``~~--,,_     //--//
+           _,,,,-----,\              ,,,,---- >   (c  c)\
+       ,;''            `\,,,,----''''   ,,-'''---/   /_ ;___        -,_
+      ( ''---,;====;,----/             (-,,_____/  /'/ `;   '''''----\ `:
+      (                 '               `      (oo)/   ;~~~~~~~~~~~~~/--~
+       `;_           ;    \            ;   \   `  ' ,,'
+          ```-----...|     )___________|    )-----'''
+                      \   /             \   \\
+	             /  /,             `\   \\
+                    ,'---\ \              ,---`,;,
+                          ```
+```
+
+</div>
+
+> *"La técnica es una actividad compositora o destructora, violenta, y esto es lo que Aristóteles llamaba la poiesis, la poesía, precisamente."* — **Gustavo Bueno**
+
+---
+
+# 🌍 Iberofonía
+
+**Heren MCP** está hecho para la comunidad **hispanohablante y lusófona**.
+
+- 🇪🇸 España
+- 🇲🇽 México
+- 🇦🇷 Argentina
+- 🇨🇴 Colombia
+- 🇧🇷 Brasil
+- 🇵🇹 Portugal
+- Y toda **Iberoamérica**
+
+> **Sin barrera idiomática**: porque hacer juegos no debería requerir hablar inglés.
+
+La documentación está en **español** y **portugués** (próximamente). Los nombres de funciones y variables mantienen consistencia con Godot (inglés), pero toda la documentación, guías y comunicación están en nuestras lenguas.
+
+---
+
+# ⚡ Heren MCP — Servidor MCP para Godot Engine
+
+Servidor [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) de alto rendimiento para **Godot Engine 4.x**, escrito en Python. Usa un **daemon GDScript persistente** vía WebSocket para operaciones ultrarrápidas (~20ms/op).
+
+## Comparativa Real
+
+| Approach | Latencia/op | Persistente | Setup | Memoria |
+|----------|-------------|-------------|-------|---------|
+| **Heren MCP** | **~20ms** | ✅ Yes | **0s** | **~75MB** |
+| Coding-Solo | ~367ms | ❌ No | npm install | 0MB |
+| GoPeak | ~35ms* | ✅ Yes | 60s+plugin | ~450MB |
+
+*Estimado con plugin ya instalado
+
+### Ventajas Clave
+
+- 🚀 **18x más rápido** que Coding-Solo
+- ⚡ **1.75x más rápido** que GoPeak
+- 💾 **6x menos memoria** que GoPeak
+- 🔧 **Sin setup** — no requiere plugin ni npm
+- 🔄 **Fallback automático** si el daemon no está disponible
+- 🛠️ **13 tools integradas** en arquitectura centralizada
+
+---
+
+## 📦 Instalación
+
+```bash
+git clone https://github.com/tu-usuario/heren-mcp.git
+cd heren-mcp
+pip install -e .
+```
+
+### Requisitos
+
+- **Python** >= 3.10
+- **Godot** >= 4.2 (recomendado 4.6+)
+- **Sistema operativo**: Windows, Linux, macOS
+
+---
+
+## ⚙️ Configuración MCP
+
+Añade esto a tu configuración de MCP (Cursor, Claude Desktop, etc.):
+
+```json
+{
+  "mcpServers": {
+    "heren": {
+      "command": "python",
+      "args": ["-m", "heren.server"],
+      "env": {
+        "GODOT_EXE": "D:/Mis Juegos/Godot/Godot_v4.6.1-stable_win64.exe"
+      }
+    }
+  }
+}
+```
+
+### Variables de entorno
+
+| Variable | Descripción | Ejemplo |
+|----------|-------------|---------|
+| `GODOT_EXE` | Ruta al ejecutable de Godot | `D:/Godot/Godot_v4.6.1.exe` |
+| `HEREN_PORT` | Puerto del daemon WebSocket | `4567` |
+| `HEREN_LOG_LEVEL` | Nivel de logging | `INFO`, `DEBUG` |
+
+---
+
+## 🚀 Uso Rápido
+
+```python
+# Iniciar sesión
+session_tool(action="open", project_path="D:/MiJuego")
+# → {"success": true, "session_id": "abc123", "daemon_active": true}
+
+# Crear escena
+scene_tool(action="create", session_id="abc123", scene_path="res://Player.tscn")
+
+# Añadir nodo
+node_tool(
+    action="add",
+    session_id="abc123",
+    scene_path="res://Player.tscn",
+    parent_path=".",
+    node_type="CharacterBody2D",
+    node_name="Player"
+)
+
+# Guardar escena
+scene_tool(action="save", session_id="abc123", scene_path="res://Player.tscn")
+```
+
+### Batch Operations
+
+```python
+# Múltiples operaciones en una sola llamada
+batch_tool(session_id="abc123", operations=[
+    {"action": "add", "params": {
+        "scene_path": "res://Player.tscn",
+        "parent_path": ".",
+        "node_type": "Sprite2D",
+        "node_name": "Body"
+    }},
+    {"action": "add", "params": {
+        "scene_path": "res://Player.tscn",
+        "parent_path": "Body",
+        "node_type": "CollisionShape2D",
+        "node_name": "Hitbox"
+    }},
+    {"action": "save", "params": {
+        "scene_path": "res://Player.tscn"
+    }}
+])
+```
+
+---
+
+## 🛠️ Tools Disponibles
+
+| Tool | Acciones | Descripción |
+|------|----------|-------------|
+| **session** | open, close, list, info, health | Gestión de sesiones con Godot |
+| **scene** | load, save, get_tree, screenshot | Operaciones de escenas |
+| **node** | add, remove, set_prop, get_prop, duplicate, rename, move | Manipulación de nodos |
+| **animation** | create_player, create, add_track, add_key, state_machine | Sistema de animaciones |
+| **shader** | create, edit, validate, material, uniform | Shaders y materiales |
+| **skeleton** | create, add_bone, set_rest, skin, attachment | Rigging 2D/3D |
+| **tilemap** | inspect_set, inspect_map, set_cell, terrain, pattern | TileMaps y TileSets |
+| **resource** | create, read, update, delete, list | Gestión de recursos .tres |
+| **project** | setting, autoload, remove_autoload, shader_global | Configuración del proyecto |
+| **batch** | - | Operaciones batch de alto rendimiento |
+| **debug** | breakpoint, stack_trace, watch, console | Herramientas de debugging |
+| **validate** | scene, script, node, resource | Validación de archivos |
+| **index** | list, info, example | Descubrimiento de tools |
+
+---
+
+## 🏗️ Arquitectura
+
+```
+┌─────────────┐      ┌──────────────────┐      ┌─────────────────────┐
+│  Agente IA  │──────▶│  Heren MCP Server │─────▶│  Godot Daemon (WS)  │
+└─────────────┘      └──────────────────┘      └─────────────────────┘
+                              │
+                              ▼
+                    ┌──────────────────┐
+                    │ Session Manager  │
+                    │ + Cache (LRU)    │
+                    └──────────────────┘
+```
+
+### Flujo de operación
+
+1. **Agente** envía petición al servidor MCP
+2. **Heren MCP** verifica si hay sesión activa
+3. Si hay **daemon activo** → WebSocket (~20ms)
+4. Si no hay daemon → **Fallback** a scripts (~370ms)
+5. **Godot** ejecuta la operación y responde
+6. **Cache** almacena resultados frecuentes
+
+---
+
+## 📚 Documentación
+
+- [AGENTS.md](AGENTS.md) — Guía completa para agentes de IA
+- [docs/INSTALL.md](docs/INSTALL.md) — Instalación detallada
+- [docs/API.md](docs/API.md) — Referencia completa de la API
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Arquitectura técnica
+- [CONTRIBUTING.md](CONTRIBUTING.md) — Cómo contribuir
+- [CHANGELOG.md](CHANGELOG.md) — Historial de cambios
+
+---
+
+## 📊 Benchmarks
+
+Ver [benchmarks/BENCHMARKS.md](benchmarks/BENCHMARKS.md) para comparativas reales con metodología y resultados detallados.
+
+### Resumen de rendimiento
+
+| Operación | Con Daemon | Sin Daemon |
+|-----------|-----------|------------|
+| Añadir nodo | ~20ms | ~370ms |
+| Guardar escena | ~15ms | ~340ms |
+| Leer árbol | ~25ms | ~400ms |
+| Screenshot | ~50ms | ~800ms |
+
+---
+
+## 🤝 Contribuir
+
+¡Las contribuciones son bienvenidas! Lee [CONTRIBUTING.md](CONTRIBUTING.md) para:
+
+- Cómo clonar e instalar
+- Cómo correr tests
+- Cómo reportar bugs
+- Estilo de código
+- Cómo proponer features
+
+---
+
+## 📜 Licencia
+
+[MIT](LICENSE) © 2026 Heren MCP Contributors
+
+---
+
+<div align="center">
+
+**Hecho con ❤️ para la comunidad iberoamericana de Godot**
+
+[⭐ Star en GitHub](https://github.com/tu-usuario/heren-mcp) • [🐛 Reportar bug](https://github.com/tu-usuario/heren-mcp/issues) • [💡 Proponer feature](https://github.com/tu-usuario/heren-mcp/issues)
+
+</div>
+

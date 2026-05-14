@@ -22,7 +22,9 @@ Tools:
 10. project  - Configuración (setting, autoload, shader_global)
 11. debug    - Depuración (breakpoint, stack_trace, watch, console)
 12. validate - Validación (scene, script, node, resource)
-13. index    - Índice de tools (list, info, example)
+13. signal   - Señales entre nodos (connect, disconnect, list, set_script)
+14. global   - Configuración global (autoload, project_setting, shader_global)
+15. index    - Índice de tools (list, info, example)
 
 Filosofia: Poder. Eficiencia. Rapidez.
 """
@@ -48,6 +50,8 @@ from heren.tools.tilemap_tool import tilemap
 from heren.tools.project_tool import project
 from heren.tools.debug_tool import debug
 from heren.tools.validate_tool import validate
+from heren.tools.signal_tool import signal_tool as _signal_tool_impl
+from heren.tools.global_tool import global_tool as _global_tool_impl
 from heren.tools.tools_index import list_tools, get_tool_info, get_action_example
 
 logging.basicConfig(
@@ -671,7 +675,138 @@ def validate_tool(
 
 
 # ============================================================
-# TOOL 13: INDEX (Índice de Tools)
+# TOOL 13: SIGNAL TOOL (Señales entre Nodos)
+# ============================================================
+
+@mcp.tool()
+def signal(
+    action: str,
+    session_id: str,
+    scene_path: str = "",
+    from_node: str = "",
+    signal_name: str = "",
+    to_node: str = "",
+    method: str = "",
+    node_path: str = "",
+    script_path: str = "",
+) -> dict:
+    """
+    Tool centralizada para gestión de señales y scripts de nodos.
+    
+    Actions:
+        - "connect": Conecta una señal de un nodo a un método de otro
+        - "disconnect": Desconecta una señal previamente conectada
+        - "list": Lista todas las señales (built-in y conectadas) de un nodo
+        - "set_script": Asigna un script GDScript a un nodo
+    
+    Args:
+        action: Operación a realizar
+        session_id: ID de sesión activa
+        scene_path: Ruta a la escena
+        from_node: Ruta del nodo emisor (para connect/disconnect/list)
+        signal_name: Nombre de la señal (para connect/disconnect)
+        to_node: Ruta del nodo receptor (para connect/disconnect)
+        method: Nombre del método callback (para connect/disconnect)
+        node_path: Ruta del nodo a modificar (para set_script)
+        script_path: Ruta al script .gd (para set_script)
+    
+    Returns:
+        Dict con resultado de la operación
+    
+    Examples:
+        # Conectar señal body_entered de Area2D a método del Player
+        signal("connect", session_id="abc", scene_path="res://Player.tscn",
+               from_node="Player/Area2D", signal_name="body_entered",
+               to_node="Player", method="_on_area_body_entered")
+        
+        # Listar señales de un nodo
+        signal("list", session_id="abc", scene_path="res://Player.tscn",
+               from_node="Player/Area2D")
+        
+        # Asignar script a un nodo
+        signal("set_script", session_id="abc", scene_path="res://Player.tscn",
+               node_path="Player", script_path="res://scripts/player.gd")
+    """
+    return _signal_tool_impl(
+        action=action,
+        session_id=session_id,
+        scene_path=scene_path,
+        from_node=from_node,
+        signal_name=signal_name,
+        to_node=to_node,
+        method=method,
+        node_path=node_path,
+        script_path=script_path,
+    )
+
+
+# ============================================================
+# TOOL 14: GLOBAL TOOL (Configuración Global del Proyecto)
+# ============================================================
+
+@mcp.tool()
+def global_tool(
+    action: str,
+    session_id: str = "",
+    autoload_name: str = "",
+    script_path: str = "",
+    setting_name: str = "",
+    value = None,
+    global_name: str = "",
+) -> dict:
+    """
+    Tool centralizada para configuración global del proyecto Godot.
+    
+    Gestiona autoloads, project settings y shader globals.
+    Puede funcionar en modo directo (editando project.godot) o via daemon.
+    
+    Actions:
+        - "autoload": Añade, quita o lista autoloads
+            - Añadir: proporciona autoload_name + script_path
+            - Quitar: proporciona solo autoload_name
+            - Listar: no proporciones autoload_name
+        - "project_setting": Lee o escribe settings de project.godot
+            - Leer: proporciona solo setting_name
+            - Escribir: proporciona setting_name + value
+        - "shader_global": Gestiona shader globals (requiere daemon)
+    
+    Args:
+        action: Operación a realizar
+        session_id: ID de sesión activa
+        autoload_name: Nombre del autoload
+        script_path: Ruta al script del autoload
+        setting_name: Nombre del setting (formato "section/key")
+        value: Valor a escribir (None para leer)
+        global_name: Nombre del shader global
+    
+    Returns:
+        Dict con resultado de la operación
+    
+    Examples:
+        # Añadir autoload
+        global_tool("autoload", session_id="abc", autoload_name="GameManager",
+                   script_path="res://autoloads/game_manager.gd")
+        
+        # Listar autoloads
+        global_tool("autoload", session_id="abc")
+        
+        # Cambiar resolución
+        global_tool("project_setting", session_id="abc",
+                   setting_name="display/window/size/viewport_width", value=1920)
+    """
+    return _global_tool_impl(
+        action=action,
+        session_id=session_id,
+        autoload_name=autoload_name,
+        script_path=script_path,
+        setting_name=setting_name,
+        value=value,
+        global_name=global_name,
+    )
+
+
+# ============================================================
+# TOOL 15: INDEX (Índice de Tools)
 # ============================================================
 
 @mcp.tool()

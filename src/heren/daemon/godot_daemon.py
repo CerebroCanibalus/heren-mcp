@@ -16,6 +16,7 @@ from typing import Any, Optional
 
 import websocket
 
+
 def _find_godot_executable() -> str:
     """Auto-detecta el ejecutable de Godot."""
     import sys
@@ -47,6 +48,7 @@ def _find_godot_executable() -> str:
         return godot
     
     raise RuntimeError("Godot no encontrado. Proporciona godot_path o añade Godot al PATH.")
+
 
 logger = logging.getLogger(__name__)
 
@@ -117,33 +119,49 @@ class GodotDaemon:
                 self.stop()
                 return False
             
-            # Conectar WebSocket
-            ws_url = f"ws://127.0.0.1:{self.port}"
-            logger.info(f"[Daemon] Conectando a {ws_url}...")
-            
-            self.ws = websocket.create_connection(
-                ws_url,
-                timeout=self.timeout,
-                enable_multithread=True
-            )
+            # Conectar WebSocket con retry
+            if not self._connect_websocket_with_retry():
+                logger.error("[Daemon] No se pudo conectar WebSocket después de 3 intentos")
+                self.stop()
+                return False
             
             self._is_connected = True
             logger.info(f"[Daemon] Conectado exitosamente en puerto {self.port}")
             
             # Hacer ping de verificación
-            ping_result = self.call("ping", {})
-            if ping_result.get("success"):
-                logger.info("[Daemon] Ping exitoso")
-                return True
-            else:
-                logger.error("[Daemon] Ping falló")
+            if not self.is_healthy():
+                logger.error("[Daemon] Health check inicial falló")
                 self.stop()
                 return False
+            
+            logger.info("[Daemon] Health check exitoso")
+            return True
                 
         except Exception as e:
             logger.error(f"[Daemon] Error iniciando: {e}")
             self.stop()
             return False
+    
+    def _connect_websocket_with_retry(self, max_retries: int = 3, retry_delay: float = 1.0) -> bool:
+        """Conecta WebSocket con reintentos."""
+        ws_url = f"ws://127.0.0.1:{self.port}"
+        logger.info(f"[Daemon] Conectando a {ws_url}...")
+        
+        for attempt in range(1, max_retries + 1):
+            try:
+                self.ws = websocket.create_connection(
+                    ws_url,
+                    timeout=self.timeout,
+                    enable_multithread=True
+                )
+                logger.info(f"[Daemon] Conectado en intento {attempt}")
+                return True
+            except Exception as e:
+                logger.warning(f"[Daemon] Intento {attempt}/{max_retries} falló: {e}")
+                if attempt < max_retries:
+                    time.sleep(retry_delay)
+        
+        return False
     
     def _wait_for_ready(self) -> bool:
         """Espera a que el daemon imprima HEREN_DAEMON_READY:<port>."""
@@ -204,6 +222,49 @@ class GodotDaemon:
         logger.error(f"[Daemon] Timeout esperando ready. Output: {output_buffer}")
         return False
     
+    def is_healthy(self, timeout_sec: float = 5.0) -> bool:
+        """Envía un ping y espera pong. Retorna False si no responde en timeout_sec."""
+        if not self._is_connected or not self.ws:
+            return False
+        
+        try:
+            self._request_counter += 1
+            request_id = f"health_{self._request_counter}"
+            
+            payload = {
+                "id": request_id,
+                "method": "ping",
+                "params": {}
+            }
+            
+            self.ws.send(json.dumps(payload))
+            
+            # Esperar respuesta con timeout específico
+            start_time = time.time()
+            while time.time() - start_time < timeout_sec:
+                self.ws.settimeout(timeout_sec)
+                try:
+                    response = self.ws.recv()
+                    result = json.loads(response)
+                    
+                    if result.get("type") == "heartbeat":
+                        continue
+                    
+                    if result.get("id") == request_id:
+                        return result.get("success", False)
+                    
+                    # Respuesta que no es nuestro ping, continuar
+                    continue
+                    
+                except websocket.WebSocketTimeoutException:
+                    return False
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"[Daemon] Error en health check: {e}")
+            return False
+    
     def call(self, method: str, params: dict) -> dict:
         """Llama a un método en el daemon."""
         if not self._is_connected or not self.ws:
@@ -211,6 +272,14 @@ class GodotDaemon:
                 "success": False,
                 "error": "not_connected",
                 "message": "Daemon no está conectado"
+            }
+        
+        # Health check antes de cada operación
+        if not self.is_healthy():
+            return {
+                "success": False,
+                "error": "not_healthy",
+                "message": "Daemon no responde al health check"
             }
         
         self._request_counter += 1
@@ -226,24 +295,46 @@ class GodotDaemon:
             logger.debug(f"[Daemon] >>> {method}: {params}")
             self.ws.send(json.dumps(payload))
             
-            # Esperar respuesta, ignorar heartbeats
-            while True:
-                response = self.ws.recv()
-                result = json.loads(response)
-                
-                # Ignorar heartbeats
-                if result.get("type") == "heartbeat":
-                    logger.debug(f"[Daemon] <<< heartbeat")
-                    continue
-                
-                logger.debug(f"[Daemon] <<< {method}: {result.get('success', False)}")
-                return result
+            # Esperar respuesta con timeout de 30 segundos
+            start_time = time.time()
+            while time.time() - start_time < self.timeout:
+                self.ws.settimeout(self.timeout)
+                try:
+                    response = self.ws.recv()
+                    result = json.loads(response)
+                    
+                    # Ignorar heartbeats
+                    if result.get("type") == "heartbeat":
+                        logger.debug("[Daemon] <<< heartbeat")
+                        continue
+                    
+                    logger.debug(f"[Daemon] <<< {method}: {result.get('success', False)}")
+                    return result
+                    
+                except websocket.WebSocketTimeoutException:
+                    logger.error(f"[Daemon] Timeout en {method} después de {self.timeout}s")
+                    return {
+                        "success": False,
+                        "error": "timeout",
+                        "message": f"Operation timeout after {self.timeout}s",
+                        "method": method
+                    }
+            
+            # Timeout global
+            logger.error(f"[Daemon] Timeout global en {method}")
+            return {
+                "success": False,
+                "error": "timeout",
+                "message": f"Operation timeout after {self.timeout}s",
+                "method": method
+            }
             
         except websocket.WebSocketTimeoutException:
             logger.error(f"[Daemon] Timeout en {method}")
             return {
                 "success": False,
                 "error": "timeout",
+                "message": f"Operation timeout after {self.timeout}s",
                 "method": method
             }
         except Exception as e:
@@ -251,6 +342,7 @@ class GodotDaemon:
             return {
                 "success": False,
                 "error": str(e),
+                "message": f"Error en operación {method}: {e}",
                 "method": method
             }
     

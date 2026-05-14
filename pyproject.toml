@@ -1,0 +1,101 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "heren-mcp"
+version = "1.0.0"
+authors = [
+    {name = "Heren MCP Contributors"},
+]
+description = "Servidor MCP de alto rendimiento para Godot Engine 4.x con daemon persistente vía WebSocket"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Games/Entertainment",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Natural Language :: Spanish",
+    "Natural Language :: Portuguese",
+    "Natural Language :: English",
+]
+keywords = [
+    "godot",
+    "mcp",
+    "model-context-protocol",
+    "game-development",
+    "gamedev",
+    "websocket",
+    "daemon",
+    "gdscript",
+]
+
+dependencies = [
+    "websocket-client>=1.6.0",
+    "fastmcp>=1.0.0",
+    "jinja2>=3.1.0",
+    "watchdog>=3.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+]
+docs = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.0.0",
+]
+
+[project.scripts]
+heren-server = "heren.server:main"
+heren-daemon = "heren.daemon:main"
+
+[project.urls]
+Homepage = "https://github.com/tu-usuario/heren-mcp"
+Documentation = "https://github.com/tu-usuario/heren-mcp#readme"
+Repository = "https://github.com/tu-usuario/heren-mcp.git"
+Issues = "https://github.com/tu-usuario/heren-mcp/issues"
+Changelog = "https://github.com/tu-usuario/heren-mcp/blob/main/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["heren*"]
+
+[tool.setuptools.package-data]
+heren = [
+    "daemon/*.gd",
+    "templates/*.j2",
+    "templates/*.tscn",
+]
+
+[tool.black]
+line-length = 120
+target-version = ['py310']
+include = '\.pyi?$'
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"

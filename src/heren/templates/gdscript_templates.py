@@ -566,3 +566,264 @@ func _init():
     }}))
     quit()
 '''
+    
+    @classmethod
+    def _render_connect_signal(cls, scene_path: str, from_node: str, signal_name: str,
+                                to_node: str, method: str, **kwargs) -> str:
+        """Template para conectar una señal entre nodos."""
+        scene_path_escaped = _escape_gdscript_string(scene_path)
+        from_node_escaped = _escape_gdscript_string(from_node)
+        signal_name_escaped = _escape_gdscript_string(signal_name)
+        to_node_escaped = _escape_gdscript_string(to_node)
+        method_escaped = _escape_gdscript_string(method)
+        
+        return f'''extends SceneTree
+
+func _init():
+    var scene_path = "{scene_path_escaped}"
+    var from_node_path = "{from_node_escaped}"
+    var signal_name = "{signal_name_escaped}"
+    var to_node_path = "{to_node_escaped}"
+    var method_name = "{method_escaped}"
+    
+    var packed_scene = load(scene_path)
+    if packed_scene == null:
+        print('TEST_OUTPUT: {{"success": false, "error": "No se pudo cargar la escena"}}')
+        quit()
+        return
+    
+    var scene = packed_scene.instantiate()
+    var source = scene.get_node_or_null(from_node_path)
+    var target = scene.get_node_or_null(to_node_path)
+    
+    if source == null:
+        scene.free()
+        print('TEST_OUTPUT: {{"success": false, "error": "Nodo emisor no encontrado: ' + from_node_path + '"}}')
+        quit()
+        return
+    
+    if target == null:
+        scene.free()
+        print('TEST_OUTPUT: {{"success": false, "error": "Nodo receptor no encontrado: ' + to_node_path + '"}}')
+        quit()
+        return
+    
+    # Verificar que la señal existe
+    if not source.has_signal(signal_name):
+        scene.free()
+        print('TEST_OUTPUT: {{"success": false, "error": "Señal no encontrada: ' + signal_name + '"}}')
+        quit()
+        return
+    
+    # Conectar señal
+    var err = source.connect(signal_name, Callable(target, method_name))
+    if err != OK:
+        scene.free()
+        print('TEST_OUTPUT: {{"success": false, "error": "Error conectando señal: ' + str(err) + '"}}')
+        quit()
+        return
+    
+    # Guardar escena
+    packed_scene.pack(scene)
+    var save_result = ResourceSaver.save(packed_scene, scene_path)
+    scene.free()
+    
+    if save_result == OK:
+        print('TEST_OUTPUT: ' + JSON.stringify({{
+            "success": true,
+            "from_node": from_node_path,
+            "signal_name": signal_name,
+            "to_node": to_node_path,
+            "method": method_name
+        }}))
+    else:
+        print('TEST_OUTPUT: {{"success": false, "error": "Error guardando escena: ' + str(save_result) + '"}}')
+    
+    quit()
+'''
+    
+    @classmethod
+    def _render_disconnect_signal(cls, scene_path: str, from_node: str, signal_name: str,
+                                   to_node: str, method: str, **kwargs) -> str:
+        """Template para desconectar una señal entre nodos."""
+        scene_path_escaped = _escape_gdscript_string(scene_path)
+        from_node_escaped = _escape_gdscript_string(from_node)
+        signal_name_escaped = _escape_gdscript_string(signal_name)
+        to_node_escaped = _escape_gdscript_string(to_node)
+        method_escaped = _escape_gdscript_string(method)
+        
+        return f'''extends SceneTree
+
+func _init():
+    var scene_path = "{scene_path_escaped}"
+    var from_node_path = "{from_node_escaped}"
+    var signal_name = "{signal_name_escaped}"
+    var to_node_path = "{to_node_escaped}"
+    var method_name = "{method_escaped}"
+    
+    var packed_scene = load(scene_path)
+    if packed_scene == null:
+        print('TEST_OUTPUT: {{"success": false, "error": "No se pudo cargar la escena"}}')
+        quit()
+        return
+    
+    var scene = packed_scene.instantiate()
+    var source = scene.get_node_or_null(from_node_path)
+    var target = scene.get_node_or_null(to_node_path)
+    
+    if source == null:
+        scene.free()
+        print('TEST_OUTPUT: {{"success": false, "error": "Nodo emisor no encontrado: ' + from_node_path + '"}}')
+        quit()
+        return
+    
+    if target == null:
+        scene.free()
+        print('TEST_OUTPUT: {{"success": false, "error": "Nodo receptor no encontrado: ' + to_node_path + '"}}')
+        quit()
+        return
+    
+    # Desconectar señal
+    if source.is_connected(signal_name, Callable(target, method_name)):
+        source.disconnect(signal_name, Callable(target, method_name))
+    else:
+        scene.free()
+        print('TEST_OUTPUT: {{"success": false, "error": "Señal no estaba conectada"}}')
+        quit()
+        return
+    
+    # Guardar escena
+    packed_scene.pack(scene)
+    var save_result = ResourceSaver.save(packed_scene, scene_path)
+    scene.free()
+    
+    if save_result == OK:
+        print('TEST_OUTPUT: ' + JSON.stringify({{
+            "success": true,
+            "from_node": from_node_path,
+            "signal_name": signal_name,
+            "to_node": to_node_path,
+            "method": method_name
+        }}))
+    else:
+        print('TEST_OUTPUT: {{"success": false, "error": "Error guardando escena: ' + str(save_result) + '"}}')
+    
+    quit()
+'''
+    
+    @classmethod
+    def _render_list_signals(cls, scene_path: str, node_path: str, **kwargs) -> str:
+        """Template para listar señales de un nodo."""
+        scene_path_escaped = _escape_gdscript_string(scene_path)
+        node_path_escaped = _escape_gdscript_string(node_path)
+        
+        return f'''extends SceneTree
+
+func _init():
+    var scene_path = "{scene_path_escaped}"
+    var node_path_str = "{node_path_escaped}"
+    
+    var packed_scene = load(scene_path)
+    if packed_scene == null:
+        print('TEST_OUTPUT: {{"success": false, "error": "No se pudo cargar la escena"}}')
+        quit()
+        return
+    
+    var scene = packed_scene.instantiate()
+    var node = scene.get_node_or_null(node_path_str)
+    
+    if node == null:
+        scene.free()
+        print('TEST_OUTPUT: {{"success": false, "error": "Nodo no encontrado: ' + node_path_str + '"}}')
+        quit()
+        return
+    
+    # Obtener señales built-in
+    var built_in_signals = []
+    for signal_info in node.get_signal_list():
+        built_in_signals.append({{
+            "name": signal_info["name"],
+            "args": signal_info.get("args", [])
+        }})
+    
+    # Obtener señales conectadas
+    var connected_signals = []
+    for connection in node.get_signal_connection_list(""):
+        connected_signals.append({{
+            "signal": connection["signal"],
+            "callable": str(connection["callable"]),
+            "flags": connection["flags"]
+        }})
+    
+    scene.free()
+    
+    print('TEST_OUTPUT: ' + JSON.stringify({{
+        "success": true,
+        "node_path": node_path_str,
+        "built_in_signals": built_in_signals,
+        "connected_signals": connected_signals
+    }}))
+    quit()
+'''
+    
+    @classmethod
+    def _render_set_script(cls, scene_path: str, node_path: str, script_path: str, **kwargs) -> str:
+        """Template para asignar un script a un nodo."""
+        scene_path_escaped = _escape_gdscript_string(scene_path)
+        node_path_escaped = _escape_gdscript_string(node_path)
+        script_path_escaped = _escape_gdscript_string(script_path)
+        
+        return f'''extends SceneTree
+
+func _init():
+    var scene_path = "{scene_path_escaped}"
+    var node_path_str = "{node_path_escaped}"
+    var script_path = "{script_path_escaped}"
+    
+    var packed_scene = load(scene_path)
+    if packed_scene == null:
+        print('TEST_OUTPUT: {{"success": false, "error": "No se pudo cargar la escena"}}')
+        quit()
+        return
+    
+    var scene = packed_scene.instantiate()
+    var node
+    
+    if node_path_str == scene.name or node_path_str == ".":
+        node = scene
+    else:
+        node = scene.get_node_or_null(node_path_str)
+    
+    if node == null:
+        scene.free()
+        print('TEST_OUTPUT: {{"success": false, "error": "Nodo no encontrado: ' + node_path_str + '"}}')
+        quit()
+        return
+    
+    # Cargar script
+    var script = load(script_path)
+    if script == null:
+        scene.free()
+        print('TEST_OUTPUT: {{"success": false, "error": "Script no encontrado: ' + script_path + '"}}')
+        quit()
+        return
+    
+    # Asignar script
+    node.set_script(script)
+    
+    # Guardar escena
+    packed_scene.pack(scene)
+    var save_result = ResourceSaver.save(packed_scene, scene_path)
+    scene.free()
+    
+    if save_result == OK:
+        print('TEST_OUTPUT: ' + JSON.stringify({{
+            "success": true,
+            "node_path": node_path_str,
+            "script_path": script_path
+        }}))
+    else:
+        print('TEST_OUTPUT: {{"success": false, "error": "Error guardando escena: ' + str(save_result) + '"}}')
+    
+    quit()
+'''

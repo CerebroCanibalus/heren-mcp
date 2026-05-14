@@ -1,0 +1,113 @@
+{
+  "__meta__": {
+    "language": "es",
+    "name": "Español",
+    "translator": "Heren MCP"
+  },
+  
+  "errors": {
+    "daemon_not_running": "GodotDaemon no está en ejecución. Inicia una sesión con use_daemon=True.",
+    "scene_not_found": "Escena no encontrada: {scene_path}",
+    "invalid_parameters": "Parámetros inválidos para la operación '{operation}'",
+    "node_not_found": "Nodo no encontrado: {node_path}",
+    "session_not_found": "Sesión no encontrada: {session_id}",
+    "godot_not_found": "Godot no encontrado. Proporciona godot_path o añade Godot al PATH.",
+    "operation_not_supported": "Operación no soportada: '{operation}'",
+    "file_not_found": "Archivo no encontrado: {file_path}",
+    "permission_denied": "Permiso denegado: {file_path}",
+    "timeout_error": "Tiempo de espera agotado para la operación '{operation}'",
+    "connection_failed": "Fallo de conexión con GodotDaemon",
+    "project_not_found": "Proyecto Godot no encontrado: {project_path}",
+    "invalid_scene_format": "Formato de escena inválido: {scene_path}",
+    "script_error": "Error en script GDScript: {error}",
+    "resource_not_found": "Recurso no encontrado: {resource_path}",
+    "property_not_found": "Propiedad no encontrada: {property_name}",
+    "signal_not_found": "Señal no encontrada: {signal_name}",
+    "autoload_exists": "El autoload '{autoload_name}' ya existe",
+    "setting_not_found": "Setting no encontrado: {setting_name}",
+    "fallback_failed": "Fallback falló: {error}",
+    "batch_operation_failed": "Operación batch falló en paso {step}: {error}"
+  },
+  
+  "success": {
+    "operation_successful": "Operación '{operation}' completada exitosamente.",
+    "scene_created": "Escena creada: {scene_path}",
+    "scene_saved": "Escena guardada: {scene_path}",
+    "scene_deleted": "Escena eliminada: {scene_path}",
+    "node_added": "Nodo '{node_name}' añadido a {parent_path}",
+    "node_removed": "Nodo '{node_path}' eliminado",
+    "node_renamed": "Nodo renombrado de '{old_name}' a '{new_name}'",
+    "property_updated": "Propiedad '{property_name}' actualizada en '{node_path}'",
+    "signal_connected": "Señal '{signal_name}' conectada de '{from_node}' a '{to_node}.{method}'",
+    "signal_disconnected": "Señal '{signal_name}' desconectada",
+    "autoload_added": "Autoload '{autoload_name}' añadido",
+    "autoload_removed": "Autoload '{autoload_name}' eliminado",
+    "setting_updated": "Setting '{setting_name}' actualizado",
+    "script_assigned": "Script '{script_path}' asignado a '{node_path}'",
+    "resource_created": "Recurso creado: {resource_path}",
+    "session_started": "Sesión iniciada: {session_id}",
+    "session_closed": "Sesión cerrada: {session_id}",
+    "daemon_started": "GodotDaemon iniciado en puerto {port}",
+    "batch_completed": "Batch completado: {success_count}/{total_count} operaciones exitosas"
+  },
+  
+  "info": {
+    "connecting_daemon": "Conectando con GodotDaemon...",
+    "loading_scene": "Cargando escena: {scene_path}",
+    "saving_project": "Guardando proyecto...",
+    "detecting_godot": "Detectando instalación de Godot...",
+    "installing_dependencies": "Instalando dependencias...",
+    "copying_daemon": "Copiando Godot Daemon al proyecto...",
+    "detected_language": "Idioma detectado: {language}",
+    "using_fallback": "Usando idioma fallback: {language}",
+    "cache_hit": "Cache hit: {key}",
+    "cache_miss": "Cache miss: {key}",
+    "executing_template": "Ejecutando template: {template_name}",
+    "fallback_mode": "Usando modo fallback (scripts temporales)",
+    "daemon_mode": "Usando GodotDaemon (modo rápido)",
+    "project_loaded": "Proyecto cargado: {project_name}",
+    "cleanup_started": "Iniciando limpieza de recursos...",
+    "session_expired": "Sesión expirada: {session_id}",
+    "undo_operation": "Deshaciendo operación...",
+    "redo_operation": "Rehaciendo operación..."
+  },
+  
+  "warnings": {
+    "daemon_unavailable": "GodotDaemon no disponible. Usando scripts temporales.",
+    "scene_already_exists": "La escena ya existe: {scene_path}",
+    "node_already_exists": "El nodo ya existe: {node_path}",
+    "property_read_only": "La propiedad '{property_name}' es de solo lectura",
+    "deprecated_feature": "Característica deprecada: {feature_name}",
+    "slow_operation": "Operación lenta detectada. Considera usar GodotDaemon.",
+    "cache_invalidated": "Cache invalidada para: {key}",
+    "session_reused": "Sesión reutilizada: {session_id}"
+  },
+  
+  "prompts": {
+    "confirm_delete": "¿Estás seguro de que deseas eliminar '{target}'?",
+    "confirm_overwrite": "El archivo '{file_path}' ya existe. ¿Deseas sobrescribirlo?",
+    "enter_project_path": "Introduce la ruta al proyecto Godot: ",
+    "enter_godot_path": "Introduce la ruta al ejecutable de Godot (dejar en blanco para auto-detectar): ",
+    "select_language": "Selecciona idioma / Select language (es/en): "
+  },
+  
+  "ui": {
+    "title_installer": "Instalador Heren MCP",
+    "title_main": "Heren MCP - Godot Engine Tool",
+    "status_ready": "Listo",
+    "status_working": "Trabajando...",
+    "status_error": "Error",
+    "progress_complete": "Completado: {percent}%",
+    "menu_file": "Archivo",
+    "menu_edit": "Editar",
+    "menu_view": "Ver",
+    "menu_help": "Ayuda",
+    "button_ok": "Aceptar",
+    "button_cancel": "Cancelar",
+    "button_save": "Guardar",
+    "button_load": "Cargar",
+    "button_close": "Cerrar",
+    "button_next": "Siguiente",
+    "button_back": "Atrás"
+  }
+}

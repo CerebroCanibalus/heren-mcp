@@ -1,0 +1,3 @@
+[console_scripts]
+heren-daemon = heren.daemon:main
+heren-server = heren.server:main
