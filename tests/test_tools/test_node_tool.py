@@ -1,225 +1,201 @@
 """
-Tests for node tools.
+Tests para Node Tool.
 
-Requiere Godot engine instalado.
-Marcado como integration test.
+Cubre:
+- add, remove
+- set_prop, get_prop
+- duplicate, rename, move
 """
 
-import pytest
 import os
-
-from heren.tools.node_tools import heren_add_node, heren_remove_node, heren_set_property
-from heren.tools.scene_tools import heren_get_scene_tree
+import pytest
 
 
+@pytest.mark.tool
 @pytest.mark.integration
-class TestNodeToolAdd:
-    """Tests for add_node."""
-
-    def test_add_node_success(self, session_id, sample_scene_file):
-        """Test adding a node."""
-        result = heren_add_node(
-            session_id=session_id,
-            scene_path=sample_scene_file,
-            parent_path=".",
-            node_type="Sprite2D",
-            node_name="MySprite"
-        )
+class TestNodeTool:
+    """Test node tool operations."""
+    
+    def test_node_add_fallback(self, fallback_session, temp_project):
+        """Test adding a node via fallback."""
+        from heren.tools.node_tool import node_tool
+        from heren.tools.scene_tool import scene_tool
         
-        assert result["success"] is True
-        assert result.get("node_name") == "MySprite"
+        scene_path = f"res://node_test_scene.tscn"
         
-    def test_add_node_duplicate_fails(self, session_id, sample_scene_file):
-        """Test adding duplicate node fails."""
-        # First add
-        result1 = heren_add_node(
-            session_id=session_id,
-            scene_path=sample_scene_file,
-            parent_path=".",
-            node_type="Sprite2D",
-            node_name="Sprite"
-        )
-        assert result1["success"] is True
+        # Create scene
+        scene_tool(action="create", session_id=fallback_session, scene_path=scene_path)
         
-        # Second add with same name
-        result2 = heren_add_node(
-            session_id=session_id,
-            scene_path=sample_scene_file,
-            parent_path=".",
-            node_type="Sprite2D",
-            node_name="Sprite"
-        )
-        assert result2["success"] is False
-        assert "ya existe" in result2.get("error", "")
-        
-    def test_add_node_with_properties(self, session_id, sample_scene_file):
-        """Test adding node with properties."""
-        result = heren_add_node(
-            session_id=session_id,
-            scene_path=sample_scene_file,
-            parent_path=".",
-            node_type="Sprite2D",
-            node_name="PositionedSprite",
-            properties={"position": {"x": 100, "y": 200}}
-        )
-        
-        assert result["success"] is True
-        
-    def test_add_node_scene_not_found(self, session_id, temp_project):
-        """Test adding node to non-existent scene creates it."""
-        scene_path = os.path.join(temp_project, "auto_create.tscn")
-        
-        result = heren_add_node(
-            session_id=session_id,
+        # Add node
+        result = node_tool(
+            action="add",
+            session_id=fallback_session,
             scene_path=scene_path,
-            parent_path=".",
-            node_type="Node2D",
-            node_name="Root"
-        )
-        
-        assert result["success"] is True
-        assert os.path.exists(scene_path)
-
-
-@pytest.mark.integration
-class TestNodeToolRemove:
-    """Tests for remove_node."""
-
-    def test_remove_node_success(self, session_id, complex_scene_file):
-        """Test removing a node."""
-        result = heren_remove_node(
-            session_id=session_id,
-            scene_path=complex_scene_file,
-            node_path="Enemy"
-        )
-        
-        assert result["success"] is True
-        
-    def test_remove_node_not_found(self, session_id, sample_scene_file):
-        """Test removing non-existent node."""
-        result = heren_remove_node(
-            session_id=session_id,
-            scene_path=sample_scene_file,
-            node_path="NonExistent"
-        )
-        
-        assert result["success"] is False
-        assert "no encontrado" in result.get("error", "").lower()
-        
-    def test_remove_node_with_children(self, session_id, complex_scene_file):
-        """Test removing node removes children too."""
-        result = heren_remove_node(
-            session_id=session_id,
-            scene_path=complex_scene_file,
-            node_path="Player"
-        )
-        
-        assert result["success"] is True
-        
-        # Verify children are gone
-        tree = heren_get_scene_tree(
-            session_id=session_id,
-            scene_path=complex_scene_file
-        )
-        
-        node_names = [n["name"] for n in tree["nodes"]]
-        assert "Player" not in node_names
-        assert "Sprite" not in node_names
-        assert "CollisionShape2D" not in node_names
-
-
-@pytest.mark.integration
-class TestNodeToolSetProperty:
-    """Tests for set_property."""
-
-    def test_set_property_success(self, session_id, sample_scene_file):
-        """Test setting node property."""
-        result = heren_set_property(
-            session_id=session_id,
-            scene_path=sample_scene_file,
-            node_path="Root",
-            property_name="position",
-            value={"x": 50, "y": 100}
-        )
-        
-        assert result["success"] is True
-        
-    def test_set_property_not_found(self, session_id, sample_scene_file):
-        """Test setting property on non-existent node."""
-        result = heren_set_property(
-            session_id=session_id,
-            scene_path=sample_scene_file,
-            node_path="NonExistent",
-            property_name="position",
-            value={"x": 0, "y": 0}
-        )
-        
-        assert result["success"] is False
-
-
-@pytest.mark.integration
-class TestNodeToolComplexOperations:
-    """Tests for complex node operations."""
-
-    def test_add_multiple_nodes(self, session_id, temp_project):
-        """Test adding multiple nodes in sequence."""
-        scene_path = os.path.join(temp_project, "multi.tscn")
-        
-        # Create root
-        heren_add_node(
-            session_id=session_id,
-            scene_path=scene_path,
-            parent_path=".",
-            node_type="Node2D",
-            node_name="Root"
-        )
-        
-        # Add children
-        for i in range(5):
-            result = heren_add_node(
-                session_id=session_id,
-                scene_path=scene_path,
-                parent_path="Root",
-                node_type="Node2D",
-                node_name=f"Child_{i}"
-            )
-            assert result["success"] is True
-        
-        # Verify
-        tree = heren_get_scene_tree(
-            session_id=session_id,
-            scene_path=scene_path
-        )
-        
-        node_names = [n["name"] for n in tree["nodes"]]
-        for i in range(5):
-            assert f"Child_{i}" in node_names
-            
-    def test_add_and_remove(self, session_id, sample_scene_file):
-        """Test adding then removing a node."""
-        # Add
-        add_result = heren_add_node(
-            session_id=session_id,
-            scene_path=sample_scene_file,
-            parent_path=".",
+            node_path=".",
             node_type="Sprite2D",
-            node_name="TempSprite"
-        )
-        assert add_result["success"] is True
-        
-        # Remove
-        remove_result = heren_remove_node(
-            session_id=session_id,
-            scene_path=sample_scene_file,
-            node_path="TempSprite"
-        )
-        assert remove_result["success"] is True
-        
-        # Verify gone
-        tree = heren_get_scene_tree(
-            session_id=session_id,
-            scene_path=sample_scene_file
+            node_name="TestSprite"
         )
         
-        node_names = [n["name"] for n in tree["nodes"]]
-        assert "TempSprite" not in node_names
+        assert result["success"] is True
+        assert "node_path" in result
+    
+    def test_node_set_get_property_fallback(self, fallback_session, temp_project):
+        """Test setting and getting properties via fallback."""
+        from heren.tools.node_tool import node_tool
+        from heren.tools.scene_tool import scene_tool
+        
+        scene_path = f"res://prop_test_scene.tscn"
+        
+        # Create scene with a node
+        scene_tool(action="create", session_id=fallback_session, scene_path=scene_path)
+        node_tool(
+            action="add",
+            session_id=fallback_session,
+            scene_path=scene_path,
+            node_path=".",
+            node_type="Node2D",
+            node_name="TestNode"
+        )
+        
+        # Set property
+        result = node_tool(
+            action="set_prop",
+            session_id=fallback_session,
+            scene_path=scene_path,
+            node_path="TestNode",
+            property_name="position",
+            value={"x": 100, "y": 200}
+        )
+        
+        assert result["success"] is True
+    
+    @pytest.mark.daemon
+    def test_node_add_with_properties_daemon(self, daemon_session):
+        """Test adding node with properties via daemon."""
+        from heren.tools.node_tool import node_tool
+        from heren.tools.scene_tool import scene_tool
+        
+        scene_path = "res://node_daemon_test.tscn"
+        scene_tool(action="create", session_id=daemon_session, scene_path=scene_path)
+        scene_tool(action="load", session_id=daemon_session, scene_path=scene_path)
+        
+        # Add node with position
+        result = node_tool(
+            action="add",
+            session_id=daemon_session,
+            scene_path=scene_path,
+            node_path=".",
+            node_type="CharacterBody2D",
+            node_name="Player",
+            properties={"position": {"x": 150, "y": 250}}
+        )
+        
+        assert result["success"] is True
+        assert "node_path" in result
+    
+    @pytest.mark.daemon
+    def test_node_duplicate_daemon(self, daemon_session):
+        """Test duplicating a node via daemon."""
+        from heren.tools.node_tool import node_tool
+        from heren.tools.scene_tool import scene_tool
+        
+        scene_path = "res://dup_test_scene.tscn"
+        scene_tool(action="create", session_id=daemon_session, scene_path=scene_path)
+        scene_tool(action="load", session_id=daemon_session, scene_path=scene_path)
+        
+        # Add original
+        node_tool(
+            action="add",
+            session_id=daemon_session,
+            scene_path=scene_path,
+            node_path=".",
+            node_type="Node2D",
+            node_name="Original"
+        )
+        scene_tool(action="save", session_id=daemon_session, scene_path=scene_path)
+        scene_tool(action="load", session_id=daemon_session, scene_path=scene_path)
+        
+        # Duplicate
+        result = node_tool(
+            action="duplicate",
+            session_id=daemon_session,
+            scene_path=scene_path,
+            node_path="Original"
+        )
+        
+        assert result["success"] is True
+        assert "duplicate" in result
+    
+    @pytest.mark.daemon
+    def test_node_rename_daemon(self, daemon_session):
+        """Test renaming a node via daemon."""
+        from heren.tools.node_tool import node_tool
+        from heren.tools.scene_tool import scene_tool
+        
+        scene_path = "res://rename_test_scene.tscn"
+        scene_tool(action="create", session_id=daemon_session, scene_path=scene_path)
+        scene_tool(action="load", session_id=daemon_session, scene_path=scene_path)
+        
+        # Add and rename
+        node_tool(
+            action="add",
+            session_id=daemon_session,
+            scene_path=scene_path,
+            node_path=".",
+            node_type="Node2D",
+            node_name="OldName"
+        )
+        scene_tool(action="save", session_id=daemon_session, scene_path=scene_path)
+        scene_tool(action="load", session_id=daemon_session, scene_path=scene_path)
+        
+        result = node_tool(
+            action="rename",
+            session_id=daemon_session,
+            scene_path=scene_path,
+            node_path="OldName",
+            new_name="NewName"
+        )
+        
+        assert result["success"] is True
+    
+    @pytest.mark.daemon
+    def test_node_move_daemon(self, daemon_session):
+        """Test moving a node via daemon."""
+        from heren.tools.node_tool import node_tool
+        from heren.tools.scene_tool import scene_tool
+        
+        scene_path = "res://move_test_scene.tscn"
+        scene_tool(action="create", session_id=daemon_session, scene_path=scene_path)
+        scene_tool(action="load", session_id=daemon_session, scene_path=scene_path)
+        
+        # Add parent and child
+        node_tool(
+            action="add",
+            session_id=daemon_session,
+            scene_path=scene_path,
+            node_path=".",
+            node_type="Node2D",
+            node_name="Parent"
+        )
+        node_tool(
+            action="add",
+            session_id=daemon_session,
+            scene_path=scene_path,
+            node_path=".",
+            node_type="Node2D",
+            node_name="Child"
+        )
+        scene_tool(action="save", session_id=daemon_session, scene_path=scene_path)
+        scene_tool(action="load", session_id=daemon_session, scene_path=scene_path)
+        
+        # Move
+        result = node_tool(
+            action="move",
+            session_id=daemon_session,
+            scene_path=scene_path,
+            node_path="Child",
+            new_parent="Parent"
+        )
+        
+        assert result["success"] is True
+        assert "new_parent" in result

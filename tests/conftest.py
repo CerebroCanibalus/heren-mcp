@@ -1,10 +1,10 @@
 """
-pytest fixtures for Heren MCP tests.
+pytest fixtures for Heren MCP tests (v2 - GodotDaemon).
 
 Organización:
-- Fixtures compartidas: temp_project, session_id, sample_scene
+- Fixtures compartidas: temp_project, session_id, daemon_session
 - Helpers: create_minimal_project, create_sample_scene
-- Marcadores: integration (requiere Godot), benchmark (lento)
+- Marcadores: integration (requiere Godot), daemon (requiere daemon activo)
 """
 
 import os
@@ -18,7 +18,7 @@ import pytest
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from heren.core.session_manager import SessionManager, get_session_manager
+from heren.core.session_manager import get_session_manager
 
 
 # =============================================================================
@@ -26,6 +26,7 @@ from heren.core.session_manager import SessionManager, get_session_manager
 # =============================================================================
 
 GODOT_EXE = os.environ.get("GODOT_EXE", r"D:\Mis Juegos\Godot\Godot_v4.6.1-stable_win64.exe")
+LAIKA_PROJECT = r"D:\Mis Juegos\LAIKA\LAIKA-Solarpunk-GJ\laika-gd"
 
 
 # =============================================================================
@@ -104,30 +105,62 @@ def temp_project():
 
 
 @pytest.fixture
-def session_id(temp_project):
-    """Create a real session for testing."""
-    from heren.tools.scene_tools import heren_start_session
-    # Use use_server=False to avoid starting GodotServer in tests
-    # Tests will use temporary scripts instead
-    result = heren_start_session(project_path=temp_project, use_server=False)
-    assert result.get("success") is True, f"Failed to start session: {result.get('error')}"
-    return result["session_id"]
-
-
-@pytest.fixture
-def sample_scene_file(temp_project):
-    """Create a simple scene file for testing."""
+def temp_scene(temp_project):
+    """Create a temporary scene file."""
     scene_path = os.path.join(temp_project, "test_scene.tscn")
     create_sample_scene(scene_path)
     return scene_path
 
 
 @pytest.fixture
-def complex_scene_file(temp_project):
-    """Create a complex scene with hierarchy."""
-    scene_path = os.path.join(temp_project, "complex.tscn")
+def temp_complex_scene(temp_project):
+    """Create a complex scene file."""
+    scene_path = os.path.join(temp_project, "complex_scene.tscn")
     create_complex_scene(scene_path)
     return scene_path
+
+
+@pytest.fixture
+def daemon_session():
+    """Create a session with GodotDaemon active (uses LAIKA project)."""
+    if not os.path.exists(GODOT_EXE):
+        pytest.skip(f"Godot executable not found at {GODOT_EXE}")
+    
+    if not os.path.exists(LAIKA_PROJECT):
+        pytest.skip(f"LAIKA project not found at {LAIKA_PROJECT}")
+    
+    from heren.tools.session_tool import session_tool
+    
+    # Start session with daemon
+    result = session_tool(action="open", project_path=LAIKA_PROJECT, use_daemon=True)
+    assert result.get("success") is True, f"Failed to start session: {result.get('error')}"
+    
+    session_id = result["session_id"]
+    
+    yield session_id
+    
+    # Cleanup
+    session_tool(action="close", session_id=session_id)
+
+
+@pytest.fixture
+def fallback_session(temp_project):
+    """Create a session WITHOUT daemon (uses fallback/scripts)."""
+    from heren.tools.session_tool import session_tool
+    
+    # Start session without daemon (use_daemon=False)
+    result = session_tool(action="open", project_path=temp_project, use_daemon=False)
+    assert result.get("success") is True, f"Failed to start session: {result.get('error')}"
+    
+    session_id = result["session_id"]
+    
+    yield session_id
+    
+    # Cleanup
+    try:
+        session_tool(action="close", session_id=session_id)
+    except:
+        pass
 
 
 # =============================================================================
@@ -138,8 +171,11 @@ def complex_scene_file(temp_project):
 def pytest_configure(config):
     """Register custom markers."""
     config.addinivalue_line("markers", "integration: marks tests that require Godot engine")
+    config.addinivalue_line("markers", "daemon: marks tests that require GodotDaemon")
+    config.addinivalue_line("markers", "fallback: marks tests that use fallback mode")
     config.addinivalue_line("markers", "benchmark: marks slow benchmark tests")
-    config.addinivalue_line("markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')")
+    config.addinivalue_line("markers", "slow: marks tests as slow")
+    config.addinivalue_line("markers", "tool: marks tool-specific tests")
 
 
 @pytest.fixture
@@ -147,3 +183,10 @@ def skip_without_godot():
     """Skip test if Godot executable is not found."""
     if not os.path.exists(GODOT_EXE):
         pytest.skip(f"Godot executable not found at {GODOT_EXE}")
+
+
+@pytest.fixture
+def skip_without_laika():
+    """Skip test if LAIKA project is not found."""
+    if not os.path.exists(LAIKA_PROJECT):
+        pytest.skip(f"LAIKA project not found at {LAIKA_PROJECT}")

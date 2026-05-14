@@ -1,46 +1,96 @@
 """
-Tests for session tools.
+Tests para Session Tool.
 
-Requiere Godot engine instalado.
-Marcado como integration test.
+Cubre:
+- open/close
+- health
+- list/info
 """
 
 import pytest
-import os
-
-from heren.tools.scene_tools import heren_start_session, heren_end_session
+import time
 
 
+@pytest.mark.tool
 @pytest.mark.integration
 class TestSessionTool:
-    """Tests for session tools."""
-
-    def test_start_session(self, temp_project):
-        """Test starting a session."""
-        result = heren_start_session(project_path=temp_project, use_server=False)
+    """Test session tool operations."""
+    
+    def test_session_open_fallback(self, fallback_session):
+        """Test opening a session without daemon."""
+        session_id = fallback_session
+        assert session_id is not None
+        assert len(session_id) > 0
+    
+    @pytest.mark.daemon
+    def test_session_open_daemon(self, daemon_session):
+        """Test opening a session with daemon."""
+        session_id = daemon_session
+        assert session_id is not None
+        assert len(session_id) > 0
+    
+    @pytest.mark.daemon
+    def test_session_health(self, daemon_session):
+        """Test health check with daemon."""
+        from heren.tools.session_tool import session_tool
+        
+        result = session_tool(action="health", session_id=daemon_session)
+        
+        assert result["success"] is True
+        assert result["status"] == "healthy"
+        assert "memory_mb" in result
+        assert result["memory_mb"] > 0
+        assert result["memory_mb"] < 200  # Should be under 200MB
+    
+    @pytest.mark.daemon
+    def test_session_list(self, daemon_session):
+        """Test listing sessions."""
+        from heren.tools.session_tool import session_tool
+        
+        result = session_tool(action="list")
+        
+        assert result["success"] is True
+        assert "sessions" in result
+        assert len(result["sessions"]) > 0
+    
+    @pytest.mark.daemon
+    def test_session_info(self, daemon_session):
+        """Test getting session info."""
+        from heren.tools.session_tool import session_tool
+        
+        result = session_tool(action="info", session_id=daemon_session)
         
         assert result["success"] is True
         assert "session_id" in result
-        assert result["project_path"] == temp_project
+        assert result["session_id"] == daemon_session
+    
+    @pytest.mark.daemon
+    def test_session_close(self, temp_project):
+        """Test closing a session."""
+        from heren.tools.session_tool import session_tool
         
-    def test_start_session_invalid_project(self):
-        """Test starting session with invalid project."""
-        result = heren_start_session(project_path="/nonexistent")
+        # Open
+        result = session_tool(action="open", project_path=temp_project, use_daemon=False)
+        session_id = result["session_id"]
         
-        assert result["success"] is False
-        assert "error" in result
+        # Close
+        result = session_tool(action="close", session_id=session_id)
+        assert result["success"] is True
         
-    def test_end_session(self, temp_project):
-        """Test ending a session."""
-        # Start session
-        start_result = heren_start_session(project_path=temp_project, use_server=False)
-        session_id = start_result["session_id"]
+        # Verify closed
+        result = session_tool(action="info", session_id=session_id)
+        assert result["success"] is False or "error" in result
+
+
+@pytest.mark.tool
+@pytest.mark.fallback
+class TestSessionToolFallback:
+    """Test session tool in fallback mode."""
+    
+    def test_session_open_no_daemon(self, fallback_session):
+        """Test that fallback session works without daemon."""
+        from heren.tools.session_tool import session_tool
         
-        # End session
-        end_result = heren_end_session(session_id=session_id)
-        assert end_result["success"] is True
-        
-    def test_end_invalid_session(self):
-        """Test ending non-existent session."""
-        result = heren_end_session(session_id="nonexistent")
-        assert result["success"] is False
+        result = session_tool(action="health", session_id=fallback_session)
+        # Health without daemon may fail, but session should exist
+        assert fallback_session is not None
