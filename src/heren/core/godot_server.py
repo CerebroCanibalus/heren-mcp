@@ -1,8 +1,8 @@
 """
 GodotServer - Persistent HTTP server wrapper for Godot Headless.
 
-Mantiene un proceso Godot abierto para operaciones rápidas.
-Ciclo de vida: inicia con sesión, detiene al cerrar sesión.
+Mantiene un proceso Godot abierto para operaciones rapidas.
+Ciclo de vida: inicia con sesion, detiene al cerrar sesion.
 Fallback a scripts temporales si el servidor crashea.
 """
 
@@ -26,7 +26,7 @@ class GodotServer:
     
     Ciclo de vida:
     1. __init__: Inicia el proceso godot --headless --script heren_server.gd
-    2. execute: Envía HTTP requests al servidor
+    2. execute: Envia HTTP requests al servidor
     3. stop: Detiene el proceso limpiamente
     
     Fallback:
@@ -38,9 +38,9 @@ class GodotServer:
     def __init__(self, project_path: str, godot_exe: str, port: int = 0):
         """
         Args:
-            project_path: Ruta al proyecto Godot (donde está project.godot)
+            project_path: Ruta al proyecto Godot (donde esta project.godot)
             godot_exe: Ruta al ejecutable de Godot
-            port: Puerto para el servidor (0 = automático)
+            port: Puerto para el servidor (0 = automatico)
         """
         self.project_path = os.path.abspath(project_path)
         self.godot_exe = godot_exe

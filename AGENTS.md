@@ -331,7 +331,51 @@ Medido con proyecto LAIKA (Godot 4.6.1), **testing real 2026-05-13**:
 
 ---
 
-## 7. Decisiones Registry
+## 7. Flujo Correcto para Proyectos Nuevos
+
+### Crear Proyecto Nuevo (v1.1+)
+
+```python
+# 1. Abrir sesión en un proyecto temporal (para tener daemon)
+session("open", project_path="D:/MiProyectoActual")
+
+# 2. Crear proyecto nuevo (configura daemon automáticamente)
+project("create", 
+        project_path="D:/MiNuevoJuego",
+        project_name="Mi Nuevo Juego",
+        renderer="forward_plus")
+# Resultado: daemon_setup: "success" (o "failed" con error)
+
+# 3. Abrir sesión en el nuevo proyecto
+session("open", project_path="D:/MiNuevoJuego")
+# Resultado: daemon_active: true
+```
+
+### Configurar Daemon en Proyecto Existente
+
+```python
+# Si session("open") devuelve daemon_active: false
+# y daemon_error indica que falta el daemon:
+
+# Configurar daemon manualmente
+project("setup_daemon", project_path="D:/MiProyectoExistente")
+
+# Luego reabrir sesión
+session("open", project_path="D:/MiProyectoExistente")
+```
+
+### Errores Comunes al Crear Proyectos
+
+| Error | Causa | Solución |
+|-------|-------|----------|
+| `daemon_active: false` | Proyecto nuevo sin daemon | Ejecutar `project("setup_daemon", ...)` |
+| `No hay sesión activa` | Intentar create sin sesión | Abrir sesión primero en cualquier proyecto |
+| `Daemon no disponible` | Sesión abierta pero daemon murió | Cerrar y reabrir sesión |
+| `Proyecto no encontrado` | Path incorrecto | Verificar ruta absoluta |
+
+---
+
+## 8. Decisiones Registry
 
 | Fecha | Decisión | Razón |
 |-------|----------|-------|
@@ -353,10 +397,81 @@ Medido con proyecto LAIKA (Godot 4.6.1), **testing real 2026-05-13**:
 | 2026-05-13 | **Batch funcional** | 11 operaciones en ~200ms. Mapeo completo action→method con 30+ acciones soportadas. |
 | 2026-05-13 | **Debug + Validate implementados** | 8 handlers nuevos en daemon: breakpoint, stack_trace, watch, console, validate_scene/script/node/resource. |
 | 2026-05-13 | **89% operaciones exitosas** | Testing real en proyecto LAIKA: 25/28 operaciones exitosas. 3 bugs menores del daemon identificados. |
+| 2026-05-14 | **Bug: daemon no arranca en proyecto nuevo** | `project/create` crea proyecto pero no copia daemon. Solucion: `setup_daemon` automatico en create + tool separada para proyectos existentes. |
+| 2026-05-14 | **project/setup_daemon** | Nueva tool para configurar daemon en proyectos existentes. Copia heren_daemon.gd + registra autoload. |
+| 2026-05-14 | **Auto-shutdown 60s -> 180s** | Timeout inicial de 60s era muy corto. Aumentado a 3 minutos para evitar cierres durante operaciones largas. |
+| 2026-05-14 | **Retry del daemon (3 intentos)** | Si el daemon falla al iniciar, el Session Manager reintenta automaticamente con delay exponencial (2s, 4s). |
+| 2026-05-14 | **Ventana pequena (320x200)** | El daemon se renderiza en esquina inferior derecha para no estorbar al usuario. No afecta screenshots. |
+| 2026-05-14 | **resource_local_to_scene = true** | Solucion para persistencia de sub-resources: marcar todos los recursos como local_to_scene fuerza a Godot a incrustarlos en .tscn. |
+| 2026-05-14 | **No reiniciar MCPs sin permiso** | Regla critica: NUNCA matar/reiniciar procesos MCP sin confirmacion explicita del usuario. |
 
 ---
 
-## 8. Checklist para Agentes
+## 8. Limitaciones Conocidas y Workarounds
+
+### Capacidades del Debug Tool
+
+| Action | Modo | Requiere Daemon | Descripción |
+|--------|------|-----------------|-------------|
+| `breakpoint` | Daemon | ✅ Sí (editor) | Setear/quitar breakpoints |
+| `stack_trace` | Daemon | ✅ Sí (editor) | Obtener stack trace |
+| `watch` | Daemon | ✅ Sí (editor) | Watch variables |
+| `console` | Daemon | ✅ Sí | Capturar output de consola |
+| `stop_scene` | Daemon | ✅ Sí (editor) | Detener ejecución |
+| `get_editor_errors` | Daemon | ✅ Sí (editor) | Obtener errores del editor |
+| `run_scene` | Subprocess | ❌ No | Ejecutar escena vía `godot --headless` |
+| `execute_editor_script` | Subprocess | ❌ No | Ejecutar GDScript completo (FileAccess, ClassDB, etc.) |
+| `check_script_syntax` | Subprocess | ❌ No | Verificar sintaxis vía `godot --check-only` |
+
+### Bugs Arreglados (v1.1+)
+
+| Bug | Fix | Fecha |
+|-----|-----|-------|
+| scene.create no aceptaba root_type/root_name | server.py ahora acepta root_type/root_name explicitos | 2026-05-14 |
+| batch set_prop fallaba con "missing_params" | Daemon ahora acepta "property" y "property_name" | 2026-05-14 |
+| batch nodes no persistían | Verificacion post-save + tracking de node_count | 2026-05-14 |
+| node.set_prop fallaba tras batch | Compatibilidad de nombres de parametros | 2026-05-14 |
+| Daemon no arrancaba en proyecto nuevo | `get_editor_interface()` causaba error de parseo | 2026-05-14 |
+| **Persistencia de sub-resources** | `resource_local_to_scene = true` + `_setup_resource_local_to_scene_recursive()` | 2026-05-14 |
+| **Persistencia de senales** | `_collect_connections()` + `_inject_into_tscn()` | 2026-05-14 |
+| **execute_editor_script corrupto** | Eliminar f-string problematico, guardar script tal cual | 2026-05-14 |
+| **Fallback property vs property_name** | `prop_name = params.get("property_name") or params.get("property", "")` | 2026-05-14 |
+| **Daemon crashea por Unicode** | Remover caracteres especiales de logs en Windows | 2026-05-14 |
+| **Sub-resources anidados (ShaderMaterial.shader)** | `_serialize_resource_properties()` maneja recursos anidados | 2026-05-14 |
+
+### Nuevas Features (v1.1+)
+
+| Feature | Descripcion |
+|---------|-------------|
+| **Auto-shutdown** | Daemon se apaga tras 3 minutos sin comandos (evita procesos colgados) |
+| **Retry automatico** | Session Manager reintenta iniciar daemon hasta 3 veces con delay exponencial |
+| **Ventana pequena** | Daemon renderiza a 320x200 en esquina inferior derecha (no estorba) |
+| **Sub-resources complejos** | Soporte para RectangleShape2D, CircleShape2D, CapsuleShape2D, GradientTexture2D, Environment, StandardMaterial3D |
+| **Edicion de recursos** | Modificar propiedades de sub-resources existentes y re-guardar |
+| **Escenas 3D completas** | Crear cuartos, luces, camaras, materiales con transparencia/metallic |
+
+### Workarounds Recomendados
+
+```python
+# Para ejecutar escenas (requiere editor):
+# No usar: debug("run_scene", ...)
+# Usar: Lanzar Godot Editor manualmente
+
+# Para scripts complejos:
+# No usar: debug("execute_editor_script", script_code="FileAccess...")
+# Usar: Crear archivo .gd y ejecutar con godot --script
+
+# Para batch con set_prop:
+# Usar "property_name" o "property" (ambos funcionan ahora)
+
+# Para recursos anidados complejos (ShaderMaterial con shader code):
+# El fix de resource_local_to_scene funciona para la mayoria de casos
+# Si falla, crear .gdshader separado y referenciar como ExtResource
+```
+
+---
+
+## 9. Checklist para Agentes
 
 Antes de entregar código:
 - [ ] ¿El Session Manager se inicializa primero?
@@ -494,25 +609,27 @@ project("setting", setting_name="display/window/size/viewport_width", value=1920
 
 ---
 
-## 10. Las 13 Tools de Heren MCP
+## 10. Las 15 Tools de Heren MCP v1.1
 
 ### Lista Completa y Estado
 
 | # | Tool | Actions | Dominio | Estado | Notas |
 |---|------|---------|---------|--------|-------|
 | 1 | `session` | open, close, list, info, health | Gestión de sesiones | ✅ **100%** | Estable |
-| 2 | `scene` | get_tree, save, load, unload, list_loaded, screenshot, create, delete, rename | Escenas | ✅ **100%** | create/delete/rename vía daemon |
-| 3 | `node` | add, remove, set_prop, get_prop, duplicate, rename, move | Nodos | ✅ **100%** | Posiciones aplican correctamente |
+| 2 | `scene` | get_tree, save, load, unload, list_loaded, screenshot, create, delete, rename, **add_ext_resource**, **set_editable_paths** | Escenas | ✅ **100%** | v1.1: ext resources + editable paths |
+| 3 | `node` | add, remove, set_prop, get_prop, duplicate, rename, move, **array_append**, **array_remove** | Nodos | ✅ **100%** | v1.1: array operations |
 | 4 | `batch` | (múltiples operaciones) | Batch operations | ✅ **100%** | 11 ops en ~200ms |
-| 5 | `resource` | create, read, update, delete, list | Recursos .tres | ✅ **Funcional** | create/list verificados |
-| 6 | `animation` | create_player, create, add_track, add_key, state_machine | Animaciones | ⚠️ **Parcial** | Player crea, anim no persiste |
+| 5 | `resource` | create, read, update, delete, list, **create_script**, **read_script**, **edit_script** | Recursos .tres + .gd | ✅ **100%** | v1.1: script CRUD |
+| 6 | `animation` | create_player, create, add_track, add_key, state_machine | Animaciones | ✅ **100%** | v1.1: Bug arreglado (AnimationLibrary) |
 | 7 | `skeleton` | create, add_bone, set_rest, skin, attachment | Esqueletos 2D/3D | ✅ **Funcional** | create/add_bone verificados |
-| 8 | `shader` | create, edit, validate, material, uniform | Shaders | ⚠️ **Parcial** | create funciona, uniform no |
+| 8 | `shader` | create, edit, validate, material, uniform | Shaders | ✅ **100%** | v1.1: Bug arreglado (4 material types) |
 | 9 | `tilemap` | inspect_set, inspect_map, set_cell, terrain, pattern | TileMaps | ⚠️ **Requiere setup** | Necesita tilesets existentes |
-| 10 | `project` | setting, autoload, remove_autoload, shader_global | Configuración | ✅ **100%** | read/write settings funciona |
-| 11 | `debug` | breakpoint, stack_trace, watch, console | Depuración | ✅ **Funcional** | Stubs operacionales |
+| 10 | `project` | **create**, setting, autoload, remove_autoload, shader_global | Configuración | ✅ **100%** | v1.1: Crear proyectos nuevos |
+| 11 | `debug` | breakpoint, stack_trace, watch, console, **run_scene**, **stop_scene**, **get_editor_errors**, **execute_editor_script** | Depuración | ✅ **Funcional** | v1.1: Debug completo |
 | 12 | `validate` | scene, script, node, resource | Validación | ✅ **Funcional** | scene/node verificados |
-| 13 | `index` | list, info, example | **Índice de tools** | ✅ **100%** | Descubrimiento completo |
+| 13 | `signal` | connect, disconnect, list, set_script | Señales | ✅ **100%** | v1.0: Signal management |
+| 14 | `global` | autoload, project_setting, shader_global | Configuración global | ✅ **100%** | v1.0: Global settings |
+| 15 | `index` | list, info, example | **Índice de tools** | ✅ **100%** | Descubrimiento completo |
 
 ### Filosofía: Centralizadas
 
@@ -539,13 +656,18 @@ resource_tool(action="create", resource_path="res://mat.tres", resource_type="Sh
 resource_tool(action="read", resource_path="res://mat.tres")
 ```
 
+### Bugs Arreglados en v1.1 ✅
+
+| # | Bug | Tool Afectada | Estado | Fix |
+|---|-----|---------------|--------|-----|
+| 1 | **Animación no persiste** | `animation` (create, add_track) | ✅ ARREGLADO | Usar AnimationLibrary en vez de add_animation() |
+| 2 | **Shader uniform no aplica** | `shader` (uniform) | ✅ ARREGLADO | Cubrir 4 tipos de materiales (CanvasItem, GeometryInstance3D override/overlay, MeshInstance3D surface) |
+
 ### Bugs Conocidos del Daemon (heren_daemon.gd)
 
 | # | Bug | Tool Afectada | Severidad | Workaround |
 |---|-----|---------------|-----------|------------|
-| 1 | **Animación no persiste** | `animation` (create, add_track) | 🔴 Alta | Guardar escena tras cada operación de animación |
-| 2 | **Shader uniform no aplica** | `shader` (uniform) | 🟡 Media | Setear uniform manualmente vía set_prop |
-| 3 | **Screenshot pequeño/vacío** | `scene` (screenshot) | 🟢 Baja | Normal sin texturas/cámaras configuradas |
+| 1 | **Screenshot pequeño/vacío** | `scene` (screenshot) | 🟢 Baja | Normal sin texturas/cámaras configuradas |
 
 ### Regla Crítica: `session.id` vs `session.session_id`
 

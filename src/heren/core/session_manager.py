@@ -1,10 +1,10 @@
 """
 Heren MCP - Session Manager (Capa 0)
 
-El n�cleo del sistema. Se inicializa primero. Sin sesi�n, no hay operaciones.
-Gestiona cach� agresiva y ejecuta scripts GDScript temporales via Godot CLI.
+El nucleo del sistema. Se inicializa primero. Sin sesion, no hay operaciones.
+Gestiona cache agresiva y ejecuta scripts GDScript temporales via Godot CLI.
 
-Filosof�a: Poder. Eficiencia. Rapidez.
+Filosofia: Poder. Eficiencia. Rapidez.
 """
 
 import json
@@ -49,7 +49,7 @@ class LRUCache:
                 del self._cache[key]
                 return None
             
-            # Mover al final (m�s recientemente usado)
+            # Mover al final (mas recientemente usado)
             self._cache.move_to_end(key)
             return entry["value"]
     
@@ -114,17 +114,20 @@ class Session:
     # GodotDaemon (persistent WebSocket server - NUEVO)
     godot_daemon: Optional[GodotDaemon] = None
     
+    # Error info when daemon fails to start
+    daemon_error: Optional[str] = None
+    
     # Operation history
     operations: list = field(default_factory=list)
     undo_stack: list = field(default_factory=list)
     redo_stack: list = field(default_factory=list)
     
     def touch(self):
-        """Actualiza timestamp de �ltima actividad."""
+        """Actualiza timestamp de ultima actividad."""
         self.last_activity = time.time()
     
     def is_expired(self, timeout_seconds: float = 3600) -> bool:
-        """Verifica si la sesi�n expir� por inactividad."""
+        """Verifica si la sesion expiro por inactividad."""
         return time.time() - self.last_activity > timeout_seconds
 
 
@@ -223,14 +226,14 @@ class SessionManager:
         use_daemon: bool = True,   # GodotDaemon WebSocket (NUEVO - recomendado)
     ) -> Session:
         """
-        Inicia una nueva sesi�n.
+        Inicia una nueva sesion.
         
         Args:
             project_path: Ruta absoluta al proyecto Godot
             godot_path: Ruta al ejecutable de Godot (auto-detecta si no se proporciona)
         
         Returns:
-            Sesi�n activa
+            Sesion activa. Raises ValueError si hay problemas criticos.
         """
         project_path = os.path.abspath(project_path)
         
@@ -238,7 +241,11 @@ class SessionManager:
             raise ValueError(f"Proyecto no encontrado: {project_path}")
         
         if not os.path.exists(os.path.join(project_path, "project.godot")):
-            raise ValueError(f"No es un proyecto Godot v�lido: {project_path}")
+            raise ValueError(
+                f"No es un proyecto Godot valido: {project_path}\n"
+                f"No se encontro project.godot. "
+                f"Crea el proyecto primero con: project('create', ...)"
+            )
         
         # Reutilizar sesi�n existente para el mismo proyecto (solo si daemon sigue vivo)
         with self._sessions_lock:
@@ -262,7 +269,20 @@ class SessionManager:
         if not os.path.exists(godot_path):
             raise ValueError(f"Godot no encontrado: {godot_path}")
         
-        # Crear sesi�n
+        # Verificar que el daemon esta disponible antes de intentar iniciar
+        if use_daemon:
+            daemon_script = os.path.join(
+                os.path.dirname(os.path.dirname(__file__)), 
+                "daemon", "heren_daemon.gd"
+            )
+            if not os.path.exists(daemon_script):
+                raise RuntimeError(
+                    f"Daemon no encontrado: {daemon_script}\n"
+                    f"El archivo heren_daemon.gd no esta disponible. "
+                    f"Reinstala el paquete heren-mcp."
+                )
+        
+        # Crear sesion
         session_id = str(uuid.uuid4())[:8]
         project_state = ProjectState(
             project_path=project_path,
@@ -279,22 +299,24 @@ class SessionManager:
         self._verify_godot(godot_path)
         
         # Iniciar GodotDaemon (WebSocket persistent server) si se solicita
+        daemon_error = None
         if use_daemon:
-            try:
-                logger.info(f"[Daemon] Iniciando GodotDaemon para sesi�n {session_id}...")
-                daemon = GodotDaemon(
-                    project_path=project_path,
-                    godot_path=godot_path
+            daemon = self._start_daemon_with_retry(session_id, project_path, godot_path)
+            if daemon:
+                session.godot_daemon = daemon
+            else:
+                daemon_error = (
+                    "GodotDaemon no pudo iniciarse tras 3 intentos. Posibles causas:\n"
+                    "1. Godot no tiene permisos para ejecutar scripts\n"
+                    "2. El proyecto tiene errores que impiden iniciar\n"
+                    "3. Puerto bloqueado por firewall\n"
+                    "4. El proyecto no tiene el addon heren configurado\n\n"
+                    "Solucion: Ejecuta project('setup_daemon', project_path='...') "
+                    "para configurar el daemon en este proyecto."
                 )
-                if daemon.start():
-                    session.godot_daemon = daemon
-                    logger.info(f"[Daemon] GodotDaemon iniciado en puerto {daemon.port}")
-                else:
-                    logger.warning("[Daemon] No se pudo iniciar GodotDaemon. Usando scripts temporales.")
-                    session.godot_daemon = None
-            except Exception as e:
-                logger.warning(f"[Daemon] Error iniciando GodotDaemon: {e}. Usando scripts temporales.")
+                logger.warning(f"[Daemon] {daemon_error}")
                 session.godot_daemon = None
+                session.daemon_error = daemon_error
         else:
             session.godot_daemon = None
         
@@ -363,6 +385,42 @@ class SessionManager:
             logger.info(f"Godot version: {result.stdout.strip()}")
         except Exception as e:
             raise RuntimeError(f"No se pudo verificar Godot: {e}")
+    
+    def _start_daemon_with_retry(self, session_id: str, project_path: str, godot_path: str, max_retries: int = 3) -> Optional[GodotDaemon]:
+        """
+        Inicia GodotDaemon con reintentos automaticos.
+        
+        Args:
+            session_id: ID de la sesion
+            project_path: Ruta al proyecto
+            godot_path: Ruta al ejecutable de Godot
+            max_retries: Numero maximo de intentos (default: 3)
+        
+        Returns:
+            GodotDaemon iniciado, o None si fallo despues de todos los reintentos
+        """
+        for attempt in range(1, max_retries + 1):
+            try:
+                logger.info(f"[Daemon] Intento {attempt}/{max_retries} de iniciar GodotDaemon para sesion {session_id}...")
+                daemon = GodotDaemon(
+                    project_path=project_path,
+                    godot_path=godot_path
+                )
+                if daemon.start():
+                    logger.info(f"[Daemon] GodotDaemon iniciado en puerto {daemon.port} (intento {attempt})")
+                    return daemon
+                else:
+                    logger.warning(f"[Daemon] Intento {attempt} fallo: daemon.start() retorno False")
+            except Exception as e:
+                logger.warning(f"[Daemon] Intento {attempt} fallo con excepcion: {e}")
+            
+            if attempt < max_retries:
+                delay = attempt * 2  # 2s, 4s entre reintentos
+                logger.info(f"[Daemon] Esperando {delay}s antes del siguiente intento...")
+                time.sleep(delay)
+        
+        logger.error(f"[Daemon] Todos los intentos fallaron despues de {max_retries} reintentos")
+        return None
     
     def execute_gdscript(
         self,

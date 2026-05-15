@@ -116,9 +116,10 @@ TOOLS_INDEX = {
     },
     "project": {
         "description": "Configuración del proyecto",
-        "actions": ["create", "setting", "autoload", "remove_autoload", "shader_global"],
+        "actions": ["create", "setup_daemon", "setting", "autoload", "remove_autoload", "shader_global"],
         "examples": {
             "create": 'project(action="create", session_id="abc", project_path="res://MyNewGame", project_name="My New Game", renderer="forward_plus", viewport_width=1920, viewport_height=1080)',
+            "setup_daemon": 'project(action="setup_daemon", project_path="D:/MiProyectoExistente")',
             "setting": 'project(action="setting", session_id="abc", setting_name="display/window/size/viewport_width", value=1920)',
             "autoload": 'project(action="autoload", session_id="abc", autoload_name="GameManager", script_path="res://autoloads/game_manager.gd")',
             "remove_autoload": 'project(action="remove_autoload", session_id="abc", autoload_name="GameManager")',
@@ -126,8 +127,8 @@ TOOLS_INDEX = {
         }
     },
     "debug": {
-        "description": "Depuración funcional",
-        "actions": ["breakpoint", "stack_trace", "watch", "console", "run_scene", "stop_scene", "get_editor_errors", "execute_editor_script"],
+        "description": "Depuración funcional (daemon + subprocess)",
+        "actions": ["breakpoint", "stack_trace", "watch", "console", "run_scene", "stop_scene", "get_editor_errors", "execute_editor_script", "check_script_syntax"],
         "examples": {
             "breakpoint": 'debug(action="breakpoint", session_id="abc", script_path="res://scripts/player.gd", line=42, enabled=True)',
             "stack_trace": 'debug(action="stack_trace", session_id="abc")',
@@ -136,7 +137,8 @@ TOOLS_INDEX = {
             "run_scene": 'debug(action="run_scene", session_id="abc", scene_path="res://levels/level1.tscn")',
             "stop_scene": 'debug(action="stop_scene", session_id="abc")',
             "get_editor_errors": 'debug(action="get_editor_errors", session_id="abc")',
-            "execute_editor_script": 'debug(action="execute_editor_script", session_id="abc", script_code="Engine.get_frames_per_second()")'
+            "execute_editor_script": 'debug(action="execute_editor_script", session_id="abc", script_code="FileAccess.open(\"user://test.txt\", FileAccess.WRITE)")',
+            "check_script_syntax": 'debug(action="check_script_syntax", session_id="abc", script_path="res://scripts/player.gd")'
         }
     },
     "validate": {

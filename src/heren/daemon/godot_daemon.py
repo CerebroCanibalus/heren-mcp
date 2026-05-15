@@ -76,6 +76,7 @@ class GodotDaemon:
         
         self._is_connected = False
         self._request_counter = 0
+        self._last_error_output: str = ""  # Para diagnóstico
     
     def start(self) -> bool:
         """Inicia el daemon Godot y espera a que esté listo."""

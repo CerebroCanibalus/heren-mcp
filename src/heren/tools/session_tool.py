@@ -106,17 +106,25 @@ def _action_open(manager, project_path: str, godot_path: Optional[str], use_daem
             use_daemon=use_daemon
         )
         
+        daemon_active = session.godot_daemon is not None
+        
         result = {
             "success": True,
             "session_id": session.id,
             "project_path": session.project_path,
-            "daemon_active": session.godot_daemon is not None,
+            "daemon_active": daemon_active,
         }
         
         if session.godot_daemon:
             result["daemon_port"] = session.godot_daemon.port
+        elif session.daemon_error:
+            result["daemon_error"] = session.daemon_error
+            result["recommendation"] = (
+                "Ejecuta: project('setup_daemon', project_path='" 
+                + session.project_path + "') para configurar el daemon."
+            )
         
-        logger.info(f"[SessionTool] Sesión abierta: {session.id}")
+        logger.info(f"[SessionTool] Sesión abierta: {session.id} | daemon_active={daemon_active}")
         return result
         
     except Exception as e:

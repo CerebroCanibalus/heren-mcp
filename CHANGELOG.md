@@ -88,4 +88,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - Technical architecture
 - [benchmarks/BENCHMARKS.md](benchmarks/BENCHMARKS.md) - Performance comparisons
 
-[1.0.0]: https://github.com/tu-usuario/heren-mcp/releases/tag/v1.0.0
+[1.0.0]: https://github.com/CerebroCanibalus/heren-mcp/releases/tag/v1.0.0

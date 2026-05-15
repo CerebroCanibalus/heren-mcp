@@ -28,6 +28,10 @@ var _handlers: Dictionary = {}
 # Heartbeat - usamos tiempo acumulado en vez de Timer
 var _heartbeat_accumulator: float = 0.0
 
+# Auto-shutdown por inactividad
+var _inactivity_timer: float = 0.0
+const INACTIVITY_TIMEOUT: float = 180.0  # 3 minutos sin comandos = auto-shutdown
+
 # Estado
 var _project_path: String = ""
 var _is_ready: bool = false
@@ -36,13 +40,30 @@ var _is_ready: bool = false
 func _initialize():
 	print("[HEREN] Iniciando daemon...")
 	
+	# Obtener project path de argumentos
+	_project_path = _get_project_path()
+	
+	# Si no hay args, estamos corriendo como autoload normal (no MCP)
+	# No iniciar servidor para no interferir con el juego
+	if _project_path == "":
+		print("[HEREN] Modo autoload detectado (sin args). Daemon inactivo.")
+		_is_ready = false
+		return
+	
+	print("[HEREN] Proyecto: ", _project_path)
+	
 	# Limitar FPS para ahorrar recursos
 	Engine.max_fps = 10
 	print("[HEREN] FPS limitado a: ", Engine.max_fps)
 	
-	# Obtener project path de argumentos
-	_project_path = _get_project_path()
-	print("[HEREN] Proyecto: ", _project_path)
+	# Hacer ventana muy pequena para no estorbar (calidad de vida)
+	# No afecta screenshots porque usan el tamaño especificado en params
+	var window_size = Vector2i(320, 200)
+	DisplayServer.window_set_size(window_size)
+	# Mover a esquina inferior derecha
+	var screen_size = DisplayServer.screen_get_size()
+	DisplayServer.window_set_position(screen_size - window_size - Vector2i(20, 20))
+	print("[HEREN] Ventana reducida a: ", window_size)
 	
 	# Registrar handlers
 	_register_handlers()
@@ -59,8 +80,19 @@ func _initialize():
 
 
 func _process(delta):
+	# Si no estamos listos (modo autoload sin args), no hacer nada
+	if not _is_ready:
+		return
+	
 	# Procesar heartbeat
 	_process_heartbeat(delta)
+	
+	# Auto-shutdown por inactividad
+	_inactivity_timer += delta
+	if _inactivity_timer >= INACTIVITY_TIMEOUT:
+		print("[HEREN] Auto-shutdown por inactividad (", INACTIVITY_TIMEOUT, "s sin comandos)")
+		quit()
+		return
 	
 	# Aceptar nuevas conexiones
 	if _server and _server.is_connection_available():
@@ -74,7 +106,7 @@ func _process(delta):
 				_clients[peer_id] = {"connected_at": Time.get_unix_time_from_system()}
 				print("[HEREN] Cliente conectado: ", peer_id)
 			else:
-				print("[HEREN] Error aceptando conexión WebSocket: ", err)
+				print("[HEREN] Error aceptando conexion WebSocket: ", err)
 	
 	# Procesar peers existentes
 	for peer_id in _peers.keys():
@@ -89,6 +121,8 @@ func _process(delta):
 				var packet = peer.get_packet()
 				var msg = packet.get_string_from_utf8()
 				_handle_message(peer_id, peer, msg)
+				# Reset timer de inactividad al recibir comando
+				_inactivity_timer = 0.0
 			
 		elif state == WebSocketPeer.STATE_CLOSING:
 			pass  # Esperar cierre
@@ -612,11 +646,21 @@ func _handle_add_node(params: Dictionary) -> Dictionary:
 	parent.add_child(new_node)
 	new_node.owner = root
 	
+	# Verificar que el nodo fue añadido correctamente
+	var verify_node = parent.get_node_or_null(node_name)
+	if not verify_node:
+		return {
+			"success": false,
+			"error": "add_failed",
+			"message": "El nodo no se pudo verificar después de añadirlo"
+		}
+	
 	return {
 		"success": true,
 		"scene_path": scene_path,
 		"node_path": str(parent.get_path()) + "/" + node_name,
-		"node_type": node_type
+		"node_type": node_type,
+		"node_count": _count_nodes_recursive(root)
 	}
 
 
@@ -658,10 +702,15 @@ func _handle_set_property(params: Dictionary) -> Dictionary:
 	var scene_path = params.get("scene_path", "")
 	var node_path = params.get("node_path", "")
 	var property = params.get("property", "")
+	
+	# Compatibilidad: aceptar "property_name" como alternativa a "property"
+	if not property and params.has("property_name"):
+		property = params.get("property_name", "")
+	
 	var value = params.get("value", null)
 	
 	if not scene_path or not node_path or not property:
-		return {"success": false, "error": "missing_params"}
+		return {"success": false, "error": "missing_params", "message": "Se requiere scene_path, node_path y property (o property_name)"}
 	
 	if not _scene_cache.has(scene_path):
 		return {"success": false, "error": "scene_not_loaded"}
@@ -984,22 +1033,491 @@ func _handle_save_scene(params: Dictionary) -> Dictionary:
 	
 	var root = _scene_cache[scene_path]
 	
+	# FIX CRITICO: Asegurar que todos los recursos de los nodos tengan paths validos
+	# antes de hacer pack(). Esto fuerza a Godot a guardarlos como ext_resources.
+	_pre_save_resource_fix(root)
+	
 	# Crear PackedScene
 	var packed = PackedScene.new()
 	var err = packed.pack(root)
 	if err != OK:
 		return {"success": false, "error": "pack_failed", "code": err}
 	
-	# Guardar
-	err = ResourceSaver.save(packed, scene_path)
+	# FIX CRITICO: Usar FLAG_BUNDLE_RESOURCES para asegurar que todos los recursos se guarden
+	var save_flags = ResourceSaver.FLAG_BUNDLE_RESOURCES
+	err = ResourceSaver.save(packed, scene_path, save_flags)
 	if err != OK:
 		return {"success": false, "error": "save_failed", "code": err}
+	
+	# FIX CRITICO: Inyectar sub-resources y senales que PackedScene no guarda
+	# Recolectar recursos y senales del arbol en memoria
+	var sub_resources = _collect_sub_resources(root)
+	var connections = _collect_connections(root)
+	
+	# Inyectar en el archivo .tscn
+	if not sub_resources.is_empty() or not connections.is_empty():
+		_inject_into_tscn(scene_path, sub_resources, connections)
+	
+	# Verificar que el archivo se escribio correctamente
+	var saved_node_count = _count_nodes_recursive(root)
+	
+	# Intentar recargar para verificar integridad
+	var verify_load = load(scene_path)
+	var verify_count = 0
+	if verify_load:
+		var verify_instance = verify_load.instantiate()
+		if verify_instance:
+			verify_count = _count_nodes_recursive(verify_instance)
+			verify_instance.queue_free()
+	
+	if verify_count > 0 and verify_count != saved_node_count:
+		return {
+			"success": false,
+			"error": "save_verification_failed",
+			"message": "El archivo guardado tiene " + str(verify_count) + " nodos, pero se esperaban " + str(saved_node_count),
+			"scene_path": scene_path
+		}
 	
 	return {
 		"success": true,
 		"scene_path": scene_path,
-		"node_count": _count_nodes_recursive(root)
+		"node_count": saved_node_count,
+		"verified": verify_count == saved_node_count,
+		"sub_resources_injected": sub_resources.size(),
+		"connections_injected": connections.size()
 	}
+
+
+func _pre_save_resource_fix(node: Node):
+	"""
+	FIX CRITICO: Recorre todos los nodos y asegura que las propiedades Resource
+	se serialicen correctamente en el .tscn.
+	"""
+	if not node:
+		return
+	
+	# Obtener propiedades del nodo
+	var property_list = node.get_property_list()
+	
+	for prop in property_list:
+		var prop_name = prop.get("name", "")
+		var prop_type = prop.get("type", 0)
+		var prop_usage = prop.get("usage", 0)
+		
+		# Solo procesar propiedades exportadas o de almacenamiento
+		if prop_usage & PROPERTY_USAGE_STORAGE == 0:
+			continue
+		
+		# Si es una propiedad de tipo OBJECT (que incluye Resource)
+		if prop_type == TYPE_OBJECT:
+			var value = node.get(prop_name)
+			if value and value is Resource:
+				var res = value as Resource
+				# FIX: Marcar como local_to_scene para forzar incrustacion
+				if not res.resource_local_to_scene:
+					res.resource_local_to_scene = true
+				# FIX: Asegurar que los recursos anidados tambien sean locales
+				_setup_resource_local_to_scene_recursive(res)
+	
+	# Recursion en hijos
+	for child in node.get_children():
+		_pre_save_resource_fix(child)
+
+
+func _setup_resource_local_to_scene_recursive(resource: Resource):
+	"""
+	Marca un recurso y todos sus sub-recursos como local_to_scene.
+	Esto fuerza a Godot a serializar todo en el .tscn.
+	"""
+	if not resource:
+		return
+	
+	if not resource.resource_local_to_scene:
+		resource.resource_local_to_scene = true
+	
+	# Recorrer propiedades del recurso buscando sub-recursos
+	var prop_list = resource.get_property_list()
+	for prop in prop_list:
+		var prop_name = prop.get("name", "")
+		var prop_usage = prop.get("usage", 0)
+		
+		if prop_name in ["script", "resource_name", "resource_path"]:
+			continue
+		if prop_usage & PROPERTY_USAGE_STORAGE == 0:
+			continue
+		
+		var value = resource.get(prop_name)
+		if value and value is Resource and not value is Script:
+			_setup_resource_local_to_scene_recursive(value as Resource)
+
+
+func _derive_resource_path(resource: Resource) -> String:
+	"""
+	Intenta derivar un resource_path para un recurso basado en su tipo.
+	Esto es un workaround para recursos creados programaticamente.
+	"""
+	if not resource:
+		return ""
+	
+	# Si ya tiene un path, devolverlo
+	if not resource.resource_path.is_empty():
+		return resource.resource_path
+	
+	# Para scripts, buscar por clase
+	if resource is Script:
+		var script = resource as Script
+		if not script.resource_path.is_empty():
+			return script.resource_path
+		# Intentar encontrar el archivo basado en el nombre de la clase
+		var class_name_str = script.get_global_name()
+		if not class_name_str.is_empty():
+			return "res://scripts/" + class_name_str.to_snake_case() + ".gd"
+	
+	# Para texturas, buscar en el sistema de archivos
+	if resource is Texture2D:
+		var texture = resource as Texture2D
+		if not texture.resource_path.is_empty():
+			return texture.resource_path
+		# No podemos derivar el path de una textura sin mas informacion
+		return ""
+	
+	# Para otros recursos, devolver vacio (no podemos derivar el path)
+	return ""
+
+
+func _collect_sub_resources(node: Node) -> Array:
+	"""
+	Recorre el arbol de nodos y recolecta todos los recursos que necesitan
+	ser guardados como sub_resources en el .tscn.
+	Retorna un array de diccionarios con: node_path, prop_name, resource, resource_type
+	"""
+	var resources = []
+	if not node:
+		return resources
+	
+	# Recorrer propiedades del nodo
+	var property_list = node.get_property_list()
+	for prop in property_list:
+		var prop_name = prop.get("name", "")
+		var prop_type = prop.get("type", 0)
+		var prop_usage = prop.get("usage", 0)
+		
+		# Solo propiedades de almacenamiento
+		if prop_usage & PROPERTY_USAGE_STORAGE == 0:
+			continue
+		
+		# Si es OBJECT (Resource)
+		if prop_type == TYPE_OBJECT:
+			var value = node.get(prop_name)
+			if value and value is Resource and not value is Script:
+				# Solo recursos sin resource_path (creados programaticamente)
+				if value.resource_path.is_empty():
+					resources.append({
+						"node_path": _get_node_path_relative(node),
+						"prop_name": prop_name,
+						"resource": value,
+						"resource_type": value.get_class()
+					})
+	
+	# Recursion en hijos
+	for child in node.get_children():
+		resources.append_array(_collect_sub_resources(child))
+	
+	return resources
+
+
+func _collect_connections(node: Node) -> Array:
+	"""
+	Recorre el arbol de nodos y recolecta todas las senales conectadas.
+	Retorna un array de diccionarios con: signal_name, from_path, to_path, method
+	"""
+	var connections = []
+	if not node:
+		return connections
+	
+	# Obtener senales del nodo
+	var signal_list = node.get_signal_list()
+	for sig in signal_list:
+		var signal_name = sig.get("name", "")
+		# Obtener conexiones de esta senal
+		var conns = node.get_signal_connection_list(signal_name)
+		for conn in conns:
+			var callable_obj = conn.get("callable", null)
+			if callable_obj:
+				var target_node = callable_obj.get_object() as Node
+				if target_node:
+					connections.append({
+						"signal_name": signal_name,
+						"from_path": _get_node_path_relative(node),
+						"to_path": _get_node_path_relative(target_node),
+						"method": callable_obj.get_method()
+					})
+	
+	# Recursion en hijos
+	for child in node.get_children():
+		connections.append_array(_collect_connections(child))
+	
+	return connections
+
+
+func _get_node_path_relative(node: Node) -> String:
+	"""
+	Obtiene el path relativo del nodo desde el root de la escena.
+	"""
+	if not node:
+		return ""
+	
+	var path = node.name
+	var current = node.get_parent()
+	while current and not current is Viewport:
+		path = current.name + "/" + path
+		current = current.get_parent()
+	
+	# Remover el nombre del root (la escena)
+	var parts = path.split("/")
+	if parts.size() > 1:
+		parts.remove_at(0)
+		return "/".join(parts)
+	
+	return "."
+
+
+func _inject_into_tscn(scene_path: String, sub_resources: Array, connections: Array):
+	"""
+	Inyecta sub_resources y conexiones en un archivo .tscn existente.
+	Modifica el archivo directamente agregando [sub_resource] y [connection].
+	Maneja recursos anidados (ej: ShaderMaterial.shader).
+	"""
+	if not FileAccess.file_exists(scene_path):
+		return
+	
+	var file = FileAccess.open(scene_path, FileAccess.READ)
+	if not file:
+		return
+	
+	var content = file.get_as_text()
+	file.close()
+	
+	var lines = content.split("\n")
+	var result_lines = []
+	var has_sub_resources_section = false
+	var has_connections_section = false
+	
+	# Procesar lineas existentes
+	for line in lines:
+		if line.begins_with("[sub_resource"):
+			has_sub_resources_section = true
+		if line.begins_with("[connection"):
+			has_connections_section = true
+		result_lines.append(line)
+	
+	# Agregar sub_resources si no existen
+	if not sub_resources.is_empty() and not has_sub_resources_section:
+		result_lines.append("")
+		result_lines.append("# Sub-resources injectados por Heren MCP")
+		
+		# Primero recolectar todos los sub-resources anidados
+		var all_sub_resources = {}  # id -> {type, properties}
+		
+		for i in range(sub_resources.size()):
+			var res_info = sub_resources[i]
+			var res = res_info["resource"]
+			var res_type = res_info["resource_type"]
+			var res_id = res_type + "_heren_" + str(i)
+			
+			# Serializar propiedades, esto puede agregar sub-resources anidados
+			var nested_dict = {}
+			var res_properties = _serialize_resource_properties(res, nested_dict)
+			
+			# Agregar sub-resources anidados primero
+			for nested_id in nested_dict.keys():
+				if not all_sub_resources.has(nested_id):
+					all_sub_resources[nested_id] = nested_dict[nested_id]
+			
+			# Agregar el sub-resource principal
+			all_sub_resources[res_id] = {
+				"type": res_type,
+				"properties": res_properties
+			}
+			
+			# Actualizar la referencia en el nodo correspondiente
+			var node_path = res_info["node_path"]
+			var prop_name = res_info["prop_name"]
+			_update_node_subresource_ref(result_lines, node_path, prop_name, res_id)
+		
+		# Inyectar todos los sub-resources en orden
+		for res_id in all_sub_resources.keys():
+			var res_data = all_sub_resources[res_id]
+			result_lines.append("[sub_resource type=\"" + res_data["type"] + "\" id=\"" + res_id + "\"]")
+			for prop_line in res_data["properties"]:
+				result_lines.append(prop_line)
+			result_lines.append("")  # Linea en blanco entre sub-resources
+	
+	# Agregar conexiones si no existen
+	if not connections.is_empty() and not has_connections_section:
+		result_lines.append("")
+		result_lines.append("# Conexiones injectadas por Heren MCP")
+		
+		for conn in connections:
+			var conn_line = "[connection signal=\"" + conn["signal_name"] + "\""
+			conn_line += " from=\"" + conn["from_path"] + "\""
+			conn_line += " to=\"" + conn["to_path"] + "\""
+			conn_line += " method=\"" + conn["method"] + "\"]"
+			result_lines.append(conn_line)
+	
+	# Escribir archivo modificado
+	file = FileAccess.open(scene_path, FileAccess.WRITE)
+	if file:
+		file.store_string("\n".join(result_lines))
+		file.close()
+		print("[Inject] Inyectados ", sub_resources.size(), " sub-resources y ", connections.size(), " conexiones en ", scene_path)
+
+
+func _serialize_resource_properties(resource: Resource, sub_resources_dict: Dictionary = {}) -> Array:
+	"""
+	Serializa las propiedades de un recurso a lineas de texto .tscn.
+	Maneja recursos anidados creando sub-resources adicionales.
+	"""
+	var lines = []
+	if not resource:
+		return lines
+	
+	var prop_list = resource.get_property_list()
+	for prop in prop_list:
+		var prop_name = prop.get("name", "")
+		var prop_usage = prop.get("usage", 0)
+		
+		# Solo propiedades de almacenamiento, no script o resource_name
+		if prop_name in ["script", "resource_name", "resource_path"]:
+			continue
+		if prop_usage & PROPERTY_USAGE_STORAGE == 0:
+			continue
+		
+		var value = resource.get(prop_name)
+		if value == null:
+			continue
+		
+		# Si es un recurso anidado, crear sub-resource separado
+		if value is Resource and not value is Script:
+			var nested_res = value as Resource
+			if nested_res.resource_path.is_empty():
+				# Crear sub-resource anidado
+				var nested_type = nested_res.get_class()
+				var nested_id = nested_type + "_nested_" + str(sub_resources_dict.size())
+				sub_resources_dict[nested_id] = {
+					"type": nested_type,
+					"resource": nested_res,
+					"properties": _serialize_resource_properties(nested_res, sub_resources_dict)
+				}
+				lines.append(prop_name + " = SubResource(\"" + nested_id + "\")")
+				continue
+		
+		# Serializar segun tipo
+		var serialized = _serialize_value_tscn(value)
+		if not serialized.is_empty():
+			lines.append(prop_name + " = " + serialized)
+	
+	return lines
+
+
+func _serialize_value_tscn(value) -> String:
+	"""
+	Serializa un valor de Godot a formato texto .tscn.
+	"""
+	if value == null:
+		return ""
+	
+	match typeof(value):
+		TYPE_INT, TYPE_FLOAT:
+			return str(value)
+		TYPE_STRING, TYPE_STRING_NAME:
+			return "\"" + value + "\""
+		TYPE_BOOL:
+			return "true" if value else "false"
+		TYPE_VECTOR2:
+			var v = value as Vector2
+			return "Vector2(" + str(v.x) + ", " + str(v.y) + ")"
+		TYPE_VECTOR2I:
+			var v = value as Vector2i
+			return "Vector2i(" + str(v.x) + ", " + str(v.y) + ")"
+		TYPE_VECTOR3:
+			var v = value as Vector3
+			return "Vector3(" + str(v.x) + ", " + str(v.y) + ", " + str(v.z) + ")"
+		TYPE_COLOR:
+			var c = value as Color
+			return "Color(" + str(c.r) + ", " + str(c.g) + ", " + str(c.b) + ", " + str(c.a) + ")"
+		TYPE_RECT2:
+			var r = value as Rect2
+			return "Rect2(" + _serialize_value_tscn(r.position) + ", " + _serialize_value_tscn(r.size) + ")"
+		TYPE_TRANSFORM2D:
+			var t = value as Transform2D
+			return "Transform2D(" + str(t.x.x) + ", " + str(t.x.y) + ", " + str(t.y.x) + ", " + str(t.y.y) + ", " + str(t.origin.x) + ", " + str(t.origin.y) + ")"
+		TYPE_ARRAY, TYPE_PACKED_STRING_ARRAY, TYPE_PACKED_INT32_ARRAY, TYPE_PACKED_FLOAT32_ARRAY:
+			var arr = value as Array
+			var parts = []
+			for item in arr:
+				parts.append(_serialize_value_tscn(item))
+			return "[" + ", ".join(parts) + "]"
+		TYPE_DICTIONARY:
+			var dict = value as Dictionary
+			var parts = []
+			for key in dict.keys():
+				parts.append(_serialize_value_tscn(key) + ": " + _serialize_value_tscn(dict[key]))
+			return "{" + ", ".join(parts) + "}"
+		TYPE_OBJECT:
+			if value is Resource:
+				var res = value as Resource
+				if not res.resource_path.is_empty():
+					return "ExtResource(\"" + res.resource_path + "\")"
+				else:
+					# Referencia a sub_resource (no deberia ocurrir aqui)
+					return "SubResource(\"" + res.get_class() + "\")"
+			return ""
+		_:
+			return str(value)
+
+
+func _update_node_subresource_ref(lines: Array, node_path: String, prop_name: String, res_id: String):
+	"""
+	Actualiza la referencia de sub-resource en la linea del nodo correspondiente.
+	Busca el nodo por path y agrega/modifica la propiedad para usar SubResource().
+	"""
+	var target_node_line = -1
+	var target_indent = ""
+	
+	# Encontrar la linea del nodo
+	for i in range(lines.size()):
+		var line = lines[i]
+		if line.begins_with("[node "):
+			# Extraer path del nodo de la linea
+			var path_match = line.find("parent=\"")
+			if path_match != -1:
+				var path_start = path_match + 8
+				var path_end = line.find("\"", path_start)
+				var parent_path = line.substr(path_start, path_end - path_start)
+				
+				# Extraer nombre del nodo
+				var name_match = line.find("name=\"")
+				if name_match != -1:
+					var name_start = name_match + 6
+					var name_end = line.find("\"", name_start)
+					var node_name = line.substr(name_start, name_end - name_start)
+					
+					# Construir path completo
+					var full_path = node_name
+					if parent_path != ".":
+						full_path = parent_path + "/" + node_name
+					
+					if full_path == node_path or (node_path == "." and parent_path == "."):
+						target_node_line = i
+						target_indent = "\t"
+						break
+	
+	# Si encontramos el nodo, agregar la propiedad despues de la linea del nodo
+	if target_node_line != -1:
+		var prop_line = target_indent + prop_name + " = SubResource(\"" + res_id + "\")"
+		# Insertar despues de la linea del nodo
+		lines.insert(target_node_line + 1, prop_line)
 
 
 # ============================================================
@@ -1145,12 +1663,24 @@ func _handle_batch(params: Dictionary) -> Dictionary:
 	
 	var results = []
 	var all_success = true
+	var scene_load_warned = false
 	
-	for op in operations:
+	for i in range(operations.size()):
+		var op = operations[i]
 		var method = op.get("method", "")
 		var op_params = op.get("params", {})
 		
+		# Auto-cargar escena si es necesario para operaciones de nodo/escena
+		if method in ["add_node", "remove_node", "set_property", "get_node_properties", 
+					  "duplicate_node", "rename_node", "move_node", "save_scene", "get_scene_tree"]:
+			var scene_path = op_params.get("scene_path", "")
+			if scene_path and not _scene_cache.has(scene_path) and not scene_load_warned:
+				print("[BATCH] Advertencia: Escena no cargada en cache: ", scene_path)
+				scene_load_warned = true
+		
 		var result = _dispatch(method, op_params)
+		result["_batch_index"] = i
+		result["_batch_method"] = method
 		results.append(result)
 		
 		if not result.get("success", false):
@@ -1161,7 +1691,8 @@ func _handle_batch(params: Dictionary) -> Dictionary:
 	return {
 		"success": all_success,
 		"operation_count": operations.size(),
-		"results": results
+		"results": results,
+		"note": "Revisa cada resultado individual para ver errores específicos"
 	}
 
 
@@ -1172,6 +1703,10 @@ func _handle_batch(params: Dictionary) -> Dictionary:
 func _deserialize_value(value) -> Variant:
 	if value is Dictionary:
 		var type = value.get("__type", "")
+		
+		# Si tiene "type" sin __, es un recurso generico
+		if type == "" and value.has("type"):
+			return _deserialize_resource(value)
 		
 		# Auto-detectar tipo por keys si no tiene __type
 		if type == "" and value.has("x") and value.has("y"):
@@ -1200,8 +1735,40 @@ func _deserialize_value(value) -> Variant:
 				return null
 			_:
 				return value
+	elif value is String:
+		# FIX CRITICO: Si el string es un path a un recurso, cargarlo
+		var str_value = value as String
+		if str_value.begins_with("res://") or str_value.begins_with("user://"):
+			if ResourceLoader.exists(str_value):
+				return load(str_value)
+		return value
 	else:
 		return value
+
+
+func _deserialize_resource(value: Dictionary) -> Resource:
+	"""
+	Deserializa un diccionario con "type" y propiedades a un recurso de Godot.
+	Ejemplo: {"type": "RectangleShape2D", "size": {"x": 64, "y": 64}}
+	"""
+	var resource_type = value.get("type", "")
+	if resource_type == "":
+		return null
+	
+	# Crear instancia del recurso usando ClassDB
+	var resource = ClassDB.instantiate(resource_type)
+	if not resource is Resource:
+		return null
+	
+	# Setear propiedades
+	for key in value.keys():
+		if key == "type":
+			continue
+		var prop_value = _deserialize_value(value[key])
+		if resource.get_property_list().any(func(p): return p.name == key):
+			resource.set(key, prop_value)
+	
+	return resource as Resource
 
 
 # ============================================================
@@ -3506,12 +4073,23 @@ func _get_system_info() -> String:
 
 func _get_editor_interface_or_fail() -> Variant:
 	"""Helper: Obtiene EditorInterface o retorna Dictionary de error."""
-	var editor_interface = get_editor_interface()
+	# Verificar si estamos en el editor
+	if not Engine.is_editor_hint():
+		return {
+			"success": false,
+			"error": "editor_only",
+			"note": "Esta función requiere que el daemon se ejecute dentro del Editor Godot (no como --script standalone)"
+		}
+	
+	# Obtener editor interface solo si existe (usar call() para evitar error de parseo)
+	var editor_interface = null
+	if has_method("get_editor_interface"):
+		editor_interface = call("get_editor_interface")
 	if not editor_interface:
 		return {
 			"success": false,
 			"error": "editor_interface_not_available",
-			"note": "Esta función requiere que el daemon se ejecute como plugin del editor Godot"
+			"note": "EditorInterface no disponible. Asegúrate de ejecutar el daemon como plugin del editor."
 		}
 	return editor_interface
 

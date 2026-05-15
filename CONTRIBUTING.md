@@ -14,7 +14,7 @@
 ### 1. Clonar el repositorio / Clone the repository
 
 ```bash
-git clone https://github.com/tu-usuario/heren-mcp.git
+git clone https://github.com/CerebroCanibalus/heren-mcp.git
 cd heren-mcp
 ```
 
@@ -76,7 +76,7 @@ python benchmarks/run_benchmarks.py
 
 ### Antes de reportar / Before reporting
 
-1. Busca en [Issues](https://github.com/tu-usuario/heren-mcp/issues) si ya existe
+1. Busca en [Issues](https://github.com/CerebroCanibalus/heren-mcp/issues) si ya existe
 2. Intenta reproducir con la última versión
 3. Prueba con el daemon desactivado para aislar el problema
 
@@ -115,7 +115,7 @@ Tu configuración de mcpServers
 
 ## 💡 Cómo proponer features / How to Propose Features
 
-1. Abre un [Issue](https://github.com/tu-usuario/heren-mcp/issues/new) con el tag `enhancement`
+1. Abre un [Issue](https://github.com/CerebroCanibalus/heren-mcp/issues/new) con el tag `enhancement`
 2. Describe el problema que resuelve
 3. Explica el uso esperado
 4. Si es posible, incluye ejemplos de código
@@ -241,7 +241,7 @@ heren-mcp/
 
 ## 🌐 Comunidad / Community
 
-- **Issues**: [github.com/tu-usuario/heren-mcp/issues](https://github.com/tu-usuario/heren-mcp/issues)
+- **Issues**: [github.com/CerebroCanibalus/heren-mcp/issues](https://github.com/CerebroCanibalus/heren-mcp/issues)
 - **Discussions**: Usa GitHub Discussions para preguntas generales
 - **Discord**: [link-to-discord] (próximamente)
 

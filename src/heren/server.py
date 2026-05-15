@@ -134,6 +134,8 @@ def scene(
     wait_frames: int = 3,
     format: str = "png",
     quality: float = 0.9,
+    root_type: str = None,
+    root_name: str = None,
 ) -> dict:
     """
     Tool centralizada para TODAS las operaciones de escenas.
@@ -149,14 +151,16 @@ def scene(
             - "unload": Descarga escena del cache
             - "list_loaded": Lista escenas cargadas en cache
             - "screenshot": Captura screenshot con rendering GPU
+            - "create": Crea nueva escena (acepta root_type, root_name)
             - "set_editable_paths": Marca paths de instancias como editables
         session_id: ID de sesión activa
         scene_path: Ruta a la escena (res://Player.tscn)
         output_path: (para screenshot) Ruta de salida. None = temp
-        resolution: (para screenshot) (width, height)
-        wait_frames: (para screenshot) Frames a esperar antes de capturar
+        resolution: (para screenshot) Resolución
+        wait_frames: (para screenshot) Frames a esperar
         format: (para screenshot) "png", "jpeg" o "webp"
         quality: (para screenshot) Calidad 0.0-1.0
+        **kwargs: Parámetros adicionales como root_type, root_name para create
     
     Returns:
         - get_tree: {"success": True, "tree": {"name": "Root", "type": "Node2D", "children": [...]}}
@@ -171,13 +175,13 @@ def scene(
         # Obtener árbol de nodos
         scene("get_tree", session_id="abc", scene_path="res://Player.tscn")
         
-        # Cargar en cache (primera vez ~3s, luego ~20ms)
-        scene("load", session_id="abc", scene_path="res://Player.tscn")
+        # Crear escena con tipo específico
+        scene("create", session_id="abc", scene_path="res://Level.tscn", root_type="Node3D", root_name="Main")
         
         # Screenshot con rendering GPU
         scene("screenshot", session_id="abc", scene_path="res://Player.tscn", resolution=(1920, 1080))
     """
-    return scene_tool(action, session_id, scene_path, output_path, resolution, wait_frames, format, quality)
+    return scene_tool(action, session_id, scene_path, output_path, resolution, wait_frames, format, quality, root_type=root_type, root_name=root_name)
 
 
 # ============================================================
@@ -607,7 +611,8 @@ def project_tool(
     Tool centralizada para configuración del proyecto Godot.
     
     Actions:
-        - "create": Crear nuevo proyecto Godot
+        - "create": Crear nuevo proyecto Godot (configura daemon automáticamente)
+        - "setup_daemon": Configurar daemon Heren en proyecto existente
         - "setting": Leer/escribir project setting
         - "autoload": Añadir autoload
         - "remove_autoload": Quitar autoload
@@ -615,7 +620,7 @@ def project_tool(
     
     Args:
         action: Operación a realizar
-        project_path: (para create) Ruta donde crear el proyecto
+        project_path: (para create/setup_daemon) Ruta del proyecto
         project_name: (para create) Nombre del proyecto
         renderer: (para create) Renderer: "forward_plus", "mobile", "compatibility"
         viewport_width: (para create) Ancho de ventana
@@ -657,34 +662,53 @@ def debug_tool(
     scene_path: str = None,
     script_code: str = None,
     context: dict = None,
+    project_path: str = None,
+    godot_path: str = None,
+    timeout: int = 30,
+    debug_collisions: bool = False,
+    debug_paths: bool = False,
+    debug_navigation: bool = False,
 ) -> dict:
     """
     Tool centralizada para depuración de escenas Godot.
     
+    Soporta dos modos:
+    1. Daemon mode (requiere daemon en editor): breakpoint, stack_trace, watch, console, stop_scene, get_editor_errors
+    2. Subprocess mode (standalone): run_scene, execute_editor_script, check_script_syntax
+    
     Actions:
-        - "breakpoint": Setear/quitar breakpoint
-        - "stack_trace": Obtener stack trace
-        - "watch": Watch variable
-        - "console": Capturar output de consola
-        - "run_scene": Ejecutar escena (current o específica)
-        - "stop_scene": Detener ejecución
-        - "get_editor_errors": Obtener errores del editor
-        - "execute_editor_script": Ejecutar GDScript arbitrario
+        - "breakpoint": Setear/quitar breakpoint (requiere daemon)
+        - "stack_trace": Obtener stack trace (requiere daemon)
+        - "watch": Watch variable (requiere daemon)
+        - "console": Capturar output de consola (requiere daemon)
+        - "run_scene": Ejecutar escena vía subprocess (standalone)
+        - "stop_scene": Detener ejecución (requiere daemon)
+        - "get_editor_errors": Obtener errores del editor (requiere daemon)
+        - "execute_editor_script": Ejecutar GDScript vía subprocess (standalone, soporta FileAccess, ClassDB, etc.)
+        - "check_script_syntax": Verificar sintaxis GDScript vía subprocess (standalone)
     
     Args:
         action: Operación a realizar
-        session_id: ID de sesión activa
-        script_path: Ruta al script (para breakpoint)
+        session_id: ID de sesión activa (requerido para daemon mode, opcional para subprocess si se da project_path)
+        script_path: Ruta al script (para breakpoint o check_script_syntax)
         line: Número de línea (para breakpoint)
         variable_name: Nombre de variable (para watch)
         lines: Cantidad de líneas de consola a capturar
         scene_path: Ruta a la escena (para run_scene, opcional)
         script_code: Código GDScript a ejecutar (para execute_editor_script)
         context: Variables de contexto (para execute_editor_script)
+        project_path: Ruta al proyecto (para subprocess mode, alternativa a session_id)
+        godot_path: Ruta al ejecutable de Godot (opcional, auto-detecta)
+        timeout: Timeout en segundos (para subprocess, default 30)
+        debug_collisions: Activar debug de colisiones (para run_scene)
+        debug_paths: Activar debug de paths (para run_scene)
+        debug_navigation: Activar debug de navegación (para run_scene)
     """
     return debug(action=action, session_id=session_id, script_path=script_path,
                 line=line, variable_name=variable_name, lines=lines, scene_path=scene_path,
-                script_code=script_code, context=context)
+                script_code=script_code, context=context, project_path=project_path,
+                godot_path=godot_path, timeout=timeout, debug_collisions=debug_collisions,
+                debug_paths=debug_paths, debug_navigation=debug_navigation)
 
 
 # ============================================================

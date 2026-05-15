@@ -15,11 +15,13 @@
 
 ---
 
-# ⚔️ Heren Godot MCP
+# ⚔️ Heren Godot MCP v1.1
 
 🏰 **Heren Godot MCP** — *Plus Ultra*: go beyond. 🐉
 
 High-performance MCP server for **Godot Engine 4.x** that enables AI agents and assistants to control projects directly: create scenes, manipulate nodes, manage resources, connect signals and validate code, **all through a persistent daemon that operates in milliseconds**.
+
+**🆕 v1.1**: Functional debug, Array operations, Editable paths, Project creation, **complete sub-resource persistence**, auto-shutdown, automatic retry
 
 ---
 
@@ -29,12 +31,16 @@ High-performance MCP server for **Godot Engine 4.x** that enables AI agents and 
 |---|---|
 | 🔌 **Persistent WebSocket Daemon** | Godot headless keeps connection alive via WebSocket — operations in ~20ms |
 | 🛠️ **15 Centralized Tools** | Scenes, nodes, resources, scripts, signals, animations, shaders, validation and debug |
+| 💾 **Complete Persistence** | Sub-resources (shapes, materials, environments), signals and properties saved to .tscn |
 | ⚡ **Batch Operations** | Execute multiple operations in a single WebSocket call |
 | 🔄 **Automatic Fallback** | If daemon is unavailable, uses temporary scripts (Godot CLI) |
 | 🛡️ **Integrated Validation** | Validates scenes, scripts, nodes and resources before applying changes |
 | 🐛 **Full Debug** | Breakpoints, stack traces, watch variables and console capture |
 | 📸 **Screenshots** | Capture frames from scenes with GPU rendering |
 | 🌍 **Native I18n** | Built-in Spanish/English localization system |
+| ⏱️ **Auto-shutdown** | Daemon shuts down after 3 minutes of inactivity (prevents zombie processes) |
+| 🔄 **Automatic Retry** | Retries daemon startup up to 3 times if it fails |
+| 🪟 **Small Window** | Daemon renders at 320x200 in bottom-right corner (unobtrusive) |
 
 ---
 
@@ -50,6 +56,7 @@ High-performance MCP server for **Godot Engine 4.x** that enables AI agents and 
 |---|---|---|---|
 | **Create scenes & nodes** | ✅ Slow | ✅ Fast* | **⚡ Instant** |
 | **Edit properties** | ✅ Slow | ✅ Fast* | **⚡ Instant** |
+| **Persist sub-resources** | ❌ | ❌ | **✅ Complete** |
 | **Connect signals** | ❌ | ✅ Requires plugin | **✅ No plugin** |
 | **Batch operations** | ❌ | ✅ | **✅ 10x faster** |
 | **Debug breakpoints** | ❌ | ✅ Requires DAP | **✅ Integrated** |
@@ -61,6 +68,8 @@ High-performance MCP server for **Godot Engine 4.x** that enables AI agents and 
 | **Skeleton/Rigging 2D-3D** | ❌ | ❌ | **✅ Unique** |
 | **Animation state machines** | ❌ | ❌ | **✅ Unique** |
 | **Fallback if daemon dies** | ❌ | ❌ | **✅ Automatic** |
+| **Automatic retry** | ❌ | ❌ | **✅ 3 attempts** |
+| **Auto-shutdown** | ❌ | ❌ | **✅ 3 minutes** |
 | **Requires Godot plugin** | ❌ | ✅ Yes | **❌ No** |
 | **Requires Node.js** | ✅ npm | ✅ npm | **❌ Python only** |
 | **Initial setup** | npm install | 60s+ plugin + npm | **🚀 pip install** |
@@ -259,8 +268,8 @@ batch_tool(session_id="abc123", operations=[
 
 | Tool | Actions | What does it do? |
 |------|----------|----------------|
-| **scene** | get_tree, save, load, unload, list_loaded, screenshot | Load scenes, save, capture images, list active |
-| **node** | add, remove, set_prop, get_prop, duplicate, rename, move | Create nodes, edit properties, duplicate, move |
+| **scene** | get_tree, save, load, unload, list_loaded, screenshot, create, delete, rename, **add_ext_resource**, **set_editable_paths** | Load scenes, save, capture images, list active, external resources, editable paths |
+| **node** | add, remove, set_prop, get_prop, duplicate, rename, move, **array_append**, **array_remove** | Create nodes, edit properties, duplicate, move, arrays |
 | **batch** | - | Execute multiple operations in a single call |
 
 ### 🎭 Animation and Rigging
@@ -281,8 +290,8 @@ batch_tool(session_id="abc123", operations=[
 
 | Tool | Actions | What does it do? |
 |------|----------|----------------|
-| **resource** | create, read, update, delete, list | Manage .tres resources (materials, physics, etc.) |
-| **project** | setting, autoload, remove_autoload, shader_global | Change project.godot settings, autoloads |
+| **resource** | create, read, update, delete, list, **create_script**, **read_script**, **edit_script** | Manage .tres resources (materials, physics, etc.) and .gd scripts |
+| **project** | **create**, setting, autoload, remove_autoload, shader_global | **Create new projects**, change project.godot settings, autoloads |
 | **signal** | connect, disconnect, list, set_script | Connect signals between nodes, assign scripts |
 | **global** | autoload, project_setting, shader_global | Global project configuration |
 
@@ -290,7 +299,7 @@ batch_tool(session_id="abc123", operations=[
 
 | Tool | Actions | What does it do? |
 |------|----------|----------------|
-| **debug** | breakpoint, stack_trace, watch, console | Breakpoints, stack traces, variables, console |
+| **debug** | breakpoint, stack_trace, watch, console, **run_scene**, **stop_scene**, **get_editor_errors**, **execute_editor_script** | Breakpoints, stack traces, variables, console, **run/stop scenes**, **editor errors**, **execute GDScript** |
 | **validate** | scene, script, node, resource | Validate scenes, scripts, nodes and resources |
 
 ### 💡 Example: Create a Complete Character

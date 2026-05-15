@@ -182,7 +182,7 @@ def _action_set_prop(manager, session_id: str, scene_path: str, node_path: str,
         {
             "scene_path": scene_path,
             "node_path": node_path,
-            "property_name": property_name,
+            "property": property_name,
             "value": value
         }
     )
@@ -325,10 +325,12 @@ def _execute_via_daemon_or_fallback(manager, session_id: str, operation: str, pa
         elif operation == "remove_node":
             return interface.remove_node(params["scene_path"], params["node_path"])
         elif operation == "set_property":
+            # Compatibilidad: aceptar "property" o "property_name"
+            prop_name = params.get("property_name") or params.get("property", "")
             return interface.set_property(
                 params["scene_path"],
                 params["node_path"],
-                params["property_name"],
+                prop_name,
                 params["value"]
             )
         else:
