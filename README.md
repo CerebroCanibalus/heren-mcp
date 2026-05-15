@@ -3,7 +3,7 @@
 ![Heren Godot MCP Banner](assets/HerenGodotBanner.png)
 
 <p>
-  <a href="README.md">???? Español</a> •
+  <a href="README.md">???? EspaÃ±ol</a> â€¢
   <a href="README.en.md">???? English</a>
 </p>
 
@@ -11,25 +11,25 @@
 
 ---
 
-> *"La técnica es una actividad compositora o destructora, violenta, y esto es lo que Aristóteles llamaba la poiesis, la poesía, precisamente."* — **Gustavo Bueno**
+> *"La tÃ©cnica es una actividad compositora o destructora, violenta, y esto es lo que AristÃ³teles llamaba la poiesis, la poesÃ­a, precisamente."* â€” **Gustavo Bueno**
 
 ---
 
 # ?? Heren Godot MCP v1.1
 
-?? **Heren Godot MCP** — *Plus Ultra*: ir más allá. ??
+?? **Heren Godot MCP** â€” *Plus Ultra*: ir mÃ¡s allÃ¡. ??
 
-Servidor MCP de alto rendimiento para **Godot Engine 4.x** que permite a IAs y asistentes controlar proyectos directamente: crear escenas, manipular nodos, gestionar recursos, conectar señales y validar código, **todo mediante un daemon persistente que opera en milisegundos**.
+Servidor MCP de alto rendimiento para **Godot Engine 4.x** que permite a IAs y asistentes controlar proyectos directamente: crear escenas, manipular nodos, gestionar recursos, conectar seÃ±ales y validar cÃ³digo, **todo mediante un daemon persistente que opera en milisegundos**.
 
 **?? v1.1**: Debug funcional, Array operations, Editable paths, Project creation, **persistencia completa de sub-resources**, auto-shutdown, retry automatico
 
 ---
 
-## ?? Características
+## ?? CaracterÃ­sticas
 
 | Caracteristica | Descripcion |
 |---|---|
-| ?? **Daemon WebSocket persistente** | Godot headless mantiene conexion viva via WebSocket — operaciones en ~20ms |
+| ?? **Daemon WebSocket persistente** | Godot headless mantiene conexion viva via WebSocket â€” operaciones en ~20ms |
 | ??? **15 herramientas centralizadas** | Escenas, nodos, recursos, scripts, senales, animaciones, shaders, validacion y debug |
 | ?? **Persistencia completa** | Sub-resources (shapes, materials, environments), senales y propiedades se guardan en .tscn |
 | ? **Batch operations** | Ejecuta multiples operaciones en una sola llamada WebSocket |
@@ -46,11 +46,11 @@ Servidor MCP de alto rendimiento para **Godot Engine 4.x** que permite a IAs y a
 
 ## ??? Frente a otros MCPs de Godot
 
-### ?? La diferencia que importa: persistencia vs. intermediación
+### ?? La diferencia que importa: persistencia vs. intermediaciÃ³n
 
-**Coding-Solo** y **GoPeak** son buenos proyectos, pero tienen una limitación fundamental: cada operación requiere lanzar Godot desde cero. Esto es como tener que encender el coche cada vez que quieres cambiar de marcha.
+**Coding-Solo** y **GoPeak** son buenos proyectos, pero tienen una limitaciÃ³n fundamental: cada operaciÃ³n requiere lanzar Godot desde cero. Esto es como tener que encender el coche cada vez que quieres cambiar de marcha.
 
-**Heren Godot MCP** mantiene Godot vivo en segundo plano como un daemon persistente. Una sola conexión WebSocket, operaciones en milisegundos para siempre.
+**Heren Godot MCP** mantiene Godot vivo en segundo plano como un daemon persistente. Una sola conexiÃ³n WebSocket, operaciones en milisegundos para siempre.
 
 | Capacidad | Coding-Solo<br>(3.6k?) | GoPeak<br>(179?) | **Heren** |
 |---|---|---|---|
@@ -77,66 +77,66 @@ Servidor MCP de alto rendimiento para **Godot Engine 4.x** que permite a IAs y a
 
 \* Velocidad con plugin instalado y Godot corriendo
 
-### ??? Por qué somos 18x más rápidos
+### ??? Por quÃ© somos 18x mÃ¡s rÃ¡pidos
 
-| Operación | Coding-Solo | GoPeak | **Heren** |
+| OperaciÃ³n | Coding-Solo | GoPeak | **Heren** |
 |---|---|---|---|
 | **Leer escena** | ~367ms (lanza Godot) | ~80ms* (WebSocket) | **~20ms** (daemon persistente) |
-| **Añadir nodo** | ~367ms | ~60ms* | **~20ms** |
-| **Batch 10 operaciones** | ~3.7s (10× Godot) | ~600ms* | **~200ms** |
+| **AÃ±adir nodo** | ~367ms | ~60ms* | **~20ms** |
+| **Batch 10 operaciones** | ~3.7s (10Ã— Godot) | ~600ms* | **~200ms** |
 | **Screenshot** | ? | ~500ms* | **~50ms** |
 
 > **Nota**: Los tiempos de GoPeak requieren tener el plugin `godot_mcp_editor` instalado y Godot abierto. Sin eso, funciona como Coding-Solo.
 
-### ?? La magia técnica
+### ?? La magia tÃ©cnica
 
-**Coding-Solo** funciona así:
-1. Tu IA pide "añade un nodo"
+**Coding-Solo** funciona asÃ­:
+1. Tu IA pide "aÃ±ade un nodo"
 2. El MCP lanza `godot --headless --script temp.gd`
 3. Godot arranca (300ms), ejecuta (50ms), cierra (17ms)
-4. Total: **~367ms por cada operación**
+4. Total: **~367ms por cada operaciÃ³n**
 
-**GoPeak** funciona así:
-1. Tu IA pide "añade un nodo"  
-2. Si tienes el plugin instalado y Godot abierto ? WebSocket rápido
+**GoPeak** funciona asÃ­:
+1. Tu IA pide "aÃ±ade un nodo"  
+2. Si tienes el plugin instalado y Godot abierto ? WebSocket rÃ¡pido
 3. Si no ? lanza Godot como Coding-Solo
 4. Necesitas instalar un addon en cada proyecto
 
-**Heren** funciona así:
+**Heren** funciona asÃ­:
 
-**1. Abres una sesión**
+**1. Abres una sesiÃ³n**
 ```python
 session("open", project_path="D:/MiJuego")
 ```
 ? Heren arranca Godot en modo headless (sin ventana) con un script especial. Esto toma ~3 segundos **una sola vez**.
 
 **2. El daemon se mantiene vivo**
-? Godot queda escuchando en un puerto WebSocket. No se cierra. No consume interfaz gráfica. Solo ~75MB de RAM.
+? Godot queda escuchando en un puerto WebSocket. No se cierra. No consume interfaz grÃ¡fica. Solo ~75MB de RAM.
 
 **3. Ejecutas tools**
 ```python
 node("add", session_id="abc", scene_path="res://Player.tscn", ...)
 ```
-? Mensaje WebSocket directo al daemon. Godot ya está arrancado, no hay overhead. **~20ms**.
+? Mensaje WebSocket directo al daemon. Godot ya estÃ¡ arrancado, no hay overhead. **~20ms**.
 
 **4. Cierras cuando quieras**
 ```python
 session("close", session_id="abc")
 ```
-? El daemon se cierra limpiamente. O puedes dejarlo abierto todo el día.
+? El daemon se cierra limpiamente. O puedes dejarlo abierto todo el dÃ­a.
 
-**El secreto**: Godot nunca se cierra entre operaciones. Es como tener el editor abierto permanentemente, pero sin interfaz gráfica y consumiendo solo ~75MB de RAM.
+**El secreto**: Godot nunca se cierra entre operaciones. Es como tener el editor abierto permanentemente, pero sin interfaz grÃ¡fica y consumiendo solo ~75MB de RAM.
 
 ### ?? Ventajas del sistema de sesiones
 
-| Ventaja | ¿Qué significa? |
+| Ventaja | Â¿QuÃ© significa? |
 |---------|----------------|
 | **Persistencia** | Godot arranca una vez, no 100 veces |
 | **Aislamiento** | Cada proyecto tiene su propio daemon. No hay conflictos |
-| **Múltiples sesiones** | Puedes trabajar en 3 proyectos simultáneamente |
-| **Recuperación** | Si algo falla, fallback automático a scripts sin perder datos |
+| **MÃºltiples sesiones** | Puedes trabajar en 3 proyectos simultÃ¡neamente |
+| **RecuperaciÃ³n** | Si algo falla, fallback automÃ¡tico a scripts sin perder datos |
 | **Limpieza** | `session("close")` cierra todo limpiamente |
-| **Health check** | `session("health")` te dice si todo está funcionando |
+| **Health check** | `session("health")` te dice si todo estÃ¡ funcionando |
 
 ### ?? Comparativa de arquitecturas
 
@@ -144,15 +144,15 @@ session("close", session_id="abc")
 |---|---|---|---|
 | **Arquitectura** | Scripts temporales | Plugin + WebSocket | **Daemon nativo WebSocket** |
 | **Persistencia** | Ninguna | Solo con plugin | **Siempre activo** |
-| **Overhead por operación** | ~367ms | ~60-80ms* | **~20ms** |
+| **Overhead por operaciÃ³n** | ~367ms | ~60-80ms* | **~20ms** |
 | **Setup** | `npm install` | Plugin + npm + Node.js | **`pip install`** |
 | **Dependencias** | Node.js + Godot | Node.js + Godot + Plugin | **Solo Python + Godot** |
 | **Proyecto limpio** | ? | ? (necesita addon) | **?** |
-| **Fallback** | ? | ? | **? Automático** |
+| **Fallback** | ? | ? | **? AutomÃ¡tico** |
 
 ---
 
-## ?? Instalación
+## ?? InstalaciÃ³n
 
 ### Desde fuente
 
@@ -162,7 +162,7 @@ cd heren-mcp
 pip install -e .
 ```
 
-### Instalador automático
+### Instalador automÃ¡tico
 
 ```bash
 python install.py
@@ -176,9 +176,9 @@ python install.py
 
 ---
 
-## ?? Configuración MCP
+## ?? ConfiguraciÃ³n MCP
 
-Añade esto a tu configuración de MCP (Cursor, Claude Desktop, OpenCode, etc.):
+AÃ±ade esto a tu configuraciÃ³n de MCP (Cursor, Claude Desktop, OpenCode, etc.):
 
 ```json
 {
@@ -196,7 +196,7 @@ Añade esto a tu configuración de MCP (Cursor, Claude Desktop, OpenCode, etc.):
 
 ### Variables de entorno
 
-| Variable | Descripción | Ejemplo |
+| Variable | DescripciÃ³n | Ejemplo |
 |----------|-------------|---------|
 | `GODOT_EXE` | Ruta al ejecutable de Godot | `D:/Godot/Godot_v4.6.1.exe` |
 | `HEREN_PORT` | Puerto del daemon WebSocket | `4567` |
@@ -204,17 +204,17 @@ Añade esto a tu configuración de MCP (Cursor, Claude Desktop, OpenCode, etc.):
 
 ---
 
-## ?? Uso Rápido
+## ?? Uso RÃ¡pido
 
 ```python
-# Iniciar sesión
+# Iniciar sesiÃ³n
 session_tool(action="open", project_path="D:/MiJuego")
 # ? {"success": true, "session_id": "abc123", "daemon_active": true}
 
 # Crear escena
 scene_tool(action="create", session_id="abc123", scene_path="res://Player.tscn")
 
-# Añadir nodo
+# AÃ±adir nodo
 node_tool(
     action="add",
     session_id="abc123",
@@ -231,7 +231,7 @@ scene_tool(action="save", session_id="abc123", scene_path="res://Player.tscn")
 ### ?? Batch Operations
 
 ```python
-# Múltiples operaciones en una sola llamada
+# MÃºltiples operaciones en una sola llamada
 batch_tool(session_id="abc123", operations=[
     {"action": "add", "params": {
         "scene_path": "res://Player.tscn",
@@ -255,47 +255,47 @@ batch_tool(session_id="abc123", operations=[
 
 ## ??? Herramientas Disponibles (15 Tools, 60+ Acciones)
 
-### ?? Gestión
+### ?? GestiÃ³n
 
-| Tool | Acciones | ¿Qué hace? |
+| Tool | Acciones | Â¿QuÃ© hace? |
 |------|----------|-----------|
 | **session** | open, close, list, info, health | Controla el daemon de Godot. Abre, cierra, monitoriza |
-| **index** | list, info, example | Descubre tools y acciones. Pregunta "¿qué puedo hacer?" |
+| **index** | list, info, example | Descubre tools y acciones. Pregunta "Â¿quÃ© puedo hacer?" |
 
 ### ?? Escenas y Nodos
 
-| Tool | Acciones | ¿Qué hace? |
+| Tool | Acciones | Â¿QuÃ© hace? |
 |------|----------|-----------|
-| **scene** | get_tree, save, load, unload, list_loaded, screenshot, create, delete, rename, **add_ext_resource**, **set_editable_paths** | Carga escenas, guarda, captura imágenes, lista activas, recursos externos, paths editables |
+| **scene** | get_tree, save, load, unload, list_loaded, screenshot, create, delete, rename, **add_ext_resource**, **set_editable_paths** | Carga escenas, guarda, captura imÃ¡genes, lista activas, recursos externos, paths editables |
 | **node** | add, remove, set_prop, get_prop, duplicate, rename, move, **array_append**, **array_remove** | Crea nodos, edita propiedades, duplica, mueve, arrays |
-| **batch** | - | Ejecuta múltiples operaciones en una sola llamada |
+| **batch** | - | Ejecuta mÃºltiples operaciones en una sola llamada |
 
-### ?? Animación y Rigging
+### ?? AnimaciÃ³n y Rigging
 
-| Tool | Acciones | ¿Qué hace? |
+| Tool | Acciones | Â¿QuÃ© hace? |
 |------|----------|-----------|
 | **animation** | create_player, create, add_track, add_key, state_machine | Crea animaciones, keyframes, state machines completas |
 | **skeleton** | create, add_bone, set_rest, skin, attachment | Rigging 2D/3D, pesos de huesos, attachments |
 
-### ?? Gráficos
+### ?? GrÃ¡ficos
 
-| Tool | Acciones | ¿Qué hace? |
+| Tool | Acciones | Â¿QuÃ© hace? |
 |------|----------|-----------|
 | **shader** | create, edit, validate, material, uniform | Crea shaders GDScript, materiales, edita uniforms |
 | **tilemap** | inspect_set, inspect_map, set_cell, terrain, pattern | Edita TileMaps, terrain painting, patterns |
 
-### ?? Configuración
+### ?? ConfiguraciÃ³n
 
-| Tool | Acciones | ¿Qué hace? |
+| Tool | Acciones | Â¿QuÃ© hace? |
 |------|----------|-----------|
-| **resource** | create, read, update, delete, list, **create_script**, **read_script**, **edit_script** | Gestiona recursos .tres (materiales, física, etc.) y scripts .gd |
+| **resource** | create, read, update, delete, list, **create_script**, **read_script**, **edit_script** | Gestiona recursos .tres (materiales, fÃ­sica, etc.) y scripts .gd |
 | **project** | **create**, setting, autoload, remove_autoload, shader_global | **Crea proyectos nuevos**, cambia settings de project.godot, autoloads |
-| **signal** | connect, disconnect, list, set_script | Conecta señales entre nodos, asigna scripts |
-| **global** | autoload, project_setting, shader_global | Configuración global del proyecto |
+| **signal** | connect, disconnect, list, set_script | Conecta seÃ±ales entre nodos, asigna scripts |
+| **global** | autoload, project_setting, shader_global | ConfiguraciÃ³n global del proyecto |
 
-### ?? Debug y Validación
+### ?? Debug y ValidaciÃ³n
 
-| Tool | Acciones | ¿Qué hace? |
+| Tool | Acciones | Â¿QuÃ© hace? |
 |------|----------|-----------|
 | **debug** | breakpoint, stack_trace, watch, console, **run_scene**, **stop_scene**, **get_editor_errors**, **execute_editor_script** | Breakpoints, stack traces, variables, consola, **ejecutar/detener escenas**, **errores del editor**, **ejecutar GDScript** |
 | **validate** | scene, script, node, resource | Valida escenas, scripts, nodos y recursos |
@@ -303,13 +303,13 @@ batch_tool(session_id="abc123", operations=[
 ### ?? Ejemplo: crear un personaje completo
 
 ```python
-# 1. Abrir sesión
+# 1. Abrir sesiÃ³n
 session("open", project_path="D:/MiJuego")
 
 # 2. Crear escena
 scene("load", session_id="abc", scene_path="res://Player.tscn")
 
-# 3. Añadir nodo raíz con batch (más rápido)
+# 3. AÃ±adir nodo raÃ­z con batch (mÃ¡s rÃ¡pido)
 batch(session_id="abc", operations=[
     {"action": "add", "params": {
         "scene_path": "res://Player.tscn",
@@ -335,7 +335,7 @@ batch(session_id="abc", operations=[
     }}
 ])
 
-# 4. Conectar señal
+# 4. Conectar seÃ±al
 signal("connect", session_id="abc", scene_path="res://Player.tscn",
        from_node="Player/Hitbox", signal_name="body_entered",
        to_node="Player", method="_on_hitbox_body_entered")
@@ -348,19 +348,19 @@ validate("scene", session_id="abc", scene_path="res://Player.tscn")
 
 ## ?? Arquitectura: La Magia del Daemon Persistente
 
-### ¿Cómo funciona esta locura?
+### Â¿CÃ³mo funciona esta locura?
 
 Heren MCP no es un simple "lanzador de scripts". Es un **ecosistema vivo** que mantiene a Godot despierto y escuchando:
 
 ```
 +-------------+      +------------------+      +---------------------+
-¦  Agente IA  ¦------?¦  Heren MCP       ¦-----?¦  Godot Daemon       ¦
-¦  (Cursor,   ¦      ¦  Server          ¦      ¦  (WebSocket)        ¦
-¦  Claude,    ¦      ¦                  ¦      ¦                     ¦
-¦  OpenCode)  ¦?-----¦  • 15 tools      ¦?-----¦  • Proyecto cargado ¦
-+-------------+      ¦  • Session Mgr   ¦      ¦  • Escenas en RAM   ¦
-                     ¦  • Cache LRU     ¦      ¦  • Nodos vivos      ¦
-                     ¦  • Fallback      ¦      ¦  • FPS limitado     ¦
+Â¦  Agente IA  Â¦------?Â¦  Heren MCP       Â¦-----?Â¦  Godot Daemon       Â¦
+Â¦  (Cursor,   Â¦      Â¦  Server          Â¦      Â¦  (WebSocket)        Â¦
+Â¦  Claude,    Â¦      Â¦                  Â¦      Â¦                     Â¦
+Â¦  OpenCode)  Â¦?-----Â¦  â€¢ 15 tools      Â¦?-----Â¦  â€¢ Proyecto cargado Â¦
++-------------+      Â¦  â€¢ Session Mgr   Â¦      Â¦  â€¢ Escenas en RAM   Â¦
+                     Â¦  â€¢ Cache LRU     Â¦      Â¦  â€¢ Nodos vivos      Â¦
+                     Â¦  â€¢ Fallback      Â¦      Â¦  â€¢ FPS limitado     Â¦
                      +------------------+      +---------------------+
 ```
 
@@ -368,8 +368,8 @@ Heren MCP no es un simple "lanzador de scripts". Es un **ecosistema vivo** que m
 
 1. **`session("open")`** ? El servidor arranca Godot en modo headless con un script especial (`heren_daemon.gd`)
 2. **El daemon** abre un servidor WebSocket en el puerto 4567 y carga tu proyecto
-3. **Tu IA** envía comandos vía las 15 tools ? cada tool traduce a JSON ? WebSocket
-4. **Godot** recibe el JSON, ejecuta la operación usando la API nativa de Godot, y responde
+3. **Tu IA** envÃ­a comandos vÃ­a las 15 tools ? cada tool traduce a JSON ? WebSocket
+4. **Godot** recibe el JSON, ejecuta la operaciÃ³n usando la API nativa de Godot, y responde
 5. **Todo en ~20ms** porque Godot nunca se cierra
 
 ### ??? El fallback: cuando la magia falla
@@ -377,23 +377,23 @@ Heren MCP no es un simple "lanzador de scripts". Es un **ecosistema vivo** que m
 Si el daemon cae (crashea, cierras Godot manualmente, etc.), Heren **no se rinde**:
 
 ```
-Operación fallida en daemon --? Intenta reconnexión (3 reintentos)
-                                      ¦
-                    Falló --? Fallback a scripts temporales
-                                      ¦
-                         Godot CLI nativo ejecuta la operación
-                                      ¦
+OperaciÃ³n fallida en daemon --? Intenta reconnexiÃ³n (3 reintentos)
+                                      Â¦
+                    FallÃ³ --? Fallback a scripts temporales
+                                      Â¦
+                         Godot CLI nativo ejecuta la operaciÃ³n
+                                      Â¦
                          Resultado: ~370ms pero funciona igual
 ```
 
-**Esto significa**: nunca te quedas atascado. Si el daemon no puede, Godot CLI sí puede.
+**Esto significa**: nunca te quedas atascado. Si el daemon no puede, Godot CLI sÃ­ puede.
 
-### ?? ¿Por qué es tan rápido?
+### ?? Â¿Por quÃ© es tan rÃ¡pido?
 
 | Factor | Impacto |
 |---|---|
-| **Godot persistente** | No paga el costo de arranque (~300ms) por operación |
-| **WebSocket directo** | Comunicación binaria, sin overhead de HTTP ni procesos |
+| **Godot persistente** | No paga el costo de arranque (~300ms) por operaciÃ³n |
+| **WebSocket directo** | ComunicaciÃ³n binaria, sin overhead de HTTP ni procesos |
 | **Operaciones en batch** | 10 operaciones en un solo mensaje WebSocket |
 | **Cache LRU** | Escenas frecuentes se mantienen en memoria |
 | **FPS limitado** | Daemon corre a 10 FPS, consume poca CPU |
@@ -404,19 +404,19 @@ Operación fallida en daemon --? Intenta reconnexión (3 reintentos)
 |---|---|---|---|
 | **RAM persistente** | 0 MB | ~450 MB | **~75 MB** |
 | **CPU (idle)** | 0% | ~5% | **~1%** |
-| **Tiempo de arranque** | 0s | 60s+ (instalación) | **3s** |
-| **Overhead por operación** | 367ms | 60-80ms | **20ms** |
+| **Tiempo de arranque** | 0s | 60s+ (instalaciÃ³n) | **3s** |
+| **Overhead por operaciÃ³n** | 367ms | 60-80ms | **20ms** |
 
 ---
 
-## ?? Documentación
+## ?? DocumentaciÃ³n
 
-- ?? [AGENTS.md](AGENTS.md) — Guía completa para agentes de IA
-- ?? [docs/INSTALL.md](docs/INSTALL.md) — Instalación detallada
-- ?? [docs/API.md](docs/API.md) — Referencia completa de la API
-- ??? [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Arquitectura técnica
-- ?? [CONTRIBUTING.md](CONTRIBUTING.md) — Cómo contribuir
-- ?? [CHANGELOG.md](CHANGELOG.md) — Historial de cambios
+- ?? [AGENTS.md](AGENTS.md) â€” GuÃ­a completa para agentes de IA
+- ?? [docs/INSTALL.md](docs/INSTALL.md) â€” InstalaciÃ³n detallada
+- ?? [docs/API.md](docs/API.md) â€” Referencia completa de la API
+- ??? [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) â€” Arquitectura tÃ©cnica
+- ?? [CONTRIBUTING.md](CONTRIBUTING.md) â€” CÃ³mo contribuir
+- ?? [CHANGELOG.md](CHANGELOG.md) â€” Historial de cambios
 
 ---
 
@@ -426,10 +426,10 @@ Medimos operaciones reales en proyectos Godot reales. No estimaciones.
 
 ### ??? Heren vs. Competidores
 
-| Operación | Coding-Solo<br>(3.6k?) | GoPeak<br>(179?) | **Heren** | Speedup vs Coding-Solo | Speedup vs GoPeak |
+| OperaciÃ³n | Coding-Solo<br>(3.6k?) | GoPeak<br>(179?) | **Heren** | Speedup vs Coding-Solo | Speedup vs GoPeak |
 |---|---|---|---|---|---|
 | **Leer escena** | 367ms | 80ms* | **20ms** | **18x** | **4x** |
-| **Añadir nodo** | 367ms | 60ms* | **20ms** | **18x** | **3x** |
+| **AÃ±adir nodo** | 367ms | 60ms* | **20ms** | **18x** | **3x** |
 | **Cambiar propiedad** | 367ms | 55ms* | **15ms** | **24x** | **3.7x** |
 | **Batch 10 nodos** | 3,670ms | 600ms* | **180ms** | **20x** | **3.3x** |
 | **Screenshot** | ? | 500ms* | **50ms** | 8 | **10x** |
@@ -437,28 +437,28 @@ Medimos operaciones reales en proyectos Godot reales. No estimaciones.
 
 *Mediciones GoPeak con plugin instalado y Godot abierto
 
-### ?? Metodología
+### ?? MetodologÃ­a
 
 **Hardware**: Windows 11, Ryzen 5 3600, 16GB RAM, SSD NVMe
 
 **Proyecto**: Godot 4.6, proyecto 2D con 50 nodos
 
-**Coding-Solo**: `npx @coding-solo/godot-mcp`, operación `add_node` medida 10 veces, promedio.
+**Coding-Solo**: `npx @coding-solo/godot-mcp`, operaciÃ³n `add_node` medida 10 veces, promedio.
 
-**GoPeak**: `npx gopeak`, perfil `compact`, plugin `godot_mcp_editor` instalado, Godot abierto. Operación `add_node` medida 10 veces.
+**GoPeak**: `npx gopeak`, perfil `compact`, plugin `godot_mcp_editor` instalado, Godot abierto. OperaciÃ³n `add_node` medida 10 veces.
 
 **Heren**: `session("open")` ? 10 operaciones `node("add")` ? promedio.
 
-**Nota importante**: Los benchmarks de GoPeak miden **solo la operación WebSocket**, excluyendo el tiempo de instalación del plugin y apertura de Godot. En un flujo real, GoPeak requiere ~60s de setup inicial.
+**Nota importante**: Los benchmarks de GoPeak miden **solo la operaciÃ³n WebSocket**, excluyendo el tiempo de instalaciÃ³n del plugin y apertura de Godot. En un flujo real, GoPeak requiere ~60s de setup inicial.
 
-### ?? Gráfico de latencia
+### ?? GrÃ¡fico de latencia
 
 ```
-Latencia por operación (ms, menor es mejor)
+Latencia por operaciÃ³n (ms, menor es mejor)
 
-Coding-Solo:  ¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦ 367ms
-GoPeak:       ¦¦¦¦¦¦¦¦¦¦ 80ms
-Heren:        ¦¦ 20ms
+Coding-Solo:  Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦ 367ms
+GoPeak:       Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦Â¦ 80ms
+Heren:        Â¦Â¦ 20ms
               +--------------------------------------------+
               0   50  100  150  200  250  300  350  400
 ```
@@ -468,53 +468,53 @@ Heren:        ¦¦ 20ms
 | | Coding-Solo | GoPeak | Heren |
 |---|---|---|---|
 | **Sin operaciones** | 0 MB | 450 MB | **75 MB** |
-| **Durante operación** | 200 MB* | 450 MB | **75 MB** |
-| **Después de 1h** | 0 MB | 450 MB | **75 MB** |
+| **Durante operaciÃ³n** | 200 MB* | 450 MB | **75 MB** |
+| **DespuÃ©s de 1h** | 0 MB | 450 MB | **75 MB** |
 
-\* Coding-Solo lanza Godot por cada operación, por lo que el consumo es esporádico pero el tiempo es mayor.
+\* Coding-Solo lanza Godot por cada operaciÃ³n, por lo que el consumo es esporÃ¡dico pero el tiempo es mayor.
 
-### ?? Conclusión
+### ?? ConclusiÃ³n
 
-**Heren es 18x más rápido que Coding-Solo** porque no lanza Godot cada vez.
+**Heren es 18x mÃ¡s rÃ¡pido que Coding-Solo** porque no lanza Godot cada vez.
 
-**Heren es 4x más rápido que GoPeak** con WebSocket, y no requiere plugin.
+**Heren es 4x mÃ¡s rÃ¡pido que GoPeak** con WebSocket, y no requiere plugin.
 
 **Heren consume 6x menos RAM que GoPeak** porque no carga el editor completo.
 
-**Heren es el único con fallback automático**: si el daemon cae, sigue funcionando via scripts.
+**Heren es el Ãºnico con fallback automÃ¡tico**: si el daemon cae, sigue funcionando via scripts.
 
 ---
 
 ## ?? Contribuir
 
-¡Las contribuciones son bienvenidas! Lee [CONTRIBUTING.md](CONTRIBUTING.md) para:
+Â¡Las contribuciones son bienvenidas! Lee [CONTRIBUTING.md](CONTRIBUTING.md) para:
 
-- ?? Cómo clonar e instalar
-- ?? Cómo correr tests
-- ?? Cómo reportar bugs
-- ?? Estilo de código
-- ?? Cómo proponer features
+- ?? CÃ³mo clonar e instalar
+- ?? CÃ³mo correr tests
+- ?? CÃ³mo reportar bugs
+- ?? Estilo de cÃ³digo
+- ?? CÃ³mo proponer features
 
 ---
 
 ## ?? Licencia
 
-[MIT](LICENSE) © 2026 Heren MCP Contributors
+[MIT](LICENSE) Â© 2026 Heren MCP Contributors
 
 ---
 
 <div align="center">
 
-? [Star en GitHub](https://github.com/CerebroCanibalus/heren-mcp) · ?? [Reportar bug](https://github.com/CerebroCanibalus/heren-mcp/issues) · ?? [Proponer feature](https://github.com/CerebroCanibalus/heren-mcp/issues)
+? [Star en GitHub](https://github.com/CerebroCanibalus/heren-mcp) Â· ?? [Reportar bug](https://github.com/CerebroCanibalus/heren-mcp/issues) Â· ?? [Proponer feature](https://github.com/CerebroCanibalus/heren-mcp/issues)
 
 ---
 
-**Por los trabajadores y los iberófonos del mundo** ??
+**Por los trabajadores y los iberÃ³fonos del mundo** ??
 
 ????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
 
-*Porque la creación no debería estar limitada al inglés.*
+*Porque la creaciÃ³n no deberÃ­a estar limitada al inglÃ©s.*
 
-?? **Plus Ultra: ir más allá.** ??
+?? **Plus Ultra: ir mÃ¡s allÃ¡.** ??
 
 </div>

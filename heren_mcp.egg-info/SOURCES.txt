@@ -5,6 +5,7 @@ LICENSE
 MANIFEST.in
 README.md
 pyproject.toml
+benchmarks/BENCHMARKS.md
 benchmarks/__init__.py
 benchmarks/benchmark_cache.py
 benchmarks/benchmark_comparison.py
