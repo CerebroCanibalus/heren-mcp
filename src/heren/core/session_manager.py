@@ -165,14 +165,37 @@ class SessionManager:
         self._start_cleanup_thread()
     
     def _start_cleanup_thread(self):
-        """Inicia thread de limpieza de sesiones expiradas."""
+        """Inicia thread de limpieza de sesiones expiradas y heartbeat del daemon."""
         def cleanup_loop():
+            heartbeat_counter = 0
             while not self._shutdown:
                 time.sleep(60)  # Cada minuto
                 self._cleanup_expired_sessions()
+                
+                # Heartbeat cada 2 minutos (cada 2 iteraciones)
+                heartbeat_counter += 1
+                if heartbeat_counter >= 2:
+                    heartbeat_counter = 0
+                    with self._sessions_lock:
+                        sessions_copy = list(self._sessions.values())
+                    for session in sessions_copy:
+                        if session.godot_daemon and session.godot_daemon.is_alive():
+                            self.send_daemon_heartbeat(session.id)
         
         self._cleanup_thread = threading.Thread(target=cleanup_loop, daemon=True)
         self._cleanup_thread.start()
+    
+    def send_daemon_heartbeat(self, session_id: str) -> bool:
+        """Envia ping al daemon para mantenerlo vivo."""
+        session = self.get_session(session_id)
+        if not session or not session.godot_daemon:
+            return False
+        try:
+            result = session.godot_daemon.call("ping", {})
+            return result.get("success", False)
+        except Exception as e:
+            logger.warning(f"[Heartbeat] Daemon no responde para sesion {session_id}: {e}")
+            return False
     
     def _cleanup_expired_sessions(self):
         """Limpia sesiones expiradas."""
@@ -526,22 +549,44 @@ class SessionManager:
         self,
         session_id: str,
         method: str,
-        params: dict
+        params: dict,
+        retries: int = 1
     ) -> dict:
-        """Ejecuta una operaci�n via GodotDaemon (WebSocket)."""
-        daemon = self.get_godot_daemon(session_id)
-        if not daemon:
+        """Ejecuta una operaci�n via GodotDaemon (WebSocket) con retry."""
+        session = self.get_session(session_id)
+        if not session:
             return {
                 "success": False,
-                "error": "daemon_not_available",
-                "message": "GodotDaemon no est� disponible para esta sesi�n"
+                "error": "session_not_found",
+                "message": f"Sesi�n no encontrada: {session_id}"
             }
         
-        session = self.get_session(session_id)
-        if session:
-            session.touch()
+        for attempt in range(retries + 1):
+            daemon = self.get_godot_daemon(session_id)
+            if not daemon:
+                if attempt < retries:
+                    logger.warning(f"[Daemon] Intento {attempt + 1}: daemon no disponible, reintentando...")
+                    time.sleep(1)
+                    continue
+                return {
+                    "success": False,
+                    "error": "daemon_not_available",
+                    "message": "GodotDaemon no est� disponible para esta sesi�n"
+                }
+            
+            try:
+                result = daemon.call(method, params)
+                session.touch()
+                return result
+            except Exception as e:
+                if attempt < retries:
+                    logger.warning(f"[Daemon] Intento {attempt + 1} fall� para {method}: {e}, reintentando...")
+                    time.sleep(1)
+                else:
+                    logger.error(f"[Daemon] Fall� despu�s de {retries} reintentos: {e}")
+                    return {"success": False, "error": str(e)}
         
-        return daemon.call(method, params)
+        return {"success": False, "error": "daemon_unavailable_after_retries"}
     
     def execute_batch_via_daemon(
         self,

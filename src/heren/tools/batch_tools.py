@@ -7,6 +7,7 @@ Optimiza rendimiento reduciendo overhead de comunicaci�n.
 Filosofía: Poder. Eficiencia. Rapidez.
 """
 
+import json
 import logging
 from typing import Any
 
@@ -55,10 +56,23 @@ def heren_batch(
     try:
         session_manager = get_session_manager()
         
+        # FIX: Validar y sanitizar operaciones antes de enviar
+        sanitized_operations = []
+        for op in operations:
+            action = op.get("action", "")
+            params = op.get("params", {})
+            
+            # Sanitizar strings en params para evitar JSON breakage
+            sanitized_params = _sanitize_params(params)
+            sanitized_operations.append({
+                "action": action,
+                "params": sanitized_params
+            })
+        
         # 1. Intentar GodotDaemon (WebSocket - m�s r�pido)
         daemon = session_manager.get_godot_daemon(session_id)
         if daemon:
-            logger.info(f"[Daemon] Ejecutando batch de {len(operations)} operaciones")
+            logger.info(f"[Daemon] Ejecutando batch de {len(sanitized_operations)} operaciones")
             # Traducir "action" a "method" para el daemon
             # Mapeo de acciones cortas a nombres de handlers del daemon
             ACTION_TO_METHOD = {
@@ -133,9 +147,24 @@ def heren_batch(
             }
             
             daemon_operations = []
-            for op in operations:
+            for op in sanitized_operations:
                 action = op.get("action", "")
                 method = ACTION_TO_METHOD.get(action, action)
+                
+                # FIX: Serializar params individualmente para detectar errores JSON
+                try:
+                    params_json = json.dumps(op.get("params", {}))
+                    json.loads(params_json)  # Verificar que es parseable
+                except (json.JSONDecodeError, TypeError) as e:
+                    return {
+                        "success": False,
+                        "error": f"JSON invalido en params de action '{action}': {e}",
+                        "results": [],
+                        "errors": [{"index": 0, "action": action, "error": str(e)}],
+                        "success_count": 0,
+                        "error_count": 1
+                    }
+                
                 daemon_op = {
                     "method": method,
                     "params": op.get("params", {})
@@ -147,15 +176,15 @@ def heren_batch(
         # 2. Intentar GodotServer (HTTP legacy)
         server = session_manager.get_godot_server(session_id)
         if server:
-            logger.info(f"Ejecutando batch de {len(operations)} operaciones via GodotServer")
+            logger.info(f"Ejecutando batch de {len(sanitized_operations)} operaciones via GodotServer")
             return server.execute("batch", {
-                "operations": operations,
+                "operations": sanitized_operations,
                 "stop_on_error": stop_on_error
             })
         
         # 3. Fallback: ejecutar una por una con scripts temporales
-        logger.info(f"Ejecutando batch de {len(operations)} operaciones via scripts temporales")
-        return _execute_batch_fallback(session_id, operations, stop_on_error)
+        logger.info(f"Ejecutando batch de {len(sanitized_operations)} operaciones via scripts temporales")
+        return _execute_batch_fallback(session_id, sanitized_operations, stop_on_error)
         
     except Exception as e:
         logger.error(f"Error en batch: {e}")
@@ -249,3 +278,24 @@ def _execute_batch_fallback(
         "success_count": len(operations) - len(errors),
         "error_count": len(errors)
     }
+
+
+def _sanitize_params(params: dict) -> dict:
+    """Sanitiza parametros para evitar problemas de JSON."""
+    if not isinstance(params, dict):
+        return params
+    
+    result = {}
+    for key, value in params.items():
+        if isinstance(value, str):
+            # Escapar caracteres problem�ticos
+            sanitized = value.replace('\x00', '')  # Null bytes
+            result[key] = sanitized
+        elif isinstance(value, dict):
+            result[key] = _sanitize_params(value)
+        elif isinstance(value, list):
+            result[key] = [_sanitize_params(item) if isinstance(item, dict) else item for item in value]
+        else:
+            result[key] = value
+    
+    return result

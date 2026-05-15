@@ -51,6 +51,7 @@ def resource(action: str, session_id: str = None, **kwargs) -> dict:
         "create_script": _action_create_script,
         "read_script": _action_read_script,
         "edit_script": _action_edit_script,
+        "update_scene_subresource": _action_update_scene_subresource,
     }
     
     if action not in actions_map:
@@ -145,5 +146,20 @@ def _action_edit_script(session_manager, session, script_path: str, content: str
             "script_path": script_path,
             "content": content,
             "append": append
+        })
+    return {"success": False, "error": "Daemon no disponible"}
+
+
+def _action_update_scene_subresource(session_manager, session, scene_path: str, subresource_type: str,
+                                     subresource_index: int, property_name: str, value, **kwargs) -> dict:
+    """Actualizar una propiedad de un sub-resource embebido en un .tscn"""
+    daemon = session_manager.get_godot_daemon(session.id)
+    if daemon:
+        return daemon.call("update_scene_subresource", {
+            "scene_path": scene_path,
+            "subresource_type": subresource_type,
+            "subresource_index": subresource_index,
+            "property_name": property_name,
+            "value": value
         })
     return {"success": False, "error": "Daemon no disponible"}

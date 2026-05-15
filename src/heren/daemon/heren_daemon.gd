@@ -30,7 +30,7 @@ var _heartbeat_accumulator: float = 0.0
 
 # Auto-shutdown por inactividad
 var _inactivity_timer: float = 0.0
-const INACTIVITY_TIMEOUT: float = 180.0  # 3 minutos sin comandos = auto-shutdown
+const INACTIVITY_TIMEOUT: float = 600.0  # 10 minutos sin comandos = auto-shutdown
 
 # Estado
 var _project_path: String = ""
@@ -185,6 +185,7 @@ func _on_heartbeat():
 
 
 func _handle_message(peer_id: int, peer: WebSocketPeer, msg: String):
+	_inactivity_timer = 0.0  # Reset en CADA mensaje recibido
 	var cmd = JSON.parse_string(msg)
 	if not cmd or not cmd is Dictionary:
 		_send_error(peer, "invalid_json", "Mensaje JSON inválido")
@@ -274,6 +275,7 @@ func _register_handlers():
 	_handlers["update_resource"] = _handle_update_resource
 	_handlers["delete_resource"] = _handle_delete_resource
 	_handlers["list_resources"] = _handle_list_resources
+	_handlers["update_scene_subresource"] = _handle_update_scene_subresource
 	
 	# === ANIMATION HANDLERS ===
 	_handlers["create_animation_player"] = _handle_create_animation_player
@@ -1031,6 +1033,15 @@ func _handle_save_scene(params: Dictionary) -> Dictionary:
 	if not _scene_cache.has(scene_path):
 		return {"success": false, "error": "scene_not_loaded"}
 	
+	# FIX: Backup antes de guardar
+	if FileAccess.file_exists(scene_path):
+		var backup_path = scene_path + ".backup." + str(Time.get_unix_time_from_system())
+		var dir = DirAccess.open(scene_path.get_base_dir())
+		if dir:
+			var copy_err = dir.copy(scene_path, backup_path)
+			if copy_err == OK:
+				print("[Save] Backup creado: ", backup_path)
+	
 	var root = _scene_cache[scene_path]
 	
 	# FIX CRITICO: Asegurar que todos los recursos de los nodos tengan paths validos
@@ -1140,15 +1151,20 @@ func _setup_resource_local_to_scene_recursive(resource: Resource):
 	for prop in prop_list:
 		var prop_name = prop.get("name", "")
 		var prop_usage = prop.get("usage", 0)
+		var prop_type = prop.get("type", 0)
 		
 		if prop_name in ["script", "resource_name", "resource_path"]:
 			continue
 		if prop_usage & PROPERTY_USAGE_STORAGE == 0:
 			continue
 		
-		var value = resource.get(prop_name)
-		if value and value is Resource and not value is Script:
-			_setup_resource_local_to_scene_recursive(value as Resource)
+		if prop_type == TYPE_OBJECT:
+			var value = resource.get(prop_name)
+			if value and value is Resource and not value is Script:
+				var sub_res = value as Resource
+				if not sub_res.resource_local_to_scene:
+					sub_res.resource_local_to_scene = true
+				_setup_resource_local_to_scene_recursive(sub_res)
 
 
 func _derive_resource_path(resource: Resource) -> String:
@@ -1210,14 +1226,13 @@ func _collect_sub_resources(node: Node) -> Array:
 		if prop_type == TYPE_OBJECT:
 			var value = node.get(prop_name)
 			if value and value is Resource and not value is Script:
-				# Solo recursos sin resource_path (creados programaticamente)
-				if value.resource_path.is_empty():
-					resources.append({
-						"node_path": _get_node_path_relative(node),
-						"prop_name": prop_name,
-						"resource": value,
-						"resource_type": value.get_class()
-					})
+				# FIX: Capturar incluso si tiene path (puede ser sub-resource anidado)
+				resources.append({
+					"node_path": _get_node_path_relative(node),
+					"prop_name": prop_name,
+					"resource": value,
+					"resource_type": value.get_class()
+				})
 	
 	# Recursion en hijos
 	for child in node.get_children():
@@ -1287,6 +1302,9 @@ func _inject_into_tscn(scene_path: String, sub_resources: Array, connections: Ar
 	Inyecta sub_resources y conexiones en un archivo .tscn existente.
 	Modifica el archivo directamente agregando [sub_resource] y [connection].
 	Maneja recursos anidados (ej: ShaderMaterial.shader).
+	
+	FIX: Los sub-resources deben insertarse ANTES de los nodos que los referencian.
+	Godot requiere definicion antes de referencia.
 	"""
 	if not FileAccess.file_exists(scene_path):
 		return
@@ -1300,22 +1318,17 @@ func _inject_into_tscn(scene_path: String, sub_resources: Array, connections: Ar
 	
 	var lines = content.split("\n")
 	var result_lines = []
-	var has_sub_resources_section = false
 	var has_connections_section = false
 	
 	# Procesar lineas existentes
 	for line in lines:
-		if line.begins_with("[sub_resource"):
-			has_sub_resources_section = true
 		if line.begins_with("[connection"):
 			has_connections_section = true
 		result_lines.append(line)
 	
-	# Agregar sub_resources si no existen
-	if not sub_resources.is_empty() and not has_sub_resources_section:
-		result_lines.append("")
-		result_lines.append("# Sub-resources injectados por Heren MCP")
-		
+	# Preparar sub_resources a inyectar
+	var sub_resources_to_inject = []
+	if not sub_resources.is_empty():
 		# Primero recolectar todos los sub-resources anidados
 		var all_sub_resources = {}  # id -> {type, properties}
 		
@@ -1345,18 +1358,56 @@ func _inject_into_tscn(scene_path: String, sub_resources: Array, connections: Ar
 			var prop_name = res_info["prop_name"]
 			_update_node_subresource_ref(result_lines, node_path, prop_name, res_id)
 		
-		# Inyectar todos los sub-resources en orden
+		# Preparar lineas de sub-resources
 		for res_id in all_sub_resources.keys():
 			var res_data = all_sub_resources[res_id]
-			result_lines.append("[sub_resource type=\"" + res_data["type"] + "\" id=\"" + res_id + "\"]")
+			sub_resources_to_inject.append("[sub_resource type=\"" + res_data["type"] + "\" id=\"" + res_id + "\"]")
 			for prop_line in res_data["properties"]:
-				result_lines.append(prop_line)
-			result_lines.append("")  # Linea en blanco entre sub-resources
+				sub_resources_to_inject.append(prop_line)
+			sub_resources_to_inject.append("")
+	
+	# Encontrar posicion de insercion: despues del ultimo [sub_resource] existente
+	# pero antes del primer [node]
+	var insert_index = -1
+	var last_sub_resource_index = -1
+	var first_node_index = -1
+	
+	for i in range(result_lines.size()):
+		var line = result_lines[i]
+		if line.begins_with("[sub_resource"):
+			last_sub_resource_index = i
+		if first_node_index == -1 and line.begins_with("[node"):
+			first_node_index = i
+	
+	# Decidir donde insertar
+	if last_sub_resource_index != -1:
+		# Insertar despues del ultimo sub-resource existente
+		# Buscar el final de ese bloque (siguiente linea vacia o seccion nueva)
+		insert_index = last_sub_resource_index + 1
+		while insert_index < result_lines.size():
+			var line = result_lines[insert_index].strip_edges()
+			if line.is_empty() or line.begins_with("["):
+				break
+			insert_index += 1
+	elif first_node_index != -1:
+		# No hay sub-resources existentes, insertar antes del primer nodo
+		insert_index = first_node_index
+	else:
+		# No hay nodos ni sub-resources, insertar al final
+		insert_index = result_lines.size()
+	
+	# Insertar sub-resources en la posicion correcta
+	if not sub_resources_to_inject.is_empty():
+		var injection = ["", "; Sub-resources injectados por Heren MCP"]
+		injection.append_array(sub_resources_to_inject)
+		
+		for i in range(injection.size()):
+			result_lines.insert(insert_index + i, injection[i])
 	
 	# Agregar conexiones si no existen
 	if not connections.is_empty() and not has_connections_section:
 		result_lines.append("")
-		result_lines.append("# Conexiones injectadas por Heren MCP")
+		result_lines.append("; Conexiones injectadas por Heren MCP")
 		
 		for conn in connections:
 			var conn_line = "[connection signal=\"" + conn["signal_name"] + "\""
@@ -1443,15 +1494,36 @@ func _serialize_value_tscn(value) -> String:
 		TYPE_VECTOR3:
 			var v = value as Vector3
 			return "Vector3(" + str(v.x) + ", " + str(v.y) + ", " + str(v.z) + ")"
+		TYPE_VECTOR3I:
+			var v = value as Vector3i
+			return "Vector3i(" + str(v.x) + ", " + str(v.y) + ", " + str(v.z) + ")"
 		TYPE_COLOR:
 			var c = value as Color
 			return "Color(" + str(c.r) + ", " + str(c.g) + ", " + str(c.b) + ", " + str(c.a) + ")"
 		TYPE_RECT2:
 			var r = value as Rect2
 			return "Rect2(" + _serialize_value_tscn(r.position) + ", " + _serialize_value_tscn(r.size) + ")"
+		TYPE_RECT2I:
+			var r = value as Rect2i
+			return "Rect2i(" + _serialize_value_tscn(r.position) + ", " + _serialize_value_tscn(r.size) + ")"
 		TYPE_TRANSFORM2D:
 			var t = value as Transform2D
 			return "Transform2D(" + str(t.x.x) + ", " + str(t.x.y) + ", " + str(t.y.x) + ", " + str(t.y.y) + ", " + str(t.origin.x) + ", " + str(t.origin.y) + ")"
+		TYPE_TRANSFORM3D:
+			var t = value as Transform3D
+			return "Transform3D(" + str(t.basis.x.x) + ", " + str(t.basis.x.y) + ", " + str(t.basis.x.z) + ", " + str(t.basis.y.x) + ", " + str(t.basis.y.y) + ", " + str(t.basis.y.z) + ", " + str(t.basis.z.x) + ", " + str(t.basis.z.y) + ", " + str(t.basis.z.z) + ", " + str(t.origin.x) + ", " + str(t.origin.y) + ", " + str(t.origin.z) + ")"
+		TYPE_AABB:
+			var a = value as AABB
+			return "AABB(" + str(a.position.x) + ", " + str(a.position.y) + ", " + str(a.position.z) + ", " + str(a.size.x) + ", " + str(a.size.y) + ", " + str(a.size.z) + ")"
+		TYPE_BASIS:
+			var b = value as Basis
+			return "Basis(" + str(b.x.x) + ", " + str(b.x.y) + ", " + str(b.x.z) + ", " + str(b.y.x) + ", " + str(b.y.y) + ", " + str(b.y.z) + ", " + str(b.z.x) + ", " + str(b.z.y) + ", " + str(b.z.z) + ")"
+		TYPE_QUATERNION:
+			var q = value as Quaternion
+			return "Quaternion(" + str(q.x) + ", " + str(q.y) + ", " + str(q.z) + ", " + str(q.w) + ")"
+		TYPE_PLANE:
+			var p = value as Plane
+			return "Plane(" + str(p.normal.x) + ", " + str(p.normal.y) + ", " + str(p.normal.z) + ", " + str(p.d) + ")"
 		TYPE_ARRAY, TYPE_PACKED_STRING_ARRAY, TYPE_PACKED_INT32_ARRAY, TYPE_PACKED_FLOAT32_ARRAY:
 			var arr = value as Array
 			var parts = []
@@ -1481,6 +1553,7 @@ func _update_node_subresource_ref(lines: Array, node_path: String, prop_name: St
 	"""
 	Actualiza la referencia de sub-resource en la linea del nodo correspondiente.
 	Busca el nodo por path y agrega/modifica la propiedad para usar SubResource().
+	Si la propiedad ya existe, la reemplaza (elimina duplicados).
 	"""
 	var target_node_line = -1
 	var target_indent = ""
@@ -1513,11 +1586,26 @@ func _update_node_subresource_ref(lines: Array, node_path: String, prop_name: St
 						target_indent = "\t"
 						break
 	
-	# Si encontramos el nodo, agregar la propiedad despues de la linea del nodo
-	if target_node_line != -1:
-		var prop_line = target_indent + prop_name + " = SubResource(\"" + res_id + "\")"
-		# Insertar despues de la linea del nodo
-		lines.insert(target_node_line + 1, prop_line)
+	if target_node_line == -1:
+		return
+	
+	# Buscar y eliminar propiedad existente dentro del bloque del nodo
+	# Un bloque de nodo termina cuando encontramos otra linea [node, [sub_resource, [connection, o linea vacía]
+	var existing_prop_line = -1
+	for i in range(target_node_line + 1, lines.size()):
+		var line = lines[i]
+		# Si encontramos inicio de otra sección, salimos
+		if line.begins_with("[node ") or line.begins_with("[sub_resource ") or line.begins_with("[connection "):
+			break
+		# Si encontramos la propiedad existente
+		if line.strip_edges().begins_with(prop_name + " ="):
+			existing_prop_line = i
+			lines[i] = ""  # Eliminar linea existente
+			break
+	
+	# Insertar nueva referencia despues de la linea del nodo
+	var prop_line = target_indent + prop_name + " = SubResource(\"" + res_id + "\")"
+	lines.insert(target_node_line + 1, prop_line)
 
 
 # ============================================================
@@ -1732,6 +1820,9 @@ func _deserialize_value(value) -> Variant:
 				var path = value.get("resource_path", "")
 				if path and ResourceLoader.exists(path):
 					return load(path)
+				# FIX: Si no hay path, intentar crear recurso inline
+				if value.has("resource_type") or value.has("type"):
+					return _deserialize_resource(value)
 				return null
 			_:
 				return value
@@ -1753,6 +1844,8 @@ func _deserialize_resource(value: Dictionary) -> Resource:
 	"""
 	var resource_type = value.get("type", "")
 	if resource_type == "":
+		resource_type = value.get("resource_type", "")
+	if resource_type == "":
 		return null
 	
 	# Crear instancia del recurso usando ClassDB
@@ -1762,10 +1855,16 @@ func _deserialize_resource(value: Dictionary) -> Resource:
 	
 	# Setear propiedades
 	for key in value.keys():
-		if key == "type":
+		if key in ["type", "resource_type", "__type"]:
 			continue
 		var prop_value = _deserialize_value(value[key])
-		if resource.get_property_list().any(func(p): return p.name == key):
+		# Verificar que la propiedad existe antes de setear
+		var has_prop = false
+		for prop in resource.get_property_list():
+			if prop.name == key:
+				has_prop = true
+				break
+		if has_prop:
 			resource.set(key, prop_value)
 	
 	return resource as Resource
@@ -1819,6 +1918,76 @@ func _handle_create_resource(params: Dictionary) -> Dictionary:
 		"success": true,
 		"resource_path": resource_path,
 		"resource_type": resource_type
+	}
+
+
+func _handle_update_scene_subresource(params: Dictionary) -> Dictionary:
+	var scene_path = params.get("scene_path", "")
+	var subresource_type = params.get("subresource_type", "")
+	var subresource_index = params.get("subresource_index", 0)
+	var property_name = params.get("property_name", "")
+	var value = params.get("value", null)
+	
+	if not scene_path or not subresource_type or not property_name:
+		return {"success": false, "error": "missing_params"}
+	
+	if not FileAccess.file_exists(scene_path):
+		return {"success": false, "error": "scene_not_found"}
+	
+	var file = FileAccess.open(scene_path, FileAccess.READ)
+	if not file:
+		return {"success": false, "error": "read_failed"}
+	
+	var content = file.get_as_text()
+	file.close()
+	
+	var lines = content.split("\n")
+	var result_lines = []
+	var current_subresource_idx = -1
+	var in_target_subresource = false
+	var property_updated = false
+	
+	for line in lines:
+		if line.begins_with("[sub_resource type=\"" + subresource_type + "\"]"):
+			current_subresource_idx += 1
+			if current_subresource_idx == subresource_index:
+				in_target_subresource = true
+			else:
+				in_target_subresource = false
+		elif line.begins_with("[") and not line.begins_with("[sub_resource"):
+			in_target_subresource = false
+		
+		if in_target_subresource and not property_updated:
+			# Verificar si la linea es la propiedad a actualizar
+			var prop_prefix = property_name + " = "
+			if line.begins_with(prop_prefix) or line.strip_edges() == property_name:
+				# Reemplazar valor
+				var serialized = _serialize_value_tscn(_deserialize_value(value))
+				if not serialized.is_empty():
+					result_lines.append(property_name + " = " + serialized)
+					property_updated = true
+					continue
+		
+		result_lines.append(line)
+	
+	if not property_updated:
+		return {"success": false, "error": "property_not_found", "subresource_index": subresource_index}
+	
+	# Guardar
+	file = FileAccess.open(scene_path, FileAccess.WRITE)
+	if not file:
+		return {"success": false, "error": "write_failed"}
+	
+	file.store_string("\n".join(result_lines))
+	file.close()
+	
+	return {
+		"success": true,
+		"scene_path": scene_path,
+		"subresource_type": subresource_type,
+		"subresource_index": subresource_index,
+		"property_name": property_name,
+		"property_updated": true
 	}
 
 
@@ -2456,7 +2625,10 @@ func _handle_create_shader(params: Dictionary) -> Dictionary:
 	if FileAccess.file_exists(shader_path):
 		return {"success": false, "error": "shader_exists"}
 	
-	var full_code = "shader_type " + shader_type + ";\n\n" + code
+	# FIX: Detectar si el usuario ya incluyo shader_type
+	var full_code = code
+	if not code.strip_edges().begins_with("shader_type"):
+		full_code = "shader_type " + shader_type + ";\n\n" + code
 	
 	var file = FileAccess.open(shader_path, FileAccess.WRITE)
 	if not file:

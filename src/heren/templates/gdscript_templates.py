@@ -230,6 +230,19 @@ func dict_to_var(val):
             return Vector2(val.get("x", 0), val.get("y", 0))
         elif val.has("r") and val.has("g") and val.has("b"):
             return Color(val.get("r", 0), val.get("g", 0), val.get("b", 0), val.get("a", 1))
+        # FIX: Soportar recursos primitivos inline (BoxMesh, SphereMesh, etc.)
+        elif val.has("type") or val.has("resource_type"):
+            var res_type = val.get("type", val.get("resource_type", ""))
+            if res_type != "" and ClassDB.class_exists(res_type):
+                var res = ClassDB.instantiate(res_type)
+                if res is Resource:
+                    for key in val.keys():
+                        if key in ["type", "resource_type", "__type"]:
+                            continue
+                        if res.get_property_list().any(func(p): return p.name == key):
+                            res.set(key, dict_to_var(val[key]))
+                    return res
+            return null
         # Con __type expl�cito
         elif val.has("__type"):
             match val["__type"]:
@@ -239,6 +252,18 @@ func dict_to_var(val):
                     return Vector3(val.get("x", 0), val.get("y", 0), val.get("z", 0))
                 "Color":
                     return Color(val.get("r", 0), val.get("g", 0), val.get("b", 0), val.get("a", 1))
+                "Resource":
+                    var res_type = val.get("resource_type", "")
+                    if res_type != "" and ClassDB.class_exists(res_type):
+                        var res = ClassDB.instantiate(res_type)
+                        if res is Resource:
+                            for key in val.keys():
+                                if key in ["type", "resource_type", "__type"]:
+                                    continue
+                                if res.get_property_list().any(func(p): return p.name == key):
+                                    res.set(key, dict_to_var(val[key]))
+                            return res
+                    return null
     return val
 '''
     

@@ -84,7 +84,7 @@ def scene_tool(
         return {"success": False, "error": f"Sesión no encontrada: {session_id}"}
     
     # Validaciones específicas por acción
-    if action in ["get_tree", "save", "load", "unload", "screenshot", "create", "delete", "add_ext_resource", "set_editable_paths"]:
+    if action in ["get_tree", "save", "load", "unload", "screenshot", "create", "delete", "add_ext_resource", "set_editable_paths", "undo"]:
         if not scene_path:
             return {
                 "success": False,
@@ -174,6 +174,9 @@ def scene_tool(
                 "editable": kwargs.get("editable", True)
             }
         )
+    
+    elif action == "undo":
+        return _action_undo(manager, session_id, scene_path)
     
     else:
         return {
@@ -280,6 +283,55 @@ def _action_list_loaded(manager, session_id: str) -> dict:
         return result
     except Exception as e:
         logger.error(f"[SceneTool] Error listando escenas: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def _action_undo(manager, session_id: str, scene_path: str) -> dict:
+    """Restaura la escena desde el backup m�s reciente."""
+    if not scene_path:
+        return {"success": False, "error": "scene_path requerido para action='undo'"}
+    
+    import glob
+    import shutil
+    
+    session = manager.get_session(session_id)
+    if not session:
+        return {"success": False, "error": "Sesion no encontrada"}
+    
+    # Buscar backups de esta escena
+    backup_pattern = scene_path + ".backup.*"
+    backups = glob.glob(backup_pattern)
+    
+    if not backups:
+        return {
+            "success": False,
+            "error": "no_backups_found",
+            "message": "No hay backups para esta escena"
+        }
+    
+    # Ordenar por timestamp (m�s reciente primero)
+    backups.sort(reverse=True)
+    latest_backup = backups[0]
+    
+    try:
+        # Restaurar backup
+        shutil.copy2(latest_backup, scene_path)
+        
+        # Recargar en cache del daemon si está disponible
+        daemon = manager.get_godot_daemon(session_id)
+        if daemon:
+            try:
+                daemon.call("load_scene", {"scene_path": scene_path})
+            except Exception as e:
+                logger.warning(f"[Undo] No se pudo recargar en daemon: {e}")
+        
+        return {
+            "success": True,
+            "scene_path": scene_path,
+            "restored_from": latest_backup,
+            "backups_available": len(backups)
+        }
+    except Exception as e:
         return {"success": False, "error": str(e)}
 
 
