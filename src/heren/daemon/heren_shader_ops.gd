@@ -125,16 +125,62 @@ func handle_create_shader_material(params: Dictionary) -> Dictionary:
 	for uniform_name in uniforms.keys():
 		material.set_shader_parameter(uniform_name, _daemon._core_utils.deserialize_value(uniforms[uniform_name]))
 	
-	# Assign to node
-	if "material" in node:
+	# B9 FIX: Asignar material correctamente a TODOS los tipos de nodos
+	var material_assigned = false
+	
+	# CanvasItem (Node2D, Control, etc.): usar propiedad "material"
+	if node.has_method("set_material"):
+		node.set_material(material)
+		material_assigned = true
+	elif "material" in node:
 		node.material = material
-	elif "surface_material_override" in node and node is MeshInstance3D:
+		material_assigned = true
+	
+	# MeshInstance3D: intentar surface_material_override_0
+	if not material_assigned and node is MeshInstance3D:
+		if node.get_surface_override_material_count() == 0:
+			# Agregar primer surface material
+			node.set_surface_override_material(0, material)
+			material_assigned = true
+		else:
+			node.set_surface_override_material(0, material)
+			material_assigned = true
+	
+	# GeometryInstance3D: material_override
+	if not material_assigned and node.has_method("set_material_override"):
+		node.set_material_override(material)
+		material_assigned = true
+	elif not material_assigned and "material_override" in node:
 		node.material_override = material
+		material_assigned = true
+	
+	# GeometryInstance3D: material_overlay
+	if not material_assigned and node.has_method("set_material_overlay"):
+		node.set_material_overlay(material)
+		material_assigned = true
+	elif not material_assigned and "material_overlay" in node:
+		node.material_overlay = material
+		material_assigned = true
+	
+	# Sprite2D, Sprite3D, etc: verificar texture que puede tener material
+	if not material_assigned and "texture" in node:
+		var texture = node.get("texture")
+		if texture and texture is Texture2D:
+			# No podemos asignar material a texture, pero el material se guarda en el nodo
+			pass
+	
+	if not material_assigned:
+		return {
+			"success": false,
+			"error": "material_assignment_failed",
+			"message": "No se pudo asignar el material al nodo. Tipo de nodo: " + node.get_class()
+		}
 	
 	return {
 		"success": true,
 		"node_path": node_path,
-		"has_shader": shader_path != ""
+		"has_shader": shader_path != "",
+		"material_assigned": material_assigned
 	}
 
 

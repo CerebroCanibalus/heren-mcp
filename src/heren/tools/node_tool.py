@@ -304,8 +304,22 @@ def _execute_via_daemon_or_fallback(manager, session_id: str, operation: str, pa
     if daemon:
         try:
             result = manager.execute_via_daemon(session_id, operation, params)
-            if result.get("success") or "error" not in result:
+            # B8 FIX: Aceptar respuesta del daemon si:
+            # 1. success=true, O
+            # 2. Contiene datos relevantes (properties, value, etc.) aunque no tenga "success"
+            # No caer al fallback si el daemon devolvió datos útiles
+            has_success = result.get("success") == True
+            has_data = "properties" in result or "value" in result or "node_type" in result
+            has_error = "error" in result and result.get("error") != ""
+            
+            if has_success or (has_data and not has_error):
                 logger.debug(f"[NodeTool] Daemon: {operation} en ~20ms")
+                return result
+            # B5 FIX: Si hay error explícito del daemon, retornar el error directamente
+            # No caer al fallback - el daemon ya dio el mejor error posible
+            elif has_error:
+                daemon_error = result.get("error", "")
+                logger.debug(f"[NodeTool] Daemon error, retornando directamente: {daemon_error}")
                 return result
         except Exception as e:
             logger.warning(f"[NodeTool] Daemon falló: {e}")
@@ -332,6 +346,44 @@ def _execute_via_daemon_or_fallback(manager, session_id: str, operation: str, pa
                 params["node_path"],
                 prop_name,
                 params["value"]
+            )
+        elif operation == "get_node_properties":
+            # B8 FIX: Implementar get_node_properties en fallback
+            return interface.get_node_properties(
+                params["scene_path"],
+                params["node_path"]
+            )
+        elif operation == "array_append":
+            return interface.array_append(
+                params["scene_path"],
+                params["node_path"],
+                params["property_name"],
+                params["value"]
+            )
+        elif operation == "array_remove":
+            return interface.array_remove(
+                params["scene_path"],
+                params["node_path"],
+                params["property_name"],
+                params.get("index", -1),
+                params.get("value")
+            )
+        elif operation == "duplicate_node":
+            return interface.duplicate_node(
+                params["scene_path"],
+                params["node_path"]
+            )
+        elif operation == "rename_node":
+            return interface.rename_node(
+                params["scene_path"],
+                params["node_path"],
+                params.get("new_name", "")
+            )
+        elif operation == "move_node":
+            return interface.move_node(
+                params["scene_path"],
+                params["node_path"],
+                params.get("new_parent", "")
             )
         else:
             return {"success": False, "error": f"Operación no soportada en fallback: {operation}"}

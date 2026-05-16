@@ -380,6 +380,7 @@ def resource_tool(
 @mcp.tool()
 def animation_tool(
     action: str,
+    session_id: str = None,
     scene_path: str = None,
     player_path: str = None,
     anim_name: str = None,
@@ -407,6 +408,7 @@ def animation_tool(
     
     Args:
         action: Operación a realizar
+        session_id: ID de sesión activa
         scene_path: Ruta a la escena
         player_path: Ruta al AnimationPlayer
         anim_name: Nombre de la animación
@@ -422,7 +424,7 @@ def animation_tool(
         states: Lista de estados para state machine
         transitions: Lista de transiciones
     """
-    return animation(action=action, scene_path=scene_path, player_path=player_path,
+    return animation(action=action, session_id=session_id, scene_path=scene_path, player_path=player_path,
                     anim_name=anim_name, length=length, loop=loop, track_type=track_type,
                     node_path=node_path, property=property, track_idx=track_idx,
                     time=time, value=value, transition=transition, states=states,
@@ -436,6 +438,7 @@ def animation_tool(
 @mcp.tool()
 def skeleton_tool(
     action: str,
+    session_id: str = None,
     scene_path: str = None,
     parent_path: str = ".",
     skeleton_name: str = "Skeleton2D",
@@ -461,6 +464,7 @@ def skeleton_tool(
     
     Args:
         action: Operación a realizar
+        session_id: ID de sesión activa
         scene_path: Ruta a la escena
         parent_path: Ruta al padre
         skeleton_name: Nombre del skeleton
@@ -474,7 +478,7 @@ def skeleton_tool(
         bone_weights: Pesos de huesos para skinning
         attachment_name: Nombre del attachment
     """
-    return skeleton(action=action, scene_path=scene_path, parent_path=parent_path,
+    return skeleton(action=action, session_id=session_id, scene_path=scene_path, parent_path=parent_path,
                    skeleton_name=skeleton_name, is_3d=is_3d, skeleton_path=skeleton_path,
                    bone_name=bone_name, rest_transform=rest_transform, length=length,
                    bone_angle=bone_angle, polygon_path=polygon_path,
@@ -537,6 +541,7 @@ def shader_tool(
 @mcp.tool()
 def tilemap_tool(
     action: str,
+    session_id: str = None,
     tileset_path: str = None,
     scene_path: str = None,
     tilemap_path: str = None,
@@ -563,6 +568,7 @@ def tilemap_tool(
     
     Args:
         action: Operación a realizar
+        session_id: ID de sesión activa
         tileset_path: Ruta al TileSet
         scene_path: Ruta a la escena
         tilemap_path: Ruta al TileMap
@@ -577,7 +583,7 @@ def tilemap_tool(
         region: Región para pattern {x, y, w, h}
         pattern_name: Nombre del pattern
     """
-    return tilemap(action=action, tileset_path=tileset_path, scene_path=scene_path,
+    return tilemap(action=action, session_id=session_id, tileset_path=tileset_path, scene_path=scene_path,
                   tilemap_path=tilemap_path, layer=layer, coords=coords,
                   atlas_coords=atlas_coords, source_id=source_id,
                   alternative_tile=alternative_tile, cells=cells,
@@ -592,6 +598,7 @@ def tilemap_tool(
 @mcp.tool()
 def project_tool(
     action: str,
+    session_id: str = None,
     setting_name: str = None,
     value = None,
     autoload_name: str = None,
@@ -620,6 +627,7 @@ def project_tool(
     
     Args:
         action: Operación a realizar
+        session_id: ID de sesión activa
         project_path: (para create/setup_daemon) Ruta del proyecto
         project_name: (para create) Nombre del proyecto
         renderer: (para create) Renderer: "forward_plus", "mobile", "compatibility"
@@ -638,7 +646,7 @@ def project_tool(
     Returns:
         Dict con resultado de la operación
     """
-    return project(action=action, setting_name=setting_name, value=value,
+    return project(action=action, session_id=session_id, setting_name=setting_name, value=value,
                   autoload_name=autoload_name, script_path=script_path,
                   global_name=global_name, project_path=project_path,
                   project_name=project_name, renderer=renderer,

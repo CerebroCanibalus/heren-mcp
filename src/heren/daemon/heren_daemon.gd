@@ -243,8 +243,7 @@ func _register_handlers():
 	_handlers["validate_node"] = _debug_ops.handle_validate_node
 	_handlers["validate_resource"] = _debug_ops.handle_validate_resource
 	
-	# Project handlers
-	_handlers["create_project"] = _project_ops.handle_create_project
+	# Project handlers (create_project no implementado en módulo)
 	_handlers["set_project_setting"] = _project_ops.handle_set_project_setting
 	_handlers["get_project_setting"] = _project_ops.handle_get_project_setting
 	_handlers["add_autoload"] = _project_ops.handle_add_autoload

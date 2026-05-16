@@ -15,9 +15,18 @@ from heren.core.session_manager import get_session_manager
 logger = logging.getLogger(__name__)
 
 
-def skeleton(action: str, **kwargs) -> dict:
+def skeleton(action: str, session_id: str = None, **kwargs) -> dict:
     """Tool centralizada para esqueletos."""
     session_manager = get_session_manager()
+    
+    # Obtener sesión explícita o activa
+    if session_id:
+        session = session_manager.get_session(session_id)
+    else:
+        session = session_manager.get_active_session()
+    
+    if not session:
+        return {"success": False, "error": "No hay sesión activa. Proporcione session_id."}
     
     actions_map = {
         "create": _action_create,
@@ -34,17 +43,13 @@ def skeleton(action: str, **kwargs) -> dict:
         }
     
     try:
-        return actions_map[action](session_manager, **kwargs)
+        return actions_map[action](session_manager, session, **kwargs)
     except Exception as e:
         logger.error(f"Error en skeleton({action}): {e}")
         return {"success": False, "error": str(e)}
 
 
-def _action_create(session_manager, scene_path: str, parent_path: str = ".", skeleton_name: str = "Skeleton2D", is_3d: bool = False, **kwargs) -> dict:
-    session = session_manager.get_active_session()
-    if not session:
-        return {"success": False, "error": "No hay sesión activa"}
-    
+def _action_create(session_manager, session, scene_path: str, parent_path: str = ".", skeleton_name: str = "Skeleton2D", is_3d: bool = False, **kwargs) -> dict:
     daemon = session_manager.get_godot_daemon(session.id)
     if daemon:
         return daemon.call("create_skeleton", {
@@ -56,11 +61,7 @@ def _action_create(session_manager, scene_path: str, parent_path: str = ".", ske
     return {"success": False, "error": "Daemon no disponible"}
 
 
-def _action_add_bone(session_manager, scene_path: str, skeleton_path: str, bone_name: str, rest_transform: dict = None, length: float = 32.0, bone_angle: float = 0.0, **kwargs) -> dict:
-    session = session_manager.get_active_session()
-    if not session:
-        return {"success": False, "error": "No hay sesión activa"}
-    
+def _action_add_bone(session_manager, session, scene_path: str, skeleton_path: str, bone_name: str, rest_transform: dict = None, length: float = 32.0, bone_angle: float = 0.0, **kwargs) -> dict:
     daemon = session_manager.get_godot_daemon(session.id)
     if daemon:
         return daemon.call("add_bone", {
@@ -74,11 +75,7 @@ def _action_add_bone(session_manager, scene_path: str, skeleton_path: str, bone_
     return {"success": False, "error": "Daemon no disponible"}
 
 
-def _action_set_rest(session_manager, scene_path: str, skeleton_path: str, bone_name: str, rest_transform: dict, **kwargs) -> dict:
-    session = session_manager.get_active_session()
-    if not session:
-        return {"success": False, "error": "No hay sesión activa"}
-    
+def _action_set_rest(session_manager, session, scene_path: str, skeleton_path: str, bone_name: str, rest_transform: dict, **kwargs) -> dict:
     daemon = session_manager.get_godot_daemon(session.id)
     if daemon:
         return daemon.call("set_bone_rest", {
@@ -90,11 +87,7 @@ def _action_set_rest(session_manager, scene_path: str, skeleton_path: str, bone_
     return {"success": False, "error": "Daemon no disponible"}
 
 
-def _action_skin(session_manager, scene_path: str, polygon_path: str, skeleton_path: str, bone_weights: dict = None, **kwargs) -> dict:
-    session = session_manager.get_active_session()
-    if not session:
-        return {"success": False, "error": "No hay sesión activa"}
-    
+def _action_skin(session_manager, session, scene_path: str, polygon_path: str, skeleton_path: str, bone_weights: dict = None, **kwargs) -> dict:
     daemon = session_manager.get_godot_daemon(session.id)
     if daemon:
         return daemon.call("skin_polygon2d", {
@@ -106,11 +99,7 @@ def _action_skin(session_manager, scene_path: str, polygon_path: str, skeleton_p
     return {"success": False, "error": "Daemon no disponible"}
 
 
-def _action_attachment(session_manager, scene_path: str, skeleton_path: str, bone_name: str, attachment_name: str = "Attachment", **kwargs) -> dict:
-    session = session_manager.get_active_session()
-    if not session:
-        return {"success": False, "error": "No hay sesión activa"}
-    
+def _action_attachment(session_manager, session, scene_path: str, skeleton_path: str, bone_name: str, attachment_name: str = "Attachment", **kwargs) -> dict:
     daemon = session_manager.get_godot_daemon(session.id)
     if daemon:
         return daemon.call("add_bone_attachment", {

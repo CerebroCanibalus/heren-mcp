@@ -243,6 +243,74 @@ class GodotInterface:
             node_path=node_path,
         )
     
+    def duplicate_node(self, scene_path: str, node_path: str) -> dict:
+        """Duplica un nodo."""
+        result = self._execute_template(
+            "duplicate_node",
+            scene_path=scene_path,
+            node_path=node_path,
+        )
+        if result.get("success"):
+            self.session.scene_cache.invalidate(f"scene_tree:{scene_path}")
+        return result
+    
+    def rename_node(self, scene_path: str, node_path: str, new_name: str) -> dict:
+        """Renombra un nodo."""
+        result = self._execute_template(
+            "rename_node",
+            scene_path=scene_path,
+            node_path=node_path,
+            new_name=new_name,
+        )
+        if result.get("success"):
+            self.session.scene_cache.invalidate(f"scene_tree:{scene_path}")
+        return result
+    
+    def move_node(self, scene_path: str, node_path: str, new_parent: str) -> dict:
+        """Mueve un nodo a otro padre."""
+        result = self._execute_template(
+            "move_node",
+            scene_path=scene_path,
+            node_path=node_path,
+            new_parent=new_parent,
+        )
+        if result.get("success"):
+            self.session.scene_cache.invalidate(f"scene_tree:{scene_path}")
+        return result
+    
+    def array_append(self, scene_path: str, node_path: str, property_name: str, value: Any) -> dict:
+        """Añade un elemento a una propiedad array."""
+        # Serializar valor a JSON para pasarlo al template
+        import json
+        value_json = json.dumps(value)
+        result = self._execute_template(
+            "array_append",
+            scene_path=scene_path,
+            node_path=node_path,
+            property_name=property_name,
+            value_json=value_json,
+        )
+        if result.get("success"):
+            self.session.scene_cache.invalidate(f"scene_tree:{scene_path}")
+        return result
+    
+    def array_remove(self, scene_path: str, node_path: str, property_name: str, 
+                     index: int = -1, value: Any = None) -> dict:
+        """Remueve un elemento de una propiedad array."""
+        import json
+        value_json = json.dumps(value) if value is not None else "null"
+        result = self._execute_template(
+            "array_remove",
+            scene_path=scene_path,
+            node_path=node_path,
+            property_name=property_name,
+            index=index,
+            value_json=value_json,
+        )
+        if result.get("success"):
+            self.session.scene_cache.invalidate(f"scene_tree:{scene_path}")
+        return result
+    
     # ============ Signal Operations ============
     
     def connect_signal(self, scene_path: str, from_node: str, signal_name: str,

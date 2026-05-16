@@ -22,8 +22,12 @@ func handle_screenshot(params: Dictionary) -> Dictionary:
 	var format = params.get("format", "png")
 	var quality = params.get("quality", 0.85)
 	
-	if not scene_path or not output_path:
-		return {"success": false, "error": "missing_params"}
+	# Generar output_path por defecto si no se proporciona
+	if output_path.is_empty():
+		output_path = _daemon._project_path.get_base_dir() + "/screenshot_" + str(Time.get_unix_time_from_system()) + ".png"
+	
+	if not scene_path:
+		return {"success": false, "error": "missing_scene_path", "message": "Se requiere scene_path para capturar screenshot"}
 	
 	if not _daemon._scene_cache.has(scene_path):
 		# Cargar escena directamente

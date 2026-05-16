@@ -121,10 +121,16 @@ func build_node_tree(node: Node, output: Array, path: String, include_props: boo
 	if not is_instance_valid(node):
 		return
 	
+	# B10 FIX: Normalizar nombre para evitar desambiguación con #
+	# Godot añade # a nombres duplicados en el árbol runtime, pero el .tscn usa nombres originales
+	var normalized_name = node.name
+	if "#" in normalized_name:
+		normalized_name = normalized_name.split("#")[0]
+	
 	var node_info = {
-		"name": node.name,
+		"name": normalized_name,
 		"type": node.get_class(),
-		"path": path if not path.is_empty() else node.name
+		"path": path if not path.is_empty() else normalized_name
 	}
 	
 	if node is Node2D:
@@ -227,6 +233,10 @@ func handle_add_node(params: Dictionary) -> Dictionary:
 	
 	new_node.name = node_name
 	
+	# B6 FIX: Godot sanitiza caracteres especiales (@, #, !) en nombres
+	# Obtener el nombre real que Godot usó después de la sanitización
+	var actual_name = new_node.name
+	
 	# Asegurar process_mode normal para nodos nuevos (no heredar el deshabilitado del cache)
 	if new_node is Node:
 		new_node.process_mode = Node.PROCESS_MODE_INHERIT
@@ -240,8 +250,8 @@ func handle_add_node(params: Dictionary) -> Dictionary:
 	parent.add_child(new_node)
 	new_node.owner = root
 	
-	# Verificar que el nodo fue añadido correctamente
-	var verify_node = parent.get_node_or_null(node_name)
+	# Verificar que el nodo fue añadido correctamente usando el nombre real
+	var verify_node = parent.get_node_or_null(actual_name)
 	if not verify_node:
 		return {
 			"success": false,
@@ -249,12 +259,18 @@ func handle_add_node(params: Dictionary) -> Dictionary:
 			"message": "El nodo no se pudo verificar después de añadirlo"
 		}
 	
+	# B6 FIX: Devolver información sobre la sanitización si ocurrió
+	var name_was_sanitized = actual_name != node_name
+	
 	return {
 		"success": true,
 		"scene_path": scene_path,
-		"node_path": str(parent.get_path()) + "/" + node_name,
+		"node_path": str(parent.get_path()) + "/" + actual_name,
 		"node_type": node_type,
-		"node_count": count_nodes_recursive(root)
+		"node_count": count_nodes_recursive(root),
+		"node_name": actual_name,
+		"name_sanitized": name_was_sanitized,
+		"original_name": node_name if name_was_sanitized else null
 	}
 
 
@@ -264,16 +280,17 @@ func handle_remove_node(params: Dictionary) -> Dictionary:
 	var recursive = params.get("recursive", true)
 	
 	if not scene_path or not node_path:
-		return {"success": false, "error": "missing_params"}
+		return {"success": false, "error": "missing_params", "message": "scene_path y node_path son requeridos"}
 	
+	# B12 FIX: Separar error de "escena no cargada" de "nodo no encontrado"
 	if not _scene_cache.has(scene_path):
-		return {"success": false, "error": "scene_not_loaded"}
+		return {"success": false, "error": "scene_not_loaded", "message": "La escena no está cargada en memoria. Carga la escena primero con 'load_scene'."}
 	
 	var root = _scene_cache[scene_path]
 	var target = root.get_node_or_null(node_path)
 	
 	if not target:
-		return {"success": false, "error": "node_not_found", "node_path": node_path}
+		return {"success": false, "error": "node_not_found", "node_path": node_path, "message": "El nodo '" + node_path + "' no existe en la escena '" + scene_path + "'"}
 	
 	if target == root:
 		return {"success": false, "error": "cannot_remove_root"}
@@ -310,7 +327,10 @@ func handle_set_property(params: Dictionary) -> Dictionary:
 		return {"success": false, "error": "scene_not_loaded"}
 	
 	var root = _scene_cache[scene_path]
-	var node = root.get_node_or_null(node_path)
+	
+	# B4 FIX: Normalizar node_path para aceptar paths con o sin /root/ prefix
+	var normalized_path = _normalize_node_path(node_path, root)
+	var node = root.get_node_or_null(normalized_path)
 	
 	if not node:
 		return {"success": false, "error": "node_not_found", "node_path": node_path}
@@ -379,8 +399,10 @@ func handle_array_append(params: Dictionary) -> Dictionary:
 	
 	# Obtener el array actual (duplicate para evitar modificar por referencia)
 	var current_array = node.get(property_name)
-	if not current_array is Array:
-		return {"success": false, "error": "property_not_array", "property_name": property_name, "type": typeof(current_array)}
+	var type_id = typeof(current_array)
+	var is_array_type = current_array is Array or (type_id >= TYPE_PACKED_BYTE_ARRAY and type_id <= TYPE_PACKED_COLOR_ARRAY)
+	if not is_array_type:
+		return {"success": false, "error": "property_not_array", "property_name": property_name, "type": type_id}
 	
 	# Duplicar para asegurar que Godot detecte el cambio
 	var new_array = current_array.duplicate()
@@ -420,8 +442,10 @@ func handle_array_remove(params: Dictionary) -> Dictionary:
 	
 	# Obtener el array actual (duplicate para evitar modificar por referencia)
 	var current_array = node.get(property_name)
-	if not current_array is Array:
-		return {"success": false, "error": "property_not_array", "property_name": property_name, "type": typeof(current_array)}
+	var type_id = typeof(current_array)
+	var is_array_type = current_array is Array or (type_id >= TYPE_PACKED_BYTE_ARRAY and type_id <= TYPE_PACKED_COLOR_ARRAY)
+	if not is_array_type:
+		return {"success": false, "error": "property_not_array", "property_name": property_name, "type": type_id}
 	
 	# Duplicar para asegurar que Godot detecte el cambio
 	var new_array = current_array.duplicate()
@@ -568,20 +592,40 @@ func handle_batch(params: Dictionary) -> Dictionary:
 	
 	var results = []
 	var all_success = true
-	var scene_load_warned = false
 	
+	# B7 FIX: Auto-cargar escenas necesarias ANTES de ejecutar operaciones
+	# Esto asegura que todas las operaciones trabajen sobre la misma instancia en memoria
+	var scenes_to_load = {}
 	for i in range(operations.size()):
 		var op = operations[i]
 		var method = op.get("method", "")
 		var op_params = op.get("params", {})
+		var scene_path = op_params.get("scene_path", "")
 		
-		# Auto-cargar escena si es necesario para operaciones de nodo/escena
+		# Solo para operaciones que requieren escena cargada
 		if method in ["add_node", "remove_node", "set_property", "get_node_properties", 
-					  "duplicate_node", "rename_node", "move_node", "save_scene", "get_scene_tree"]:
-			var scene_path = op_params.get("scene_path", "")
-			if scene_path and not _scene_cache.has(scene_path) and not scene_load_warned:
-				print("[BATCH] Advertencia: Escena no cargada en cache: ", scene_path)
-				scene_load_warned = true
+					  "duplicate_node", "rename_node", "move_node", "save_scene", "get_scene_tree",
+					  "array_append", "array_remove"]:
+			if scene_path and not scenes_to_load.has(scene_path):
+				scenes_to_load[scene_path] = true
+	
+	# Cargar todas las escenas necesarias
+	for scene_path in scenes_to_load.keys():
+		if not _scene_cache.has(scene_path):
+			var load_result = handle_load_scene({"scene_path": scene_path})
+			if not load_result.success:
+				return {
+					"success": false,
+					"error": "batch_load_failed",
+					"scene_path": scene_path,
+					"message": "No se pudo cargar la escena requerida para batch: " + scene_path
+				}
+	
+	# Ejecutar operaciones sobre la misma instancia de escena en caché
+	for i in range(operations.size()):
+		var op = operations[i]
+		var method = op.get("method", "")
+		var op_params = op.get("params", {})
 		
 		var result = _dispatch_callback.call(method, op_params) if _dispatch_callback else {"success": false, "error": "dispatch_not_available"}
 		result["_batch_index"] = i
@@ -1557,5 +1601,38 @@ func _serialize_value_tscn(value) -> String:
 			return ""
 		_:
 			return str(value)
+
+
+# ============================================================
+# PATH NORMALIZATION HELPER (B4 FIX)
+# ============================================================
+
+func _normalize_node_path(node_path: String, root: Node) -> String:
+	"""
+	Normaliza un path de nodo para aceptar tanto:
+	- Paths con /root/ prefix: /root/TestRoot/Player
+	- Paths sin prefix: TestRoot/Player o Player
+	Retorna el path normalizado sin prefix.
+	"""
+	if node_path.is_empty():
+		return ""
+	
+	# Si ya es vacío o solo el nombre del nodo, retornarlo
+	if not node_path.contains("/"):
+		return node_path
+	
+	# Quitar /root/ prefix si existe
+	var normalized = node_path
+	if normalized.begins_with("/root/"):
+		normalized = normalized.substr(6)  # Quitar "/root/"
+	
+	# Quitar nombre del root si está al inicio (ej: "TestRoot/Player" -> "Player")
+	var root_name = root.name
+	if normalized.begins_with(root_name + "/"):
+		normalized = normalized.substr(root_name.length() + 1)
+	elif normalized == root_name:
+		normalized = "."
+	
+	return normalized
 
 

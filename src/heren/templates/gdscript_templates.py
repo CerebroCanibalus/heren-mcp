@@ -9,6 +9,7 @@ Filosof�a: Poder. Eficiencia. Rapidez.
 """
 
 import json
+from typing import Any
 
 
 def _escape_gdscript_string(value: str) -> str:
@@ -849,6 +850,427 @@ func _init():
         }}))
     else:
         print('TEST_OUTPUT: {{"success": false, "error": "Error guardando escena: ' + str(save_result) + '"}}')
+    
+    quit()
+'''
+    
+    @classmethod
+    def _render_duplicate_node(cls, scene_path: str, node_path: str, **kwargs) -> str:
+        """Template para duplicar un nodo."""
+        scene_path_escaped = _escape_gdscript_string(scene_path)
+        node_path_escaped = _escape_gdscript_string(node_path)
+        
+        return f'''extends SceneTree
+
+func _init():
+    var scene_path = "{scene_path_escaped}"
+    var node_path_str = "{node_path_escaped}"
+    
+    var packed_scene = load(scene_path)
+    if packed_scene == null:
+        print('TEST_OUTPUT: {{"success": false, "error": "No se pudo cargar la escena"}}')
+        quit()
+        return
+    
+    var scene = packed_scene.instantiate()
+    var node = scene.get_node_or_null(node_path_str)
+    
+    if node == null:
+        scene.free()
+        print('TEST_OUTPUT: {{"success": false, "error": "Nodo no encontrado: ' + node_path_str + '"}}')
+        quit()
+        return
+    
+    # Duplicar nodo
+    var duplicate = node.duplicate()
+    duplicate.name = node.name + "_copy"
+    node.get_parent().add_child(duplicate)
+    duplicate.owner = scene
+    
+    # Guardar escena
+    packed_scene.pack(scene)
+    var save_result = ResourceSaver.save(packed_scene, scene_path)
+    var new_path = str(duplicate.get_path())
+    scene.free()
+    
+    if save_result == OK:
+        print('TEST_OUTPUT: ' + JSON.stringify({{
+            "success": true,
+            "original_path": node_path_str,
+            "new_path": new_path,
+            "new_name": duplicate.name
+        }}))
+    else:
+        print('TEST_OUTPUT: {{"success": false, "error": "Error guardando: " + str(save_result)}}')
+    
+    quit()
+'''
+    
+    @classmethod
+    def _render_rename_node(cls, scene_path: str, node_path: str, new_name: str, **kwargs) -> str:
+        """Template para renombrar un nodo."""
+        scene_path_escaped = _escape_gdscript_string(scene_path)
+        node_path_escaped = _escape_gdscript_string(node_path)
+        new_name_escaped = _escape_gdscript_string(new_name)
+        
+        return f'''extends SceneTree
+
+func _init():
+    var scene_path = "{scene_path_escaped}"
+    var node_path_str = "{node_path_escaped}"
+    var new_name = "{new_name_escaped}"
+    
+    var packed_scene = load(scene_path)
+    if packed_scene == null:
+        print('TEST_OUTPUT: {{"success": false, "error": "No se pudo cargar la escena"}}')
+        quit()
+        return
+    
+    var scene = packed_scene.instantiate()
+    var node = scene.get_node_or_null(node_path_str)
+    
+    if node == null:
+        scene.free()
+        print('TEST_OUTPUT: {{"success": false, "error": "Nodo no encontrado: ' + node_path_str + '"}}')
+        quit()
+        return
+    
+    var old_name = node.name
+    node.name = new_name
+    
+    # Guardar escena
+    packed_scene.pack(scene)
+    var save_result = ResourceSaver.save(packed_scene, scene_path)
+    scene.free()
+    
+    if save_result == OK:
+        print('TEST_OUTPUT: ' + JSON.stringify({{
+            "success": true,
+            "old_name": old_name,
+            "new_name": new_name,
+            "node_path": node_path_str
+        }}))
+    else:
+        print('TEST_OUTPUT: {{"success": false, "error": "Error guardando: " + str(save_result)}}')
+    
+    quit()
+'''
+    
+    @classmethod
+    def _render_move_node(cls, scene_path: str, node_path: str, new_parent: str, **kwargs) -> str:
+        """Template para mover un nodo a otro padre."""
+        scene_path_escaped = _escape_gdscript_string(scene_path)
+        node_path_escaped = _escape_gdscript_string(node_path)
+        new_parent_escaped = _escape_gdscript_string(new_parent)
+        
+        return f'''extends SceneTree
+
+func _init():
+    var scene_path = "{scene_path_escaped}"
+    var node_path_str = "{node_path_escaped}"
+    var new_parent_str = "{new_parent_escaped}"
+    
+    var packed_scene = load(scene_path)
+    if packed_scene == null:
+        print('TEST_OUTPUT: {{"success": false, "error": "No se pudo cargar la escena"}}')
+        quit()
+        return
+    
+    var scene = packed_scene.instantiate()
+    var node = scene.get_node_or_null(node_path_str)
+    var new_parent = scene.get_node_or_null(new_parent_str)
+    
+    if node == null:
+        scene.free()
+        print('TEST_OUTPUT: {{"success": false, "error": "Nodo no encontrado: ' + node_path_str + '"}}')
+        quit()
+        return
+    
+    if new_parent == null:
+        scene.free()
+        print('TEST_OUTPUT: {{"success": false, "error": "Nuevo padre no encontrado: ' + new_parent_str + '"}}')
+        quit()
+        return
+    
+    var old_parent = node.get_parent()
+    old_parent.remove_child(node)
+    new_parent.add_child(node)
+    node.owner = scene
+    
+    # Guardar escena
+    packed_scene.pack(scene)
+    var save_result = ResourceSaver.save(packed_scene, scene_path)
+    scene.free()
+    
+    if save_result == OK:
+        print('TEST_OUTPUT: ' + JSON.stringify({{
+            "success": true,
+            "node_path": node_path_str,
+            "old_parent": old_parent.name,
+            "new_parent": new_parent_str
+        }}))
+    else:
+        print('TEST_OUTPUT: {{"success": false, "error": "Error guardando: " + str(save_result)}}')
+    
+    quit()
+'''
+    
+    @classmethod
+    def _render_array_append(cls, scene_path: str, node_path: str, property_name: str,
+                             value_json: Any = None, **kwargs) -> str:
+        """Template para añadir elemento a un array."""
+        scene_path_escaped = _escape_gdscript_string(scene_path)
+        node_path_escaped = _escape_gdscript_string(node_path)
+        prop_escaped = _escape_gdscript_string(property_name)
+        
+        # Parsear el valor JSON
+        value_parsed = json.loads(value_json) if value_json else None
+        value_str = json.dumps(value_parsed, ensure_ascii=False)
+        
+        return f'''extends SceneTree
+
+func dict_to_var(val):
+    if val is Dictionary:
+        if val.has("x") and val.has("y") and val.has("z"):
+            return Vector3(val.get("x", 0), val.get("y", 0), val.get("z", 0))
+        elif val.has("x") and val.has("y"):
+            return Vector2(val.get("x", 0), val.get("y", 0))
+        elif val.has("r") and val.has("g") and val.has("b"):
+            return Color(val.get("r", 0), val.get("g", 0), val.get("b", 0), val.get("a", 1))
+        elif val.has("type") or val.has("resource_type"):
+            var res_type = val.get("type", val.get("resource_type", ""))
+            if res_type != "" and ClassDB.class_exists(res_type):
+                var res = ClassDB.instantiate(res_type)
+                if res is Resource:
+                    for key in val.keys():
+                        if key in ["type", "resource_type", "__type"]:
+                            continue
+                        if res.get_property_list().any(func(p): return p.name == key):
+                            res.set(key, dict_to_var(val[key]))
+                    return res
+            return null
+        elif val.has("__type"):
+            match val["__type"]:
+                "Vector2": return Vector2(val.get("x", 0), val.get("y", 0))
+                "Vector3": return Vector3(val.get("x", 0), val.get("y", 0), val.get("z", 0))
+                "Color": return Color(val.get("r", 0), val.get("g", 0), val.get("b", 0), val.get("a", 1))
+                "Resource":
+                    var res_type = val.get("resource_type", "")
+                    if res_type != "" and ClassDB.class_exists(res_type):
+                        var res = ClassDB.instantiate(res_type)
+                        if res is Resource:
+                            for key in val.keys():
+                                if key in ["resource_type", "__type"]:
+                                    continue
+                                if res.get_property_list().any(func(p): return p.name == key):
+                                    res.set(key, dict_to_var(val[key]))
+                            return res
+                    return null
+                _: return val
+        else:
+            var dict = {{}}
+            for key in val.keys():
+                dict[key] = dict_to_var(val[key])
+            return dict
+    elif val is Array:
+        var arr = []
+        for item in val:
+            arr.append(dict_to_var(item))
+        return arr
+    else:
+        return val
+
+func _init():
+    var scene_path = "{scene_path_escaped}"
+    var node_path_str = "{node_path_escaped}"
+    var property_name = "{prop_escaped}"
+    var value = dict_to_var(JSON.parse_string('{value_str}'))
+    
+    var packed_scene = load(scene_path)
+    if packed_scene == null:
+        print('TEST_OUTPUT: {{"success": false, "error": "No se pudo cargar la escena"}}')
+        quit()
+        return
+    
+    var scene = packed_scene.instantiate()
+    var node = scene.get_node_or_null(node_path_str)
+    
+    if node == null:
+        scene.free()
+        print('TEST_OUTPUT: {{"success": false, "error": "Nodo no encontrado: ' + node_path_str + '"}}')
+        quit()
+        return
+    
+    if not property_name in node:
+        scene.free()
+        print('TEST_OUTPUT: {{"success": false, "error": "Propiedad no encontrada: ' + property_name + '"}}')
+        quit()
+        return
+    
+    var arr = node.get(property_name)
+    var arr_type_id = typeof(arr)
+    var is_arr_type = arr is Array or (arr_type_id >= TYPE_PACKED_BYTE_ARRAY and arr_type_id <= TYPE_PACKED_COLOR_ARRAY)
+    if not is_arr_type:
+        scene.free()
+        print('TEST_OUTPUT: {{"success": false, "error": "La propiedad no es un array"}}')
+        quit()
+        return
+    
+    arr.append(value)
+    node.set(property_name, arr)
+    
+    # Guardar escena
+    packed_scene.pack(scene)
+    var save_result = ResourceSaver.save(packed_scene, scene_path)
+    scene.free()
+    
+    if save_result == OK:
+        print('TEST_OUTPUT: ' + JSON.stringify({{
+            "success": true,
+            "property_name": property_name,
+            "array_size": arr.size()
+        }}))
+    else:
+        print('TEST_OUTPUT: {{"success": false, "error": "Error guardando: " + str(save_result)}}')
+    
+    quit()
+'''
+    
+    @classmethod
+    def _render_array_remove(cls, scene_path: str, node_path: str, property_name: str,
+                             index: int = -1, value_json: Any = None, **kwargs) -> str:
+        """Template para remover elemento de un array."""
+        scene_path_escaped = _escape_gdscript_string(scene_path)
+        node_path_escaped = _escape_gdscript_string(node_path)
+        prop_escaped = _escape_gdscript_string(property_name)
+        
+        # Parsear el valor JSON
+        value_parsed = json.loads(value_json) if value_json and value_json != "null" else None
+        
+        return f'''extends SceneTree
+
+func dict_to_var(val):
+    if val is Dictionary:
+        if val.has("x") and val.has("y") and val.has("z"):
+            return Vector3(val.get("x", 0), val.get("y", 0), val.get("z", 0))
+        elif val.has("x") and val.has("y"):
+            return Vector2(val.get("x", 0), val.get("y", 0))
+        elif val.has("r") and val.has("g") and val.has("b"):
+            return Color(val.get("r", 0), val.get("g", 0), val.get("b", 0), val.get("a", 1))
+        elif val.has("type") or val.has("resource_type"):
+            var res_type = val.get("type", val.get("resource_type", ""))
+            if res_type != "" and ClassDB.class_exists(res_type):
+                var res = ClassDB.instantiate(res_type)
+                if res is Resource:
+                    for key in val.keys():
+                        if key in ["type", "resource_type", "__type"]:
+                            continue
+                        if res.get_property_list().any(func(p): return p.name == key):
+                            res.set(key, dict_to_var(val[key]))
+                    return res
+            return null
+        elif val.has("__type"):
+            match val["__type"]:
+                "Vector2": return Vector2(val.get("x", 0), val.get("y", 0))
+                "Vector3": return Vector3(val.get("x", 0), val.get("y", 0), val.get("z", 0))
+                "Color": return Color(val.get("r", 0), val.get("g", 0), val.get("b", 0), val.get("a", 1))
+                "Resource":
+                    var res_type = val.get("resource_type", "")
+                    if res_type != "" and ClassDB.class_exists(res_type):
+                        var res = ClassDB.instantiate(res_type)
+                        if res is Resource:
+                            for key in val.keys():
+                                if key in ["resource_type", "__type"]:
+                                    continue
+                                if res.get_property_list().any(func(p): return p.name == key):
+                                    res.set(key, dict_to_var(val[key]))
+                            return res
+                    return null
+                _: return val
+        else:
+            var dict = {{}}
+            for key in val.keys():
+                dict[key] = dict_to_var(val[key])
+            return dict
+    elif val is Array:
+        var arr = []
+        for item in val:
+            arr.append(dict_to_var(item))
+        return arr
+    else:
+        return val
+
+func _init():
+    var scene_path = "{scene_path_escaped}"
+    var node_path_str = "{node_path_escaped}"
+    var property_name = "{prop_escaped}"
+    var remove_index = {index}
+    var remove_value = {"dict_to_var(JSON.parse_string('" + json.dumps(value_parsed, ensure_ascii=False) + "'))" if value_parsed is not None else "null"}
+    
+    var packed_scene = load(scene_path)
+    if packed_scene == null:
+        print('TEST_OUTPUT: {{"success": false, "error": "No se pudo cargar la escena"}}')
+        quit()
+        return
+    
+    var scene = packed_scene.instantiate()
+    var node = scene.get_node_or_null(node_path_str)
+    
+    if node == null:
+        scene.free()
+        print('TEST_OUTPUT: {{"success": false, "error": "Nodo no encontrado: ' + node_path_str + '"}}')
+        quit()
+        return
+    
+    if not property_name in node:
+        scene.free()
+        print('TEST_OUTPUT: {{"success": false, "error": "Propiedad no encontrada: ' + property_name + '"}}')
+        quit()
+        return
+    
+    var arr = node.get(property_name)
+    var arr_type_id = typeof(arr)
+    var is_arr_type = arr is Array or (arr_type_id >= TYPE_PACKED_BYTE_ARRAY and arr_type_id <= TYPE_PACKED_COLOR_ARRAY)
+    if not is_arr_type:
+        scene.free()
+        print('TEST_OUTPUT: {{"success": false, "error": "La propiedad no es un array"}}')
+        quit()
+        return
+    
+    var removed = null
+    if remove_index >= 0 and remove_index < arr.size():
+        removed = arr[remove_index]
+        arr.remove_at(remove_index)
+    elif remove_value != null:
+        var idx = arr.find(remove_value)
+        if idx >= 0:
+            removed = arr[idx]
+            arr.remove_at(idx)
+        else:
+            scene.free()
+            print('TEST_OUTPUT: {{"success": false, "error": "Valor no encontrado en el array"}}')
+            quit()
+    else:
+        scene.free()
+        print('TEST_OUTPUT: {{"success": false, "error": "Especifica index o value para remover"}}')
+        quit()
+    
+    node.set(property_name, arr)
+    
+    # Guardar escena
+    packed_scene.pack(scene)
+    var save_result = ResourceSaver.save(packed_scene, scene_path)
+    scene.free()
+    
+    if save_result == OK:
+        print('TEST_OUTPUT: ' + JSON.stringify({{
+            "success": true,
+            "property_name": property_name,
+            "removed_value": str(removed),
+            "array_size": arr.size()
+        }}))
+    else:
+        print('TEST_OUTPUT: {{"success": false, "error": "Error guardando: " + str(save_result)}}')
     
     quit()
 '''

@@ -19,9 +19,15 @@ from heren.core.session_manager import get_session_manager
 logger = logging.getLogger(__name__)
 
 
-def project(action: str, **kwargs) -> dict:
+def project(action: str, session_id: str = None, **kwargs) -> dict:
     """Tool centralizada para configuración del proyecto."""
     session_manager = get_session_manager()
+    
+    # Obtener sesión explícita o activa
+    if session_id:
+        session = session_manager.get_session(session_id)
+    else:
+        session = session_manager.get_active_session()
     
     actions_map = {
         "create": _action_create,
@@ -39,7 +45,7 @@ def project(action: str, **kwargs) -> dict:
         }
     
     try:
-        return actions_map[action](session_manager, **kwargs)
+        return actions_map[action](session_manager, session, **kwargs)
     except Exception as e:
         logger.error(f"Error en project({action}): {e}")
         return {"success": False, "error": str(e)}
@@ -235,11 +241,10 @@ def _action_create(session_manager, project_path: str, project_name: str,
     return result
 
 
-def _action_setting(session_manager, setting_name: str = None, value = None, **kwargs) -> dict:
+def _action_setting(session_manager, session, setting_name: str = None, value = None, **kwargs) -> dict:
     """Leer o escribir un project setting."""
-    session = session_manager.get_active_session()
     if not session:
-        return {"success": False, "error": "No hay sesión activa"}
+        return {"success": False, "error": "No hay sesión activa. Proporcione session_id."}
     
     daemon = session_manager.get_godot_daemon(session.id)
     if not daemon:
@@ -256,10 +261,9 @@ def _action_setting(session_manager, setting_name: str = None, value = None, **k
         return daemon.call("get_project_setting", {"setting_name": setting_name})
 
 
-def _action_autoload(session_manager, autoload_name: str, script_path: str, **kwargs) -> dict:
-    session = session_manager.get_active_session()
+def _action_autoload(session_manager, session, autoload_name: str, script_path: str, **kwargs) -> dict:
     if not session:
-        return {"success": False, "error": "No hay sesión activa"}
+        return {"success": False, "error": "No hay sesión activa. Proporcione session_id."}
     
     daemon = session_manager.get_godot_daemon(session.id)
     if daemon:
@@ -270,10 +274,9 @@ def _action_autoload(session_manager, autoload_name: str, script_path: str, **kw
     return {"success": False, "error": "Daemon no disponible"}
 
 
-def _action_remove_autoload(session_manager, autoload_name: str, **kwargs) -> dict:
-    session = session_manager.get_active_session()
+def _action_remove_autoload(session_manager, session, autoload_name: str, **kwargs) -> dict:
     if not session:
-        return {"success": False, "error": "No hay sesión activa"}
+        return {"success": False, "error": "No hay sesión activa. Proporcione session_id."}
     
     daemon = session_manager.get_godot_daemon(session.id)
     if daemon:
@@ -281,10 +284,9 @@ def _action_remove_autoload(session_manager, autoload_name: str, **kwargs) -> di
     return {"success": False, "error": "Daemon no disponible"}
 
 
-def _action_shader_global(session_manager, global_name: str, value, **kwargs) -> dict:
-    session = session_manager.get_active_session()
+def _action_shader_global(session_manager, session, global_name: str, value, **kwargs) -> dict:
     if not session:
-        return {"success": False, "error": "No hay sesión activa"}
+        return {"success": False, "error": "No hay sesión activa. Proporcione session_id."}
     
     daemon = session_manager.get_godot_daemon(session.id)
     if daemon:

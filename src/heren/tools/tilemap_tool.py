@@ -15,9 +15,18 @@ from heren.core.session_manager import get_session_manager
 logger = logging.getLogger(__name__)
 
 
-def tilemap(action: str, **kwargs) -> dict:
+def tilemap(action: str, session_id: str = None, **kwargs) -> dict:
     """Tool centralizada para TileMaps."""
     session_manager = get_session_manager()
+    
+    # Obtener sesión explícita o activa
+    if session_id:
+        session = session_manager.get_session(session_id)
+    else:
+        session = session_manager.get_active_session()
+    
+    if not session:
+        return {"success": False, "error": "No hay sesión activa. Proporcione session_id."}
     
     actions_map = {
         "inspect_set": _action_inspect_set,
@@ -34,28 +43,20 @@ def tilemap(action: str, **kwargs) -> dict:
         }
     
     try:
-        return actions_map[action](session_manager, **kwargs)
+        return actions_map[action](session_manager, session, **kwargs)
     except Exception as e:
         logger.error(f"Error en tilemap({action}): {e}")
         return {"success": False, "error": str(e)}
 
 
-def _action_inspect_set(session_manager, tileset_path: str, **kwargs) -> dict:
-    session = session_manager.get_active_session()
-    if not session:
-        return {"success": False, "error": "No hay sesión activa"}
-    
+def _action_inspect_set(session_manager, session, tileset_path: str, **kwargs) -> dict:
     daemon = session_manager.get_godot_daemon(session.id)
     if daemon:
         return daemon.call("inspect_tileset", {"tileset_path": tileset_path})
     return {"success": False, "error": "Daemon no disponible"}
 
 
-def _action_inspect_map(session_manager, scene_path: str, tilemap_path: str, **kwargs) -> dict:
-    session = session_manager.get_active_session()
-    if not session:
-        return {"success": False, "error": "No hay sesión activa"}
-    
+def _action_inspect_map(session_manager, session, scene_path: str, tilemap_path: str, **kwargs) -> dict:
     daemon = session_manager.get_godot_daemon(session.id)
     if daemon:
         return daemon.call("inspect_tilemap", {
@@ -65,11 +66,7 @@ def _action_inspect_map(session_manager, scene_path: str, tilemap_path: str, **k
     return {"success": False, "error": "Daemon no disponible"}
 
 
-def _action_set_cell(session_manager, scene_path: str, tilemap_path: str, layer: int = 0, coords: dict = None, atlas_coords: dict = None, source_id: int = 0, alternative_tile: int = 0, **kwargs) -> dict:
-    session = session_manager.get_active_session()
-    if not session:
-        return {"success": False, "error": "No hay sesión activa"}
-    
+def _action_set_cell(session_manager, session, scene_path: str, tilemap_path: str, layer: int = 0, coords: dict = None, atlas_coords: dict = None, source_id: int = 0, alternative_tile: int = 0, **kwargs) -> dict:
     daemon = session_manager.get_godot_daemon(session.id)
     if daemon:
         return daemon.call("set_tilemap_cell", {
@@ -84,11 +81,7 @@ def _action_set_cell(session_manager, scene_path: str, tilemap_path: str, layer:
     return {"success": False, "error": "Daemon no disponible"}
 
 
-def _action_terrain(session_manager, scene_path: str, tilemap_path: str, layer: int = 0, cells: list = None, terrain_set: int = 0, terrain: int = 0, **kwargs) -> dict:
-    session = session_manager.get_active_session()
-    if not session:
-        return {"success": False, "error": "No hay sesión activa"}
-    
+def _action_terrain(session_manager, session, scene_path: str, tilemap_path: str, layer: int = 0, cells: list = None, terrain_set: int = 0, terrain: int = 0, **kwargs) -> dict:
     daemon = session_manager.get_godot_daemon(session.id)
     if daemon:
         return daemon.call("apply_terrain", {
@@ -102,11 +95,7 @@ def _action_terrain(session_manager, scene_path: str, tilemap_path: str, layer: 
     return {"success": False, "error": "Daemon no disponible"}
 
 
-def _action_pattern(session_manager, scene_path: str, tilemap_path: str, layer: int = 0, region: dict = None, pattern_name: str = "Pattern", **kwargs) -> dict:
-    session = session_manager.get_active_session()
-    if not session:
-        return {"success": False, "error": "No hay sesión activa"}
-    
+def _action_pattern(session_manager, session, scene_path: str, tilemap_path: str, layer: int = 0, region: dict = None, pattern_name: str = "Pattern", **kwargs) -> dict:
     daemon = session_manager.get_godot_daemon(session.id)
     if daemon:
         return daemon.call("create_tile_pattern", {
