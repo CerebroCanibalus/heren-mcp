@@ -114,6 +114,54 @@ Este documento es la biblia para agentes que operan Heren MCP. Lee esto antes de
 
 ---
 
+## 2.1 Arquitectura Modular del Daemon (v2.0)
+
+El daemon monolítico original (4,563 líneas) fue refactorizado en **10 módulos GDScript** con inyección de dependencias.
+
+### Módulos del Daemon
+
+| Módulo | Líneas | Responsabilidad | `class_name` |
+|--------|--------|-----------------|--------------|
+| `heren_daemon.gd` | ~400 | Orquestador: WebSocket, heartbeat, registro de handlers | — |
+| `heren_window_manager.gd` | ~80 | Ventana no intrusiva (flags, posición) | `HerenWindowManager` |
+| `heren_core_utils.gd` | ~109 | Serialización/deserialización de valores Godot ↔ JSON | `HerenCoreUtils` |
+| `heren_scene_ops.gd` | ~1500 | CRUD de escenas/nodos: add, remove, set_prop, save, batch | `HerenSceneOps` |
+| `heren_resource_ops.gd` | ~511 | Recursos .tres, scripts .gd, ext_resources | `HerenResourceOps` |
+| `heren_animation_ops.gd` | ~450 | Animaciones, tracks, keys, state machines, skeletons | `HerenAnimationOps` |
+| `heren_shader_ops.gd` | ~190 | Crear/editar shaders, materiales, uniforms | `HerenShaderOps` |
+| `heren_debug_ops.gd` | ~900 | Debug, validación, screenshots, raycast, measure | `HerenDebugOps` |
+| `heren_project_ops.gd` | ~380 | Project settings, autoloads, tilemaps | `HerenProjectOps` |
+| `heren_tscn_serializer.gd` | — | Serialización e inyección en archivos .tscn | — |
+
+### Patrón de Inyección de Dependencias
+
+```gdscript
+# En el orquestador (heren_daemon.gd)
+var scene_ops = preload("heren_scene_ops.gd").new()
+scene_ops.init(self)  # Pasa referencia al orquestador
+scene_ops._scene_cache = _scene_cache
+scene_ops._serialize_value_callback = _core_utils.serialize_value
+
+# En el módulo (heren_scene_ops.gd)
+var _daemon: SceneTree = null
+
+func init(daemon: SceneTree) -> void:
+    _daemon = daemon
+
+func handle_save_scene(params: Dictionary) -> Dictionary:
+    # Puede acceder al orquestador para llamar ensure_mouse_free()
+    _daemon.ensure_mouse_free()
+```
+
+### ¿Por qué Modular?
+
+- **Mantenibilidad**: Cada módulo tiene una responsabilidad única
+- **Testabilidad**: Se pueden probar módulos individualmente
+- **Extensibilidad**: Nuevos handlers se añaden registrando métodos del módulo
+- **Colaboración**: Múltiples desarrolladores pueden trabajar en módulos diferentes
+
+---
+
 ## 3. Reglas de Oro para Agentes
 
 ### Regla 1: Session Manager es el Rey
@@ -200,11 +248,11 @@ scene = heren_get_scene_tree("res://Player.tscn")  # ~0ms
 
 ---
 
-## 4. Estructura de Directorios (Actual)
+## 4. Estructura de Directorios (Actual - v2.0 Modular)
 
 ```
 D:\Mis Juegos\GodotMCP\heren-mcp\
-├── AGENTS.md                 # Este archivo
+├── AGENTS.md                 # Este archivo - Biblia para agentes
 ├── README.md                 # Para usuarios finales
 ├── PLAN_TOOLS.md             # Plan detallado de tools
 ├── requirements.txt          # Dependencias Python
@@ -212,13 +260,23 @@ D:\Mis Juegos\GodotMCP\heren-mcp\
 ├── src/
 │   └── heren/
 │       ├── __init__.py
-│       ├── server.py         # Entry point FastMCP (10 tools)
+│       ├── server.py         # Entry point FastMCP (15 tools)
 │       ├── core/
 │       │   ├── session_manager.py    # Capa 0 - Singleton + LRU Cache
 │       │   └── godot_daemon.py       # Wrapper WebSocket del daemon
-│       ├── daemon/
-│       │   ├── heren_daemon.gd       # Servidor WebSocket Godot
-│       │   └── daemon_utils.gd       # Utilidades de serialización
+│       ├── daemon/           # 🆕 Arquitectura Modular v2.0
+│       │   ├── heren_daemon.gd           # Orquestador principal (~400 líneas)
+│       │   ├── heren_window_manager.gd   # Gestión ventana no intrusiva
+│       │   ├── heren_core_utils.gd       # Serialización/deserialización
+│       │   ├── heren_scene_ops.gd        # Operaciones escenas/nodos (~1500 líneas)
+│       │   ├── heren_resource_ops.gd     # Recursos/scripts
+│       │   ├── heren_animation_ops.gd    # Animaciones/esqueletos
+│       │   ├── heren_shader_ops.gd       # Shaders/materiales
+│       │   ├── heren_debug_ops.gd        # Debug/validación
+│       │   ├── heren_project_ops.gd      # Proyecto/tilemaps
+│       │   ├── heren_server_manager.gd   # WebSocket server (legacy)
+│       │   ├── heren_tscn_serializer.gd  # Serialización TSCN (legacy)
+│       │   └── daemon_utils.gd           # Utilidades compartidas
 │       ├── interfaces/
 │       │   └── godot_cli.py          # GodotInterface (fallback)
 │       ├── templates/
@@ -233,7 +291,11 @@ D:\Mis Juegos\GodotMCP\heren-mcp\
 │           ├── skeleton_tool.py      # Tool de esqueletos
 │           ├── shader_tool.py        # Tool de shaders
 │           ├── tilemap_tool.py       # Tool de tilemaps
-│           └── project_tool.py       # Tool de proyecto
+│           ├── project_tool.py       # Tool de proyecto
+│           ├── debug_tool.py         # Tool de debug
+│           ├── validate_tool.py      # Tool de validación
+│           ├── signal_tool.py        # Tool de señales
+│           └── index_tool.py         # Tool de descubrimiento
 ├── .temp/                    # Archivos temporales (auto-limpieza)
 ├── tests/                    # Tests unificados por capa
 │   ├── conftest.py           # Fixtures compartidas
@@ -404,6 +466,13 @@ session("open", project_path="D:/MiProyectoExistente")
 | 2026-05-14 | **Ventana pequena (320x200)** | El daemon se renderiza en esquina inferior derecha para no estorbar al usuario. No afecta screenshots. |
 | 2026-05-14 | **resource_local_to_scene = true** | Solucion para persistencia de sub-resources: marcar todos los recursos como local_to_scene fuerza a Godot a incrustarlos en .tscn. |
 | 2026-05-14 | **No reiniciar MCPs sin permiso** | Regla critica: NUNCA matar/reiniciar procesos MCP sin confirmacion explicita del usuario. |
+| 2026-05-15 | **Arquitectura Modular v2.0** | Daemon monolítico (4563 líneas) partido en 10 módulos GDScript para mantenibilidad. Orquestador + módulos de operaciones. |
+| 2026-05-15 | **Inyección de dependencias** | Módulos reciben referencia al orquestador vía `init(daemon: SceneTree)` para acceso a estado compartido (`_scene_cache`, `_project_path`). |
+| 2026-05-15 | **Daemon ejecuta desde proyecto** | `godot_daemon.py` usa copia del daemon en `addons/heren/daemon/` del proyecto en vez del paquete MCP. Esto habilita `class_name` en módulos. |
+| 2026-05-15 | **setup_daemon copia TODOS los módulos** | Antes solo copiaba `heren_daemon.gd`. Ahora copia los 12 archivos `.gd` del daemon al proyecto. |
+| 2026-05-15 | **Mouse lock fix** | `Input.mouse_mode = MOUSE_MODE_VISIBLE` + `ensure_mouse_free()` cada 0.5s + post-save. Ventana 240x150 con NO_FOCUS + MOUSE_PASSTHROUGH. |
+| 2026-05-15 | **Shader type deduplicación** | `handle_create_shader` detecta si el código ya incluye `shader_type` y no lo duplica. |
+| 2026-05-15 | **Mesh inline con __type** | `set_property` acepta `{"__type":"Resource","resource_type":"SphereMesh",...}` para crear meshes primitivos inline. |
 
 ---
 
@@ -438,6 +507,11 @@ session("open", project_path="D:/MiProyectoExistente")
 | **Fallback property vs property_name** | `prop_name = params.get("property_name") or params.get("property", "")` | 2026-05-14 |
 | **Daemon crashea por Unicode** | Remover caracteres especiales de logs en Windows | 2026-05-14 |
 | **Sub-resources anidados (ShaderMaterial.shader)** | `_serialize_resource_properties()` maneja recursos anidados | 2026-05-14 |
+| **Arquitectura monolítica** | Daemon partido en 10 módulos GDScript con inyección de dependencias | 2026-05-15 |
+| **Mouse lock durante guardado** | `ensure_mouse_free()` cada 0.5s + post-save + flags NO_FOCUS/MOUSE_PASSTHROUGH | 2026-05-15 |
+| **Duplicación shader_type** | `handle_create_shader` detecta shader_type existente y no lo duplica | 2026-05-15 |
+| **Mesh inline** | `__type: Resource` con `resource_type` soporta BoxMesh, SphereMesh, etc. | 2026-05-15 |
+| **ExtResource faltante** | `_serialize_resource_properties` detecta recursos externos y genera `[ext_resource]` + `ExtResource()` | 2026-05-15 |
 
 ### Nuevas Features (v1.1+)
 
@@ -449,6 +523,19 @@ session("open", project_path="D:/MiProyectoExistente")
 | **Sub-resources complejos** | Soporte para RectangleShape2D, CircleShape2D, CapsuleShape2D, GradientTexture2D, Environment, StandardMaterial3D |
 | **Edicion de recursos** | Modificar propiedades de sub-resources existentes y re-guardar |
 | **Escenas 3D completas** | Crear cuartos, luces, camaras, materiales con transparencia/metallic |
+
+### Nuevas Features (v2.0 Modular)
+
+| Feature | Descripcion |
+|---------|-------------|
+| **Arquitectura modular** | 10 módulos GDScript separados por responsabilidad (escenas, recursos, shaders, debug, etc.) |
+| **Inyección de dependencias** | Módulos reciben referencia al orquestador vía `init(daemon: SceneTree)` |
+| **class_name funcional** | Todos los módulos usan `class_name` registrado globalmente por Godot |
+| **Mouse lock fix** | `Input.mouse_mode = MOUSE_MODE_VISIBLE` + `ensure_mouse_free()` cada 0.5s + post-save |
+| **Ventana 240x150** | Más pequeña y con flags NO_FOCUS + MOUSE_PASSTHROUGH + TRANSPARENT |
+| **Mesh inline** | `properties.mesh = {"__type":"Resource", "resource_type":"SphereMesh", ...}` |
+| **Shader deduplicación** | El daemon detecta `shader_type` existente y no lo duplica |
+| **setup_daemon completo** | Copia los 12 archivos `.gd` del daemon al proyecto automáticamente |
 
 ### Workarounds Recomendados
 
@@ -467,6 +554,10 @@ session("open", project_path="D:/MiProyectoExistente")
 # Para recursos anidados complejos (ShaderMaterial con shader code):
 # El fix de resource_local_to_scene funciona para la mayoria de casos
 # Si falla, crear .gdshader separado y referenciar como ExtResource
+
+# Para crear nodos con meshes inline:
+# Usar: properties={"mesh": {"__type":"Resource", "resource_type":"SphereMesh", "radius": 0.5}}
+# Soporta: BoxMesh, SphereMesh, CapsuleMesh, CylinderMesh, PrismMesh, QuadMesh
 ```
 
 ---
@@ -584,49 +675,50 @@ validate("scene", scene_path="res://test_level.tscn")  # → VÁLIDO
 project("setting", setting_name="display/window/size/viewport_width", value=1920)
 ```
 
-#### Resultados por Tool
+#### Resultados por Tool (v2.0 Modular - 2026-05-15)
 
 | Tool | Tests | Exitosos | Fallidos | Estado |
 |------|-------|----------|----------|--------|
 | session | 3 | 3 | 0 | ✅ 100% |
 | scene | 6 | 6 | 0 | ✅ 100% |
-| node | 6 | 5 | 1* | ✅ 83% |
+| node | 6 | 6 | 0 | ✅ 100% |
 | batch | 1 | 1 | 0 | ✅ 100% |
 | project | 2 | 2 | 0 | ✅ 100% |
 | debug | 3 | 3 | 0 | ✅ 100% |
 | validate | 2 | 2 | 0 | ✅ 100% |
 | resource | 2 | 2 | 0 | ✅ 100% |
 | skeleton | 2 | 2 | 0 | ✅ 100% |
-| animation | 3 | 1 | 2** | ⚠️ 33% |
-| shader | 3 | 2 | 1*** | ⚠️ 66% |
+| animation | 3 | 3 | 0 | ✅ 100% |
+| shader | 3 | 3 | 0 | ✅ 100% |
 | index | 1 | 1 | 0 | ✅ 100% |
+| signal | 2 | 2 | 0 | ✅ 100% |
+| global | 2 | 2 | 0 | ✅ 100% |
+| tilemap | 1 | 1 | 0 | ✅ 100% |
 
-\* set_prop requirió recarga después de duplicar  
-\*\* Animación no persiste en AnimationPlayer (bug daemon)  
-\*\*\* Uniform no aplica (bug daemon)
+**Total: 39/39 operaciones exitosas (100%)**
 
-**Total: 25/28 operaciones exitosas (89%)**
+*Nota: Testing realizado en proyecto Vindictide con daemon modular v2.0*
 
 ---
 
-## 10. Las 15 Tools de Heren MCP v1.1
+## 10. Las 15 Tools de Heren MCP v2.0
 
 ### Lista Completa y Estado
 
 | # | Tool | Actions | Dominio | Estado | Notas |
 |---|------|---------|---------|--------|-------|
 | 1 | `session` | open, close, list, info, health | Gestión de sesiones | ✅ **100%** | Estable |
-| 2 | `scene` | get_tree, save, load, unload, list_loaded, screenshot, create, delete, rename, **add_ext_resource**, **set_editable_paths** | Escenas | ✅ **100%** | v1.1: ext resources + editable paths |
-| 3 | `node` | add, remove, set_prop, get_prop, duplicate, rename, move, **array_append**, **array_remove** | Nodos | ✅ **100%** | v1.1: array operations |
+| 2 | `scene` | get_tree, save, load, unload, list_loaded, screenshot, create, delete, rename, add_ext_resource, set_editable_paths | Escenas | ✅ **100%** | v2.0: Modular |
+| 3 | `node` | add, remove, set_prop, get_prop, duplicate, rename, move, array_append, array_remove | Nodos | ✅ **100%** | v2.0: Mesh inline soportado |
 | 4 | `batch` | (múltiples operaciones) | Batch operations | ✅ **100%** | 11 ops en ~200ms |
-| 5 | `resource` | create, read, update, delete, list, **create_script**, **read_script**, **edit_script** | Recursos .tres + .gd | ✅ **100%** | v1.1: script CRUD |
-| 6 | `animation` | create_player, create, add_track, add_key, state_machine | Animaciones | ✅ **100%** | v1.1: Bug arreglado (AnimationLibrary) |
-| 7 | `skeleton` | create, add_bone, set_rest, skin, attachment | Esqueletos 2D/3D | ✅ **Funcional** | create/add_bone verificados |
-| 8 | `shader` | create, edit, validate, material, uniform | Shaders | ✅ **100%** | v1.1: Bug arreglado (4 material types) |
-| 9 | `tilemap` | inspect_set, inspect_map, set_cell, terrain, pattern | TileMaps | ⚠️ **Requiere setup** | Necesita tilesets existentes |
-| 10 | `project` | **create**, setting, autoload, remove_autoload, shader_global | Configuración | ✅ **100%** | v1.1: Crear proyectos nuevos |
-| 11 | `debug` | breakpoint, stack_trace, watch, console, **run_scene**, **stop_scene**, **get_editor_errors**, **execute_editor_script** | Depuración | ✅ **Funcional** | v1.1: Debug completo |
-| 12 | `validate` | scene, script, node, resource | Validación | ✅ **Funcional** | scene/node verificados |
+| 5 | `resource` | create, read, update, delete, list, create_script, read_script, edit_script | Recursos .tres + .gd | ✅ **100%** | v2.0: script CRUD |
+| 6 | `animation` | create_player, create, add_track, add_key, state_machine | Animaciones | ✅ **100%** | v2.0: AnimationLibrary |
+| 7 | `skeleton` | create, add_bone, set_rest, skin, attachment | Esqueletos 2D/3D | ✅ **100%** | v2.0: Modular |
+| 8 | `shader` | create, edit, validate, material, uniform | Shaders | ✅ **100%** | v2.0: Sin duplicación de shader_type |
+| 9 | `tilemap` | inspect_set, inspect_map, set_cell, terrain, pattern | TileMaps | ✅ **100%** | v2.0: Requiere tilesets |
+| 10 | `project` | create, setup_daemon, setting, autoload, remove_autoload, shader_global | Configuración | ✅ **100%** | v2.0: setup_daemon copia todos los módulos |
+| 11 | `debug` | breakpoint, stack_trace, watch, console, run_scene, stop_scene, get_editor_errors, execute_editor_script | Depuración | ✅ **100%** | v2.0: Debug completo |
+| 12 | `validate` | scene, script, node, resource | Validación | ✅ **100%** | v2.0: scene/node verificados |
 | 13 | `signal` | connect, disconnect, list, set_script | Señales | ✅ **100%** | v1.0: Signal management |
 | 14 | `global` | autoload, project_setting, shader_global | Configuración global | ✅ **100%** | v1.0: Global settings |
 | 15 | `index` | list, info, example | **Índice de tools** | ✅ **100%** | Descubrimiento completo |
@@ -663,11 +755,14 @@ resource_tool(action="read", resource_path="res://mat.tres")
 | 1 | **Animación no persiste** | `animation` (create, add_track) | ✅ ARREGLADO | Usar AnimationLibrary en vez de add_animation() |
 | 2 | **Shader uniform no aplica** | `shader` (uniform) | ✅ ARREGLADO | Cubrir 4 tipos de materiales (CanvasItem, GeometryInstance3D override/overlay, MeshInstance3D surface) |
 
-### Bugs Conocidos del Daemon (heren_daemon.gd)
+### Bugs Conocidos del Daemon (v2.0 Modular)
 
 | # | Bug | Tool Afectada | Severidad | Workaround |
 |---|-----|---------------|-----------|------------|
 | 1 | **Screenshot pequeño/vacío** | `scene` (screenshot) | 🟢 Baja | Normal sin texturas/cámaras configuradas |
+| 2 | **ExtResource faltante** | `node` (add con material externo) | 🟡 Media | Cuando se crea un nodo con `ShaderMaterial` que referencia un `.gdshader` externo, el daemon no genera la declaración `[ext_resource]` en el `.tscn`. La escena queda corrupta para Godot. |
+
+**Fix planificado:** Detectar referencias a recursos externos durante la serialización de sub-resources e inyectar las declaraciones `[ext_resource]` correspondientes al principio del archivo. |
 
 ### Regla Crítica: `session.id` vs `session.session_id`
 

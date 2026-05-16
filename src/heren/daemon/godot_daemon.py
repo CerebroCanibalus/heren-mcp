@@ -70,9 +70,17 @@ class GodotDaemon:
         self.process: Optional[subprocess.Popen] = None
         self.ws: Optional[websocket.WebSocket] = None
         self.port: int = 0
-        self.daemon_path = os.path.join(
-            os.path.dirname(__file__), "heren_daemon.gd"
-        )
+        
+        # Usar daemon del proyecto si existe (para class_name), sino fallback al paquete
+        project_daemon = os.path.join(self.project_path, "addons", "heren", "daemon", "heren_daemon.gd")
+        package_daemon = os.path.join(os.path.dirname(__file__), "heren_daemon.gd")
+        
+        if os.path.exists(project_daemon):
+            self.daemon_path = project_daemon
+            logger.info(f"[Daemon] Usando daemon del proyecto: {project_daemon}")
+        else:
+            self.daemon_path = package_daemon
+            logger.info(f"[Daemon] Usando daemon del paquete: {package_daemon}")
         
         self._is_connected = False
         self._request_counter = 0

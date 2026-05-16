@@ -45,18 +45,18 @@ def project(action: str, **kwargs) -> dict:
         return {"success": False, "error": str(e)}
 
 
-def _get_daemon_source_path() -> str:
-    """Encuentra la ruta al archivo heren_daemon.gd en el paquete."""
+def _get_daemon_source_dir() -> str:
+    """Encuentra la ruta al directorio del daemon en el paquete."""
     # Buscar relativo a este archivo
     package_dir = Path(__file__).parent.parent
-    daemon_path = package_dir / "daemon" / "heren_daemon.gd"
+    daemon_dir = package_dir / "daemon"
     
-    if daemon_path.exists():
-        return str(daemon_path)
+    if (daemon_dir / "heren_daemon.gd").exists():
+        return str(daemon_dir)
     
     # Fallback: buscar en src/heren/daemon/
-    src_daemon = package_dir.parent / "src" / "heren" / "daemon" / "heren_daemon.gd"
-    if src_daemon.exists():
+    src_daemon = package_dir.parent / "src" / "heren" / "daemon"
+    if (src_daemon / "heren_daemon.gd").exists():
         return str(src_daemon)
     
     return ""
@@ -66,8 +66,8 @@ def _action_setup_daemon(session_manager, project_path: str, **kwargs) -> dict:
     """
     Configura el daemon Heren en un proyecto Godot existente.
     
-    Copia el archivo heren_daemon.gd al proyecto y registra el autoload.
-    Esto permite que session('open') funcione correctamente.
+    Copia TODOS los archivos del daemon (heren_daemon.gd + módulos) al proyecto.
+    Esto permite que session('open') funcione correctamente con el daemon modular.
     """
     project_path = os.path.abspath(project_path)
     
@@ -79,12 +79,12 @@ def _action_setup_daemon(session_manager, project_path: str, **kwargs) -> dict:
     if not os.path.exists(project_file):
         return {"success": False, "error": f"No es un proyecto Godot válido: {project_path}"}
     
-    # Encontrar el archivo fuente del daemon
-    daemon_source = _get_daemon_source_path()
-    if not daemon_source:
+    # Encontrar el directorio fuente del daemon
+    daemon_source_dir = _get_daemon_source_dir()
+    if not daemon_source_dir:
         return {
             "success": False, 
-            "error": "No se encontró heren_daemon.gd en el paquete heren-mcp. "
+            "error": "No se encontró el directorio del daemon en el paquete heren-mcp. "
                      "Reinstala el paquete."
         }
     
@@ -92,24 +92,30 @@ def _action_setup_daemon(session_manager, project_path: str, **kwargs) -> dict:
     addon_dir = os.path.join(project_path, "addons", "heren", "daemon")
     os.makedirs(addon_dir, exist_ok=True)
     
-    # Copiar el archivo del daemon
-    daemon_dest = os.path.join(addon_dir, "heren_daemon.gd")
+    # Copiar TODOS los archivos .gd del daemon (principal + módulos)
+    copied_files = []
     try:
-        shutil.copy2(daemon_source, daemon_dest)
-        logger.info(f"[SetupDaemon] Copiado: {daemon_source} -> {daemon_dest}")
+        for filename in os.listdir(daemon_source_dir):
+            if filename.endswith(".gd"):
+                source_path = os.path.join(daemon_source_dir, filename)
+                dest_path = os.path.join(addon_dir, filename)
+                shutil.copy2(source_path, dest_path)
+                copied_files.append(filename)
+                logger.info(f"[SetupDaemon] Copiado: {filename}")
     except Exception as e:
-        return {"success": False, "error": f"Error copiando daemon: {e}"}
+        return {"success": False, "error": f"Error copiando archivos del daemon: {e}"}
     
     # NOTA: NO registramos autoload porque heren_daemon.gd extiende SceneTree
     # y causaría conflicto al ejecutar el proyecto. El daemon se ejecuta via
-    # --script con ruta absoluta desde el paquete MCP.
+    # --script desde el directorio del proyecto.
     
     return {
         "success": True,
         "project_path": project_path,
-        "daemon_path": daemon_dest,
+        "daemon_path": os.path.join(addon_dir, "heren_daemon.gd"),
+        "copied_files": copied_files,
         "message": (
-            "Daemon copiado al proyecto. "
+            f"Daemon y {len(copied_files)-1} módulos copiados al proyecto. "
             "Ahora puedes abrir una sesión con session('open', project_path='...')"
         )
     }

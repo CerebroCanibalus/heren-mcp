@@ -459,7 +459,7 @@ def _action_execute_script_subprocess(
         try:
             if os.path.exists(script_file):
                 os.remove(script_file)
-        except:
+        except OSError:
             pass
 
 
