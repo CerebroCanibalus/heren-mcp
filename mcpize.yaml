@@ -1,0 +1,27 @@
+# MCPize Configuration
+# Docs: https://mcpize.com/docs/mcpize-yaml
+
+version: 1
+
+name: "Heren Godot"
+slug: "heren-godot"
+
+runtime: python
+entry: "src/heren/server.py"
+
+build:
+  install: "pip install -r requirements.txt"
+
+start:
+  type: stdio
+  command: "python"
+  args:
+    - "-m"
+    - "heren.server"
+
+bridge:
+  mode: stdio
+
+credentials:
+  - name: "GODOT_EXE"
+    description: "Path to the Godot Engine executable"
