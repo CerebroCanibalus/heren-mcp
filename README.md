@@ -15,13 +15,13 @@
 
 ---
 
-# ⚡ Heren Godot MCP v1.1
+# ⚡ Heren Godot MCP v1.2
 
 🔥 **Heren Godot MCP** — *Plus Ultra*: ir más allá. 🌍
 
 Servidor MCP de alto rendimiento para **Godot Engine 4.x** que permite a IAs y asistentes controlar proyectos directamente: crear escenas, manipular nodos, gestionar recursos, conectar señales y validar código, **todo mediante un daemon persistente que opera en milisegundos**.
 
-**📢 v1.1**: Debug funcional, Array operations, Editable paths, Project creation, **persistencia completa de sub-resources**, auto-shutdown, retry automatico
+**📢 v1.2**: Arquitectura modular del daemon, persistencia completa de sub-resources, serializacion limpia de escenas, soporte local real, Docker, HTTP/SSE.
 
 ---
 
@@ -29,7 +29,7 @@ Servidor MCP de alto rendimiento para **Godot Engine 4.x** que permite a IAs y a
 
 | Caracteristica | Descripcion |
 |---|---|
-| ⚡ **Daemon WebSocket persistente** | Godot headless mantiene conexion viva via WebSocket — operaciones en ~20ms |
+| ⚡ **Daemon WebSocket persistente** | Godot daemon mantiene conexion viva via WebSocket — operaciones en ~20ms |
 | 🛠️ **15 herramientas centralizadas** | Escenas, nodos, recursos, scripts, senales, animaciones, shaders, validacion y debug |
 | 💾 **Persistencia completa** | Sub-resources (shapes, materials, environments), senales y propiedades se guardan en .tscn |
 | ⚡ **Batch operations** | Ejecuta multiples operaciones en una sola llamada WebSocket |
@@ -40,7 +40,7 @@ Servidor MCP de alto rendimiento para **Godot Engine 4.x** que permite a IAs y a
 | 🌍 **I18n nativo** | Sistema de localizacion espanol/ingles integrado |
 | ⏱️ **Auto-shutdown** | Daemon se apaga tras 3 minutos de inactividad (evita procesos colgados) |
 | 🔄 **Retry automatico** | Reintenta iniciar daemon hasta 3 veces si falla |
-| 🖥️ **Ventana discreta** | Daemon renderiza a 320x200 en esquina inferior derecha |
+| 🖥️ **Ventana discreta** | Daemon renderiza a 240x150 en esquina inferior derecha (no estorba) |
 
 ---
 
@@ -54,26 +54,26 @@ Servidor MCP de alto rendimiento para **Godot Engine 4.x** que permite a IAs y a
 
 | Capacidad | Coding-Solo<br>(3.6k⭐) | GoPeak<br>(179⭐) | **Heren** |
 |---|---|---|---|
-| **Crear escenas y nodos** | ❌ Lento | ⚡ Rapido* | **? Instantaneo** |
-| **Editar propiedades** | ❌ Lento | ⚡ Rapido* | **? Instantaneo** |
-| **Persistir sub-resources** | ❌ | ⚡ | **? Completo**
-| **Conectar senales** | ❌ | ❌ Requiere plugin **? Sin plugin** |
-| **Batch operations** | ❌ | ⚡ | **? 10x mas rapido**
-| **Debug breakpoints** | ❌ | ❌ Requiere DAP **? Integrado** |
-| **Screenshots GPU** | ❌ | ❌ Requiere addon **? Nativo** |
-| **Validacion de escenas** | ❌ | ⚡ | **? Automatico**
-| **Gestion de recursos** | ⚠️ Basico | ⚡ Avanzado | **? Completo** |
-| **Shaders y materiales** | ❌ | ⚡ | **? Nativo**
-| **TileMap/Terrain** | ❌ | ❌ Requiere plugin **? Sin plugin** |
-| **Skeleton/Rigging 2D-3D** | ❌ | ⚡ | **? Unico**
-| **State machines de animacion** | ❌ | ⚡ | **? Unico**
-| **Fallback si daemon cae** | ❌ | ⚡ | **? Automatico**
-| **Retry automatico** | ❌ | ⚡ | **? 3 intentos**
-| **Auto-shutdown** | ❌ | ⚡ | **? 3 minutos**
-| **Requiere plugin Godot** | ❌ | ❌ Si | **? No** |
-| **Requiere Node.js** | 📦 npm | 📦 npm | **? Solo Python** |
+| **Crear escenas y nodos** | ❌ Lento | ⚡ Rapido* | **⚡ Instantaneo** |
+| **Editar propiedades** | ❌ Lento | ⚡ Rapido* | **⚡ Instantaneo** |
+| **Persistir sub-resources** | ❌ | ⚡ | **✅ Completo**
+| **Conectar senales** | ❌ | ❌ Requiere plugin **✅ Sin plugin** |
+| **Batch operations** | ❌ | ⚡ | **⚡ 10x mas rapido**
+| **Debug breakpoints** | ❌ | ❌ Requiere DAP **✅ Integrado** |
+| **Screenshots GPU** | ❌ | ❌ Requiere addon **✅ Nativo** |
+| **Validacion de escenas** | ❌ | ⚡ | **✅ Automatico**
+| **Gestion de recursos** | ⚠️ Basico | ⚡ Avanzado | **✅ Completo** |
+| **Shaders y materiales** | ❌ | ⚡ | **✅ Nativo**
+| **TileMap/Terrain** | ❌ | ❌ Requiere plugin **✅ Sin plugin** |
+| **Skeleton/Rigging 2D-3D** | ❌ | ⚡ | **✅ Unico**
+| **State machines de animacion** | ❌ | ⚡ | **✅ Unico**
+| **Fallback si daemon cae** | ❌ | ⚡ | **✅ Automatico**
+| **Retry automatico** | ❌ | ⚡ | **✅ 3 intentos**
+| **Auto-shutdown** | ❌ | ⚡ | **✅ 3 minutos**
+| **Requiere plugin Godot** | ❌ | ❌ Si | **✅ No** |
+| **Requiere Node.js** | 📦 npm | 📦 npm | **❌ Solo Python** |
 | **Setup inicial** | npm install | 60s+ plugin + npm | **🔹 pip install** |
-| **Docs en espanol** | ❌ | ⚡ | **? Nativo**
+| **Docs en espanol** | ❌ | ⚡ | **✅ Nativo**
 
 \* Velocidad con plugin instalado y Godot corriendo
 
@@ -108,10 +108,10 @@ Servidor MCP de alto rendimiento para **Godot Engine 4.x** que permite a IAs y a
 ```python
 session("open", project_path="D:/MiJuego")
 ```
-✨ Heren arranca Godot en modo headless (sin ventana) con un script especial. Esto toma ~3 segundos **una sola vez**.
+✨ Heren arranca Godot con el daemon especial. Esto toma ~3 segundos **una sola vez**.
 
 **2. El daemon se mantiene vivo**
-✨ Godot queda escuchando en un puerto WebSocket. No se cierra. No consume interfaz gráfica. Solo ~75MB de RAM.
+✨ Godot queda escuchando en un puerto WebSocket. No se cierra. Renderiza en una ventana pequeña de 240x150 para mantener el contexto grafico activo. Solo ~75MB de RAM.
 
 **3. Ejecutas tools**
 ```python
@@ -125,7 +125,7 @@ session("close", session_id="abc")
 ```
 ✨ El daemon se cierra limpiamente. O puedes dejarlo abierto todo el día.
 
-**El secreto**: Godot nunca se cierra entre operaciones. Es como tener el editor abierto permanentemente, pero sin interfaz gráfica y consumiendo solo ~75MB de RAM.
+**El secreto**: Godot nunca se cierra entre operaciones. Es como tener el editor abierto permanentemente, pero con una ventana minima de 240x150 y consumiendo solo ~75MB de RAM.
 
 ### 📊 Ventajas del sistema de sesiones
 
@@ -147,8 +147,8 @@ session("close", session_id="abc")
 | **Overhead por operación** | ~367ms | ~60-80ms* | **~20ms** |
 | **Setup** | `npm install` | Plugin + npm + Node.js | **`pip install`** |
 | **Dependencias** | Node.js + Godot | Node.js + Godot + Plugin | **Solo Python + Godot** |
-| **Proyecto limpio** | ❌ | ⚡ (necesita addon) **?** |
-| **Fallback** | ❌ | ⚡ | **? Automático**
+| **Proyecto limpio** | ❌ | ⚡ (necesita addon) | **✅ Sin plugin** |
+| **Fallback** | ❌ | ⚡ | **✅ Automático** |
 
 ---
 
@@ -166,6 +166,12 @@ pip install -e .
 
 ```bash
 python install.py
+```
+
+O con un proyecto específico:
+
+```bash
+python install.py --project-path D:/MiJuego
 ```
 
 ### Requisitos
@@ -187,7 +193,8 @@ Añade esto a tu configuración de MCP (Cursor, Claude Desktop, OpenCode, etc.):
       "command": "python",
       "args": ["-m", "heren.server"],
       "env": {
-        "GODOT_EXE": "D:/Mis Juegos/Godot/Godot_v4.6.1-stable_win64.exe"
+        "GODOT_EXE": "D:/Mis Juegos/Godot/Godot_v4.6.1-stable_win64.exe",
+        "HEREN_PROJECT_PATH": "D:/MiJuego"
       }
     }
   }
@@ -199,6 +206,8 @@ Añade esto a tu configuración de MCP (Cursor, Claude Desktop, OpenCode, etc.):
 | Variable | Descripción | Ejemplo |
 |----------|-------------|---------|
 | `GODOT_EXE` | Ruta al ejecutable de Godot | `D:/Godot/Godot_v4.6.1.exe` |
+| `GODOT_PATH` | Alias de `GODOT_EXE` | `D:/Godot/Godot_v4.6.1.exe` |
+| `HEREN_PROJECT_PATH` | Ruta por defecto del proyecto Godot | `D:/MiJuego` |
 | `HEREN_PORT` | Puerto del daemon WebSocket | `4567` |
 | `HEREN_LOG_LEVEL` | Nivel de logging | `INFO`, `DEBUG` |
 
@@ -207,15 +216,15 @@ Añade esto a tu configuración de MCP (Cursor, Claude Desktop, OpenCode, etc.):
 ## 🚀 Uso Rápido
 
 ```python
-# Iniciar sesión
-session_tool(action="open", project_path="D:/MiJuego")
-# ? {"success": true, "session_id": "abc123", "daemon_active": true}
+# Iniciar sesion
+session(action="open", project_path="D:/MiJuego")
+# → {"success": true, "session_id": "abc123", "daemon_active": true}
 
 # Crear escena
-scene_tool(action="create", session_id="abc123", scene_path="res://Player.tscn")
+scene(action="create", session_id="abc123", scene_path="res://Player.tscn")
 
-# Añadir nodo
-node_tool(
+# Anadir nodo
+node(
     action="add",
     session_id="abc123",
     scene_path="res://Player.tscn",
@@ -225,14 +234,14 @@ node_tool(
 )
 
 # Guardar escena
-scene_tool(action="save", session_id="abc123", scene_path="res://Player.tscn")
+scene(action="save", session_id="abc123", scene_path="res://Player.tscn")
 ```
 
 ### 🔹 Batch Operations
 
 ```python
-# Múltiples operaciones en una sola llamada
-batch_tool(session_id="abc123", operations=[
+# Multiples operaciones en una sola llamada
+batch(session_id="abc123", operations=[
     {"action": "add", "params": {
         "scene_path": "res://Player.tscn",
         "parent_path": ".",
@@ -303,13 +312,13 @@ batch_tool(session_id="abc123", operations=[
 ### 👤 Ejemplo: crear un personaje completo
 
 ```python
-# 1. Abrir sesión
+# 1. Abrir sesion
 session("open", project_path="D:/MiJuego")
 
 # 2. Crear escena
-scene("load", session_id="abc", scene_path="res://Player.tscn")
+scene("create", session_id="abc", scene_path="res://Player.tscn")
 
-# 3. Añadir nodo raíz con batch (más rápido)
+# 3. Anadir nodo raiz con batch (mas rapido)
 batch(session_id="abc", operations=[
     {"action": "add", "params": {
         "scene_path": "res://Player.tscn",
@@ -335,7 +344,7 @@ batch(session_id="abc", operations=[
     }}
 ])
 
-# 4. Conectar señal
+# 4. Conectar senal
 signal("connect", session_id="abc", scene_path="res://Player.tscn",
        from_node="Player/Hitbox", signal_name="body_entered",
        to_node="Player", method="_on_hitbox_body_entered")
@@ -366,9 +375,9 @@ Heren MCP no es un simple "lanzador de scripts". Es un **ecosistema vivo** que m
 
 ### 🔄 El ciclo de vida
 
-1. **`session("open")`** ? El servidor arranca Godot en modo headless con un script especial (`heren_daemon.gd`)
+1. **`session("open")`** → El servidor arranca Godot con el daemon especial (`heren_daemon.gd`)
 2. **El daemon** abre un servidor WebSocket en el puerto 4567 y carga tu proyecto
-3. **Tu IA** envía comandos vía las 15 tools ? cada tool traduce a JSON ? WebSocket
+3. **Tu IA** envia comandos via las 15 tools → cada tool traduce a JSON → WebSocket
 4. **Godot** recibe el JSON, ejecuta la operación usando la API nativa de Godot, y responde
 5. **Todo en ~20ms** porque Godot nunca se cierra
 
@@ -447,7 +456,7 @@ Medimos operaciones reales en proyectos Godot reales. No estimaciones.
 
 **GoPeak**: `npx gopeak`, perfil `compact`, plugin `godot_mcp_editor` instalado, Godot abierto. Operación `add_node` medida 10 veces.
 
-**Heren**: `session("open")` ? 10 operaciones `node("add")` ? promedio.
+**Heren**: `session("open")` → 10 operaciones `node("add")` → promedio.
 
 **Nota importante**: Los benchmarks de GoPeak miden **solo la operación WebSocket**, excluyendo el tiempo de instalación del plugin y apertura de Godot. En un flujo real, GoPeak requiere ~60s de setup inicial.
 
@@ -518,4 +527,13 @@ Heren:        ¦¦ 20ms
 ⚡ **Plus Ultra: ir más allá.** 🌍
 
 </div>
+
+---
+
+```
+多謝垂注
+⠀⣏⡱ ⣏⡉ ⣏⡱ ⡇ ⣎⣱   ⡷⢾ ⢇⡸
+⠀⠧⠜ ⠧⠤ ⠇⠱ ⠇ ⠇⠸   ⠇⠸ ⠇⠸
+https://ko-fi.com/general_beria
+```
 
