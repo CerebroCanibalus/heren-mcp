@@ -27,13 +27,12 @@ Este documento es la biblia para agentes que operan Heren MCP. Lee esto antes de
 
 ### Decisiones Arquitectónicas Derivadas
 
-1. **Godot CLI Nativo ÚNICAMENTE.** Cero parsers propios. Cero serialización manual.
+1. **GodotDaemon ÚNICAMENTE.** Sin fallback a scripts CLI. GodotDaemon WebSocket es el único modo.
 2. **Session Manager PRIMERO.** Se inicializa antes que todo. Sin sesión, no hay operaciones.
-3. **Scripts Temporales por Operación.** Godot headless ejecuta un script GDScript autónomo por cada operación. Más confiable que procesos persistentes.
+3. **Daemon persistente.** Proceso Godot vivo con WebSocket. Cache en RAM. ~20ms por operación.
 4. **Cache en memoria.** Las escenas se mantienen en RAM. Invalidación explícita tras modificaciones.
-5. **Fail-fast.** Si Godot no responde en 30 segundos, error claro. Sin cuelgues.
-6. **Templates GDScript con f-strings.** Generación de código type-safe. Sin inyección de variables inválidas.
-7. **Tools multifuncionales.** Una tool = múltiples operaciones relacionadas. Menos tools, más poder.
+5. **Fail-fast.** Si el daemon no responde, error inmediato. Sin cuelgues.
+6. **Tools multifuncionales.** Una tool = múltiples operaciones relacionadas. Menos tools, más poder.
 
 ---
 
@@ -54,7 +53,7 @@ Este documento es la biblia para agentes que operan Heren MCP. Lee esto antes de
 │  │  ├─ Gestión de sesiones por proyecto│   │
 │  │  ├─ Auto-limpieza de archivos temp  │   │
 │  │  ├─ GodotDaemon integration         │   │
-│  │  └─ Fallback a scripts temporales   │   │
+│  │  └─ Sin fallback (daemon-only)      │   │
 │  └──────────────┬──────────────────────┘   │
 │                 │                            │
 │  ┌──────────────▼──────────────────────┐   │
@@ -104,15 +103,9 @@ Este documento es la biblia para agentes que operan Heren MCP. Lee esto antes de
 9. Daemon hace `packed_scene.pack()` + `ResourceSaver.save()` (~20ms)
 10. Escena persiste en disco, cache RAM se mantiene
 
-### Flujo de Datos Real (Fallback - Sin Daemon)
-
-1-3. Igual que arriba, pero daemon no disponible
-4. Session Manager detecta daemon caído
-5. Usa GodotInterface → TemplateEngine → script temporal
-6. Ejecuta `godot --headless --script temp.gd`
-7-10. Igual que MCP anterior (~370ms por operación)
-
 ---
+
+
 
 ## 2.1 Arquitectura Modular del Daemon (v2.0)
 
@@ -277,10 +270,8 @@ D:\Mis Juegos\GodotMCP\heren-mcp\
 │       │   ├── heren_server_manager.gd   # WebSocket server (legacy)
 │       │   ├── heren_tscn_serializer.gd  # Serialización TSCN (legacy)
 │       │   └── daemon_utils.gd           # Utilidades compartidas
-│       ├── interfaces/
-│       │   └── godot_cli.py          # GodotInterface (fallback)
-│       ├── templates/
-│       │   └── gdscript_templates.py # Templates f-string para GDScript
+│       ├── interfaces/       # 🗑️ Eliminado v3.0 (era fallback)
+│       ├── templates/        # 🗑️ Eliminado v3.0 (era fallback)
 │       └── tools/
 │           ├── session_tool.py       # Tool de sesiones
 │           ├── scene_tool.py         # Tool de escenas
@@ -295,7 +286,7 @@ D:\Mis Juegos\GodotMCP\heren-mcp\
 │           ├── debug_tool.py         # Tool de debug
 │           ├── validate_tool.py      # Tool de validación
 │           ├── signal_tool.py        # Tool de señales
-│           └── index_tool.py         # Tool de descubrimiento
+│           └── global_tool.py        # Tool de config global
 ├── .temp/                    # Archivos temporales (auto-limpieza)
 ├── tests/                    # Tests unificados por capa
 │   ├── conftest.py           # Fixtures compartidas
@@ -311,39 +302,13 @@ D:\Mis Juegos\GodotMCP\heren-mcp\
 
 ---
 
-## 5. Templates Disponibles
+## 5. Templates GDScript (ELIMINADOS v3.0)
 
-| Template | Operación | Descripción |
-|----------|-----------|-------------|
-| `get_scene_tree` | Lectura | Obtiene árbol completo de nodos con propiedades |
-| `save_scene` | Escritura | Guarda escena con cambios |
-| `add_node` | Escritura | Añade nodo con propiedades configurables |
-| `remove_node` | Escritura | Elimina nodo y guarda |
-| `set_property` | Escritura | Modifica propiedad de un nodo |
-| `get_node_properties` | Lectura | Obtiene todas las propiedades editables |
-| `get_project_info` | Lectura | Lee project.godot (nombre, main_scene, versión) |
-| `create_scene` | Escritura | Crea nueva escena .tscn con raíz configurable |
-| `delete_scene` | Escritura | Elimina archivo .tscn del disco |
-| `rename_scene` | Escritura | Renombra archivo .tscn |
+El sistema de templates GDScript (`TemplateEngine`, `gdscript_templates.py`) y el fallback a scripts
+temporales fueron eliminados completamente.
 
-### Nuevos Templates (Post-Testing)
-
-Añadidos durante fixes del testing:
-- `create_scene` - Crea escena nueva con ClassDB.instantiate()
-- `delete_scene` - Elimina vía DirAccess.remove_absolute()
-- `rename_scene` - Renombra vía DirAccess.rename_absolute()
-
-### Formato de TEST_OUTPUT
-
-```gdscript
-# Godot imprime esto al final de cada script
-print('TEST_OUTPUT: ' + JSON.stringify({
-    "success": true,
-    "data": {...}
-}))
-```
-
-Python parsea stdout buscando la línea que comienza con `TEST_OUTPUT:`.
+**TODO pasa por GodotDaemon WebSocket.** No más `godot --headless --script temp.gd`.
+No más `TEST_OUTPUT:` parsing. No más ~370ms de latencia.
 
 ---
 
@@ -369,20 +334,8 @@ Medido con proyecto LAIKA (Godot 4.6.1), **testing real 2026-05-13**:
 | `project_setting` | — | ~20ms | — | ✅ Estable |
 | `validate_scene` | — | ~20ms | — | ✅ Estable |
 
-### Sin Daemon (Scripts Temporales - Fallback)
-| Operación | Tiempo | Notas |
-|-----------|--------|-------|
-| `get_scene_tree` | ~370ms | Crea proceso Godot cada vez |
-| `add_node` | ~377ms | Script temporal + ejecución |
-| `set_property` | ~368ms | Script temporal + ejecución |
-| `save_scene` | ~368ms | Script temporal + ejecución |
-| `create_scene` | ~370ms | Fallback implementado |
-| `delete_scene` | ~370ms | Fallback implementado |
-| `rename_scene` | ~370ms | Fallback implementado |
-
-**Promedio con daemon:** ~20ms por operación
-**Promedio sin daemon:** ~370ms por operación
-**Speedup:** 18x más rápido con daemon activo
+**Promedio:** ~20ms por operación con daemon
+**Sin daemon: ELIMINADO (v3.0).** 18x más rápido sin el peso muerto del fallback.
 
 ### Métricas del Testing Real (2026-05-13)
 - **Operaciones exitosas:** 25/28 (89%)
@@ -453,7 +406,7 @@ session("open", project_path="D:/MiProyectoExistente")
 | 2026-05-13 | 10 Tools centralizadas | session, scene, node, batch, resource, animation, skeleton, shader, tilemap, project. |
 | 2026-05-13 | Visual Inspection System | El agente es ciego. Grid + labels + axes + raycast + measure le dan "ojos". |
 | 2026-05-13 | FPS limitado a 10 | Reduce consumo GPU/CPU del daemon en segundo plano. |
-| 2026-05-13 | 13 Tools centralizadas | session, scene, node, batch, resource, animation, skeleton, shader, tilemap, project, debug, validate, index. |
+| 2026-05-13 | 14 Tools centralizadas | session, scene, node, batch, resource, animation, skeleton, shader, tilemap, project, debug, validate, signal, global. |
 | 2026-05-13 | **Bug crítico: session.id** | Múltiples tools usaban `session.session_id` en vez de `session.id`. Fix aplicado a project, animation, skeleton, shader, tilemap. |
 | 2026-05-13 | **Fix: _deserialize_value** | Auto-detección de Vector2/3/Color por keys (x,y,z,r,g,b) sin necesidad de `__type`. Posiciones ahora aplican correctamente. |
 | 2026-05-13 | **Batch funcional** | 11 operaciones en ~200ms. Mapeo completo action→method con 30+ acciones soportadas. |
@@ -473,6 +426,7 @@ session("open", project_path="D:/MiProyectoExistente")
 | 2026-05-15 | **Mouse lock fix** | `Input.mouse_mode = MOUSE_MODE_VISIBLE` + `ensure_mouse_free()` cada 0.5s + post-save. Ventana 240x150 con NO_FOCUS + MOUSE_PASSTHROUGH. |
 | 2026-05-15 | **Shader type deduplicación** | `handle_create_shader` detecta si el código ya incluye `shader_type` y no lo duplica. |
 | 2026-05-15 | **Mesh inline con __type** | `set_property` acepta `{"__type":"Resource","resource_type":"SphereMesh",...}` para crear meshes primitivos inline. |
+| 2026-07-17 | **Eliminado fallback sin daemon (v3.0)** | GodotInterface, TemplateEngine, execute_gdscript, y todo el código de scripts CLI eliminados. GodotDaemon es el ÚNICO modo. ~412 + 1277 líneas de basura eliminadas. |
 
 ---
 
@@ -512,8 +466,10 @@ session("open", project_path="D:/MiProyectoExistente")
 | **Duplicación shader_type** | `handle_create_shader` detecta shader_type existente y no lo duplica | 2026-05-15 |
 | **Mesh inline** | `__type: Resource` con `resource_type` soporta BoxMesh, SphereMesh, etc. | 2026-05-15 |
 | **ExtResource faltante** | `_serialize_resource_properties` detecta recursos externos y genera `[ext_resource]` + `ExtResource()` | 2026-05-15 |
+| **Sub-resource ID corrupcion en save** | `_inject_into_tscn` creaba IDs duplicados (`_heren_N`) que rompian las referencias de nodos. Fix: eliminar sub-resource injection — `pack()`+`FLAG_BUNDLE_RESOURCES` ya los maneja. Solo connections se inyectan. | 2026-07-17 |
+| **Pipeline de guardado refactorizado (v3.0)** | Eliminadas 462 líneas de inyección de texto que corrompían .tscn. El pipeline ahora es: `_pre_save_resource_fix → pack() → save(FLAG_BUNDLE_RESOURCES) → verify`. `handle_connect_signal` usa `CONNECT_PERSIST` para que `pack()` serialice señales nativamente. Funciones eliminadas: `_collect_sub_resources`, `_collect_connections`, `_inject_into_tscn`, `_serialize_resource_properties`, `_update_node_subresource_ref`, `_serialize_value_tscn`. | 2026-07-17 |
 
-### Nuevas Features (v1.1+)
+ ### Nuevas Features (v3.0)
 
 | Feature | Descripcion |
 |---------|-------------|
@@ -523,7 +479,9 @@ session("open", project_path="D:/MiProyectoExistente")
 | **Sub-resources complejos** | Soporte para RectangleShape2D, CircleShape2D, CapsuleShape2D, GradientTexture2D, Environment, StandardMaterial3D |
 | **Edicion de recursos** | Modificar propiedades de sub-resources existentes y re-guardar |
 | **Escenas 3D completas** | Crear cuartos, luces, camaras, materiales con transparencia/metallic |
-
+| **Eliminado index tool** | Tool redundante (MCP protocol ya lista tools automáticamente). Eliminados ~205 líneas de tools_index.py + ~60 de server.py |
+| **Docstrings compactados 84%** | Descripciones de tools reducidas de ~4,255 → ~670 tokens. Ahora 1-2 líneas compactas en vez de secciones Actions/Args/Returns/Examples |
+| **Dirty tracking + auto-save** | `_dirty_scenes` rastrea modificaciones. `handle_save_all_dirty()` guarda todo lo sucio. Auto-save cada 10s via timer en `_process()`. Shutdown save: al cerrar daemon se guardan escenas sucias primero. `_mark_dirty()` en 11 handlers mutantes, `_clear_dirty()` tras save/unload/delete. |
 ### Nuevas Features (v2.0 Modular)
 
 | Feature | Descripcion |
@@ -567,7 +525,7 @@ session("open", project_path="D:/MiProyectoExistente")
 Antes de entregar código:
 - [ ] ¿El Session Manager se inicializa primero?
 - [ ] ¿Todas las operaciones usan el daemon si está disponible?
-- [ ] ¿Hay fallback a scripts temporales si el daemon no responde?
+- [ ] ¿Todas las operaciones requieren GodotDaemon activo? (no hay fallback)
 - [ ] ¿Se usan templates con f-strings (no string.Template)?
 - [ ] ¿Hay manejo de errores en cada operación?
 - [ ] ¿Se actualiza la caché después de modificaciones?
@@ -581,7 +539,7 @@ Antes de entregar código:
 - [ ] ¿Se actualizó AGENTS.md con la nueva tool?
 - [ ] ¿Se usa `session.id` y NUNCA `session.session_id`?
 - [ ] ¿Se reinició el MCP después de cambios en Python (session_manager, tools)?
-- [ ] ¿Se probaron las tools con daemon activo (no solo fallback)?
+- [ ] ¿Se probaron las tools con daemon activo?
 - [ ] ¿Se documentaron bugs conocidos en la sección correspondiente?
 
 ---
@@ -595,16 +553,17 @@ Antes de entregar código:
 | Directorio | Qué testea | Requiere Godot | Velocidad |
 |------------|-----------|----------------|-----------|
 | `test_core/` | Session Manager, Cache, Helpers | ❌ No | ⚡ Instantáneo |
-| `test_interfaces/` | GodotInterface, TemplateEngine | ❌ Mock | ⚡ Rápido |
-| `test_tools/` | Tools MCP (scene, node, session) | ✅ Sí | 🐢 ~0.4s/test |
-| `test_integration/` | Workflows completos | ✅ Sí | 🐢 ~2-5s/test |
+| `test_tools/` | Tools MCP (scene, node, session) | ✅ Sí (daemon) | 🐢 ~20ms/test |
+| `test_integration/` | Workflows completos | ✅ Sí (daemon) | 🐢 ~2-5s/test |
+
+> **Nota:** `test_interfaces/` eliminado en v3.0. Ya no hay fallback que testear.
 
 **Reglas de Testing:**
-1. **Fixtures compartidas** en `conftest.py`: `temp_project`, `session_id`, `sample_scene`
+1. **Fixtures compartidas** en `conftest.py`: `temp_project`, `daemon_session`
 2. **Proyecto temporal Godot** por test: auto-crea `project.godot` + estructura mínima
 3. **Reset de estado** entre tests: `reset_session_manager` como fixture `autouse`
 4. **Tests independientes**: cada test debe poder ejecutarse solo
-5. **No mockar Godot** en tests de tools: si Godot falla, el test debe fallar
+5. **No mockear Godot** en tests de tools: si Godot falla, el test debe fallar
 
 ### Filosofía de Benchmarking
 
@@ -690,7 +649,6 @@ project("setting", setting_name="display/window/size/viewport_width", value=1920
 | skeleton | 2 | 2 | 0 | ✅ 100% |
 | animation | 3 | 3 | 0 | ✅ 100% |
 | shader | 3 | 3 | 0 | ✅ 100% |
-| index | 1 | 1 | 0 | ✅ 100% |
 | signal | 2 | 2 | 0 | ✅ 100% |
 | global | 2 | 2 | 0 | ✅ 100% |
 | tilemap | 1 | 1 | 0 | ✅ 100% |
@@ -721,12 +679,11 @@ project("setting", setting_name="display/window/size/viewport_width", value=1920
 | 12 | `validate` | scene, script, node, resource | Validación | ✅ **100%** | v2.0: scene/node verificados |
 | 13 | `signal` | connect, disconnect, list, set_script | Señales | ✅ **100%** | v1.0: Signal management |
 | 14 | `global` | autoload, project_setting, shader_global | Configuración global | ✅ **100%** | v1.0: Global settings |
-| 15 | `index` | list, info, example | **Índice de tools** | ✅ **100%** | Descubrimiento completo |
 
 ### Filosofía: Centralizadas
 
 ```python
-# 10 tools cubren TODO Godot Engine
+# 14 tools cubren TODO Godot Engine
 # NO dispersar en 50 archivos
 # NO crear una tool por cada operación atómica
 ```
@@ -777,15 +734,6 @@ session_manager.get_godot_daemon(session.id)
 ```
 
 **Tools afectadas si se usa mal:** project, animation, skeleton, shader, tilemap.
-
-### Descubrimiento de Tools: Usa `index`
-
-```python
-# Los subagentes DEBEN empezar con index para descubrir tools
-index(action="list")  # Lista todas las 13 tools disponibles
-index(action="info", tool_name="scene")  # Info detallada de una tool
-index(action="example", tool_name="scene", action_name="create")  # Ejemplo de uso
-```
 
 ---
 

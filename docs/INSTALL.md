@@ -5,7 +5,7 @@ Heren MCP is a Model Context Protocol (MCP) server for Godot Engine 4.x. It enab
 ## Requirements
 
 - **Python**: 3.10 or higher
-- **Godot Engine**: 4.0 or higher (4.2+ recommended)
+- **Godot Engine**: 4.2 or higher (4.6+ recommended)
 - **Operating System**: Windows, Linux, or macOS
 
 ## Quick Start
@@ -13,7 +13,7 @@ Heren MCP is a Model Context Protocol (MCP) server for Godot Engine 4.x. It enab
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/your-org/heren-mcp.git
+git clone https://github.com/CerebroCanibalus/heren-mcp.git
 cd heren-mcp
 ```
 
@@ -23,11 +23,17 @@ cd heren-mcp
 python install.py
 ```
 
+Or with a specific project:
+
+```bash
+python install.py --project-path D:/YourGame
+```
+
 The installer will:
 - Detect your operating system
 - Find your Godot installation
 - Install Python dependencies
-- Configure the Godot Daemon
+- Copy the Heren daemon files into your Godot project (`addons/heren/daemon/`)
 - Show MCP configuration instructions
 
 ### 3. Configure Your MCP Client
@@ -41,7 +47,9 @@ Add the following to your MCP client configuration (e.g., `opencode.jsonc`):
       "command": "python",
       "args": ["-m", "heren.server"],
       "env": {
-        "PYTHONPATH": "./src"
+        "PYTHONPATH": "./src",
+        "GODOT_EXE": "D:/Mis Juegos/Godot/Godot_v4.6.1-stable_win64.exe",
+        "HEREN_PROJECT_PATH": "D:/YourGame"
       }
     }
   }
@@ -71,24 +79,44 @@ Required packages:
 - `pydantic>=2.0.0` - Data validation
 - `websocket-client>=1.6.0` - WebSocket communication with Godot
 
-### Step 2: Configure Godot Daemon (Optional but Recommended)
+### Step 2: Configure Godot Daemon in Your Project
 
-The Godot Daemon provides fast (~20ms) operations. To set it up:
+The Godot Daemon provides fast (~20ms) operations. To set it up, run from the heren-mcp directory:
 
-1. Copy `src/heren/daemon/heren_daemon.gd` to your Godot project's `addons/heren_daemon/` folder
-2. Enable the addon in Project Settings
+```bash
+python -m heren.tools.project_tool setup_daemon --project-path D:/YourGame
+```
+
+Or programmatically:
+
+```python
+from heren.tools.project_tool import project_tool
+project_tool("setup_daemon", project_path="D:/YourGame")
+```
+
+This copies all daemon files (`heren_daemon.gd` + modules) into `D:/YourGame/addons/heren/daemon/`.
 
 ### Step 3: Set Environment Variables (Optional)
 
 ```bash
 # Windows
-set GODOT_PATH=D:\Mis Juegos\Godot\Godot.exe
-set GODOT_PROJECT_PATH=D:\YourGame
+set GODOT_EXE=D:\Mis Juegos\Godot\Godot_v4.6.1-stable_win64.exe
+set HEREN_PROJECT_PATH=D:\YourGame
 
 # Linux/macOS
-export GODOT_PATH=/usr/bin/godot
-export GODOT_PROJECT_PATH=/home/user/YourGame
+export GODOT_EXE=/usr/bin/godot
+export HEREN_PROJECT_PATH=/home/user/YourGame
 ```
+
+Supported variables:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `GODOT_EXE` | Path to Godot executable | `D:/Godot/Godot.exe` |
+| `GODOT_PATH` | Alias for `GODOT_EXE` | `D:/Godot/Godot.exe` |
+| `HEREN_PROJECT_PATH` | Default Godot project path | `D:/YourGame` |
+| `HEREN_PORT` | Daemon WebSocket port | `4567` |
+| `HEREN_LOG_LEVEL` | Logging level | `INFO`, `DEBUG` |
 
 ## Platform-Specific Notes
 
@@ -118,10 +146,15 @@ Test your installation:
 python -c "from heren.server import mcp; print('Heren MCP loaded successfully')"
 ```
 
-List available tools:
+Open a session and list loaded scenes:
 
 ```python
-index(action="list")
+from heren.tools.session_tool import session_tool
+from heren.tools.scene_tool import scene_tool
+
+session = session_tool("open", project_path="D:/YourGame")
+print(session)
+scene_tool("list_loaded", session_id=session["session_id"])
 ```
 
 ## Troubleshooting

@@ -1,9 +1,18 @@
-class_name HerenSceneOps
+﻿class_name HerenSceneOps
 
 var _daemon: SceneTree = null
 
 # Cache de escenas cargadas (debe ser inyectado por el daemon principal)
 var _scene_cache: Dictionary = {}
+
+# Rastro de escenas modificadas desde el último guardado
+var _dirty_scenes: Dictionary = {}
+
+# Contenedor donde se montan las escenas cargadas (inyectado por el daemon)
+var _scene_container: Node = null
+
+# Wrapper por escena para evitar colisiones de nombres en el árbol del daemon
+var _scene_wrappers: Dictionary = {}
 
 # Referencias a funciones utilitarias del daemon principal
 # Estas deben ser asignadas por el daemon al inicializar esta clase
@@ -13,6 +22,74 @@ var _dispatch_callback: Callable
 
 func init(daemon: SceneTree) -> void:
 	_daemon = daemon
+
+# ============================================================
+# DIRTY TRACKING (modificaciones sin guardar)
+# ============================================================
+func _mark_dirty(scene_path: String) -> void:
+	"""Marca una escena como modificada (necesita guardado)."""
+	if scene_path:
+		_dirty_scenes[scene_path] = true
+
+func _clear_dirty(scene_path: String) -> void:
+	"""Limpia el flag de sucio para una escena."""
+	if _dirty_scenes.has(scene_path):
+		_dirty_scenes.erase(scene_path)
+
+func get_dirty_scenes() -> Array:
+	"""Retorna lista de rutas de escenas sucias."""
+	return _dirty_scenes.keys()
+
+func is_dirty(scene_path: String) -> bool:
+	"""Verifica si una escena tiene cambios sin guardar."""
+	return _dirty_scenes.has(scene_path)
+
+func handle_save_all_dirty(params: Dictionary) -> Dictionary:
+	"""Guarda todas las escenas con cambios pendientes. Se llama en shutdown y auto-save."""
+	var dirty = _dirty_scenes.keys()
+	var results = []
+	var errors = []
+	
+	for scene_path in dirty:
+		var result = handle_save_scene({"scene_path": scene_path})
+		results.append(result)
+		if not result.get("success", false):
+			errors.append({"scene_path": scene_path, "error": result.get("error", "unknown")})
+	
+	return {
+		"success": errors.size() == 0,
+		"total": dirty.size(),
+		"saved": results.size() - errors.size(),
+		"errors": errors,
+		"results": results
+	}
+
+func _get_scene_wrapper(scene_path: String) -> Node:
+	"""
+	Crea o reutiliza un nodo wrapper único para esta escena.
+	Evita que Godot renombre nodos raíz cuando hay varias escenas cargadas.
+	"""
+	if _scene_wrappers.has(scene_path):
+		var existing = _scene_wrappers[scene_path]
+		if is_instance_valid(existing):
+			return existing
+	
+	var wrapper = Node.new()
+	var hash_val = scene_path.hash()
+	var suffix = str(hash_val) if hash_val >= 0 else "n" + str(-hash_val)
+	wrapper.name = "HerenWrapper_" + suffix
+	
+	var container = _scene_container if is_instance_valid(_scene_container) else _daemon.get_root()
+	container.add_child(wrapper)
+	_scene_wrappers[scene_path] = wrapper
+	return wrapper
+
+func _remove_scene_wrapper(scene_path: String) -> void:
+	if _scene_wrappers.has(scene_path):
+		var wrapper = _scene_wrappers[scene_path]
+		if is_instance_valid(wrapper):
+			wrapper.queue_free()
+		_scene_wrappers.erase(scene_path)
 
 func handle_load_scene(params: Dictionary) -> Dictionary:
 	var scene_path = params.get("scene_path", "")
@@ -41,10 +118,11 @@ func handle_load_scene(params: Dictionary) -> Dictionary:
 	if not scene_instance:
 		return {"success": false, "error": "instantiate_failed", "scene_path": scene_path}
 	
-	# Agregar a árbol pero oculto para no renderizar mientras editamos
-	# NO deshabilitamos process_mode para que los nodos nuevos funcionen correctamente
-	scene_instance.hide()
-	_daemon.get_root().add_child(scene_instance)
+	# Agregar a wrapper dentro del contenedor. El wrapper aísla cada escena
+	# para evitar colisiones de nombres en el árbol del daemon. El contenedor
+	# se ubica fuera de pantalla, no oculto, para no alterar 'visible'.
+	var wrapper = _get_scene_wrapper(scene_path)
+	wrapper.add_child(scene_instance)
 	
 	_scene_cache[scene_path] = scene_instance
 	
@@ -73,7 +151,9 @@ func handle_unload_scene(params: Dictionary) -> Dictionary:
 	if is_instance_valid(scene):
 		scene.queue_free()
 	
+	_remove_scene_wrapper(scene_path)
 	_scene_cache.erase(scene_path)
+	_clear_dirty(scene_path)
 	
 	return {"success": true, "scene_path": scene_path}
 
@@ -262,6 +342,8 @@ func handle_add_node(params: Dictionary) -> Dictionary:
 	# B6 FIX: Devolver información sobre la sanitización si ocurrió
 	var name_was_sanitized = actual_name != node_name
 	
+	_mark_dirty(scene_path)
+	
 	return {
 		"success": true,
 		"scene_path": scene_path,
@@ -287,7 +369,8 @@ func handle_remove_node(params: Dictionary) -> Dictionary:
 		return {"success": false, "error": "scene_not_loaded", "message": "La escena no está cargada en memoria. Carga la escena primero con 'load_scene'."}
 	
 	var root = _scene_cache[scene_path]
-	var target = root.get_node_or_null(node_path)
+	var normalized_path = _normalize_node_path(node_path, root)
+	var target = root.get_node_or_null(normalized_path)
 	
 	if not target:
 		return {"success": false, "error": "node_not_found", "node_path": node_path, "message": "El nodo '" + node_path + "' no existe en la escena '" + scene_path + "'"}
@@ -300,6 +383,8 @@ func handle_remove_node(params: Dictionary) -> Dictionary:
 	
 	var had_children = target.get_child_count() > 0
 	target.queue_free()
+	
+	_mark_dirty(scene_path)
 	
 	return {
 		"success": true,
@@ -344,6 +429,8 @@ func handle_set_property(params: Dictionary) -> Dictionary:
 	var old_value = node.get(property)
 	node.set(property, deserialized)
 	
+	_mark_dirty(scene_path)
+	
 	return {
 		"success": true,
 		"scene_path": scene_path,
@@ -365,7 +452,8 @@ func handle_get_node_properties(params: Dictionary) -> Dictionary:
 		return {"success": false, "error": "scene_not_loaded"}
 	
 	var root = _scene_cache[scene_path]
-	var node = root.get_node_or_null(node_path)
+	var normalized_path = _normalize_node_path(node_path, root)
+	var node = root.get_node_or_null(normalized_path)
 	
 	if not node:
 		return {"success": false, "error": "node_not_found", "node_path": node_path}
@@ -392,7 +480,8 @@ func handle_array_append(params: Dictionary) -> Dictionary:
 		return {"success": false, "error": "scene_not_loaded"}
 	
 	var root = _scene_cache[scene_path]
-	var node = root.get_node_or_null(node_path)
+	var normalized_path = _normalize_node_path(node_path, root)
+	var node = root.get_node_or_null(normalized_path)
 	
 	if not node:
 		return {"success": false, "error": "node_not_found", "node_path": node_path}
@@ -410,6 +499,8 @@ func handle_array_append(params: Dictionary) -> Dictionary:
 	
 	# Setear el array modificado
 	node.set(property_name, new_array)
+	
+	_mark_dirty(scene_path)
 	
 	return {
 		"success": true,
@@ -435,7 +526,8 @@ func handle_array_remove(params: Dictionary) -> Dictionary:
 		return {"success": false, "error": "scene_not_loaded"}
 	
 	var root = _scene_cache[scene_path]
-	var node = root.get_node_or_null(node_path)
+	var normalized_path = _normalize_node_path(node_path, root)
+	var node = root.get_node_or_null(normalized_path)
 	
 	if not node:
 		return {"success": false, "error": "node_not_found", "node_path": node_path}
@@ -468,6 +560,8 @@ func handle_array_remove(params: Dictionary) -> Dictionary:
 	# Setear el array modificado
 	node.set(property_name, new_array)
 	
+	_mark_dirty(scene_path)
+	
 	return {
 		"success": true,
 		"scene_path": scene_path,
@@ -490,7 +584,8 @@ func handle_duplicate_node(params: Dictionary) -> Dictionary:
 		return {"success": false, "error": "scene_not_loaded"}
 	
 	var root = _scene_cache[scene_path]
-	var target = root.get_node_or_null(node_path)
+	var normalized_path = _normalize_node_path(node_path, root)
+	var target = root.get_node_or_null(normalized_path)
 	
 	if not target:
 		return {"success": false, "error": "node_not_found"}
@@ -507,10 +602,12 @@ func handle_duplicate_node(params: Dictionary) -> Dictionary:
 	target.get_parent().add_child(duplicate)
 	duplicate.owner = root
 	
+	_mark_dirty(scene_path)
+	
 	return {
 		"success": true,
-		"original": node_path,
-		"duplicate": str(duplicate.get_path()),
+		"original": _get_node_path_relative(target),
+		"duplicate": _get_node_path_relative(duplicate),
 		"name": duplicate.name
 	}
 
@@ -527,7 +624,8 @@ func handle_rename_node(params: Dictionary) -> Dictionary:
 		return {"success": false, "error": "scene_not_loaded"}
 	
 	var root = _scene_cache[scene_path]
-	var target = root.get_node_or_null(node_path)
+	var normalized_path = _normalize_node_path(node_path, root)
+	var target = root.get_node_or_null(normalized_path)
 	
 	if not target:
 		return {"success": false, "error": "node_not_found"}
@@ -535,11 +633,13 @@ func handle_rename_node(params: Dictionary) -> Dictionary:
 	var old_name = target.name
 	target.name = new_name
 	
+	_mark_dirty(scene_path)
+	
 	return {
 		"success": true,
 		"old_name": old_name,
 		"new_name": new_name,
-		"node_path": str(target.get_path())
+		"node_path": _get_node_path_relative(target)
 	}
 
 
@@ -555,8 +655,10 @@ func handle_move_node(params: Dictionary) -> Dictionary:
 		return {"success": false, "error": "scene_not_loaded"}
 	
 	var root = _scene_cache[scene_path]
-	var target = root.get_node_or_null(node_path)
-	var new_parent = root.get_node_or_null(new_parent_path)
+	var normalized_path = _normalize_node_path(node_path, root)
+	var normalized_parent = _normalize_node_path(new_parent_path, root)
+	var target = root.get_node_or_null(normalized_path)
+	var new_parent = root.get_node_or_null(normalized_parent)
 	
 	if not target:
 		return {"success": false, "error": "node_not_found", "node_path": node_path}
@@ -567,7 +669,6 @@ func handle_move_node(params: Dictionary) -> Dictionary:
 	if target == root:
 		return {"success": false, "error": "cannot_move_root"}
 	
-	var old_path = str(target.get_path())
 	var old_parent = target.get_parent()
 	
 	# Remove from old parent
@@ -577,11 +678,13 @@ func handle_move_node(params: Dictionary) -> Dictionary:
 	new_parent.add_child(target)
 	target.owner = root
 	
+	_mark_dirty(scene_path)
+	
 	return {
 		"success": true,
-		"old_path": old_path,
-		"new_path": str(target.get_path()),
-		"new_parent": new_parent_path
+		"old_path": _get_node_path_relative(target),
+		"new_path": _get_node_path_relative(target),
+		"new_parent": _get_node_path_relative(new_parent)
 	}
 
 
@@ -674,6 +777,8 @@ func handle_set_script(params: Dictionary) -> Dictionary:
 	# Asignar script al nodo
 	node.set_script(script)
 	
+	_mark_dirty(scene_path)
+	
 	return {
 		"success": true,
 		"scene_path": scene_path,
@@ -710,10 +815,12 @@ func handle_connect_signal(params: Dictionary) -> Dictionary:
 	if not source.has_signal(signal_name):
 		return {"success": false, "error": "signal_not_found", "signal": signal_name}
 	
-	# Conectar la se├▒al
-	var err = source.connect(signal_name, Callable(target, method))
+	# Conectar la se├▒al con CONNECT_PERSIST para que pack() la serialice
+	var err = source.connect(signal_name, Callable(target, method), Object.CONNECT_PERSIST)
 	if err != OK:
 		return {"success": false, "error": "connect_failed", "code": err}
+	
+	_mark_dirty(scene_path)
 	
 	return {
 		"success": true,
@@ -755,6 +862,8 @@ func handle_disconnect_signal(params: Dictionary) -> Dictionary:
 		var connections = source.get_signal_connection_list(signal_name)
 		for conn in connections:
 			source.disconnect(signal_name, conn["callable"])
+	
+	_mark_dirty(scene_path)
 	
 	return {
 		"success": true,
@@ -827,6 +936,9 @@ func handle_save_scene(params: Dictionary) -> Dictionary:
 	
 	var root = _scene_cache[scene_path]
 	
+	# FIX: Limpiar propiedades inyectadas por wrappers anteriores en el root
+	_pre_save_root_cleanup(root)
+	
 	# FIX CRITICO: Asegurar que todos los recursos de los nodos tengan paths validos
 	# antes de hacer pack(). Esto fuerza a Godot a guardarlos como ext_resources.
 	_pre_save_resource_fix(root)
@@ -837,22 +949,17 @@ func handle_save_scene(params: Dictionary) -> Dictionary:
 	if err != OK:
 		return {"success": false, "error": "pack_failed", "code": err}
 	
-	# FIX CRITICO: Usar FLAG_BUNDLE_RESOURCES para asegurar que todos los recursos se guarden
+	# Pipeline limpio: Godot maneja TODO nativamente.
+	# pack() serializa nodos, propiedades, sub-recursos y señales (Godot 4.2+).
+	# FLAG_BUNDLE_RESOURCES incrusta todos los recursos en el .tscn.
+	# resource_local_to_scene=true (seteado en _pre_save_resource_fix) fuerza embedding.
+	# No hay inyección de texto — eso causaba IDs duplicados y corrupción de referencias.
 	var save_flags = ResourceSaver.FLAG_BUNDLE_RESOURCES
 	err = ResourceSaver.save(packed, scene_path, save_flags)
 	if err != OK:
 		return {"success": false, "error": "save_failed", "code": err}
 	
-	# FIX CRITICO: Inyectar sub-resources y senales que PackedScene no guarda
-	# Recolectar recursos y senales del arbol en memoria
-	var sub_resources = _collect_sub_resources(root)
-	var connections = _collect_connections(root)
-	
-	# Inyectar en el archivo .tscn (ahora con soporte para ext_resources)
-	if not sub_resources.is_empty() or not connections.is_empty():
-		_inject_into_tscn(scene_path, sub_resources, connections)
-	
-	# Verificar que el archivo se escribio correctamente
+	# Verificar que el archivo se escribió correctamente
 	var saved_node_count = count_nodes_recursive(root)
 	
 	# Intentar recargar para verificar integridad
@@ -872,6 +979,9 @@ func handle_save_scene(params: Dictionary) -> Dictionary:
 			"scene_path": scene_path
 		}
 	
+	# Limpiar flag de sucio: esta escena ya está en disco
+	_clear_dirty(scene_path)
+	
 	# Liberar mouse después de operación de I/O
 	if _daemon:
 		_daemon.ensure_mouse_free()
@@ -880,9 +990,7 @@ func handle_save_scene(params: Dictionary) -> Dictionary:
 		"success": true,
 		"scene_path": scene_path,
 		"node_count": saved_node_count,
-		"verified": verify_count == saved_node_count,
-		"sub_resources_injected": sub_resources.size(),
-		"connections_injected": connections.size()
+		"verified": verify_count == saved_node_count
 	}
 
 
@@ -943,6 +1051,7 @@ func handle_delete_scene(params: Dictionary) -> Dictionary:
 		if is_instance_valid(scene):
 			scene.queue_free()
 		_scene_cache.erase(scene_path)
+		_clear_dirty(scene_path)
 	
 	# Delete file
 	var err = DirAccess.remove_absolute(scene_path)
@@ -971,6 +1080,10 @@ func handle_rename_scene(params: Dictionary) -> Dictionary:
 		var scene = _scene_cache[scene_path]
 		_scene_cache.erase(scene_path)
 		_scene_cache[new_path] = scene
+		# Mover el flag de dirty a la nueva ruta
+		if _dirty_scenes.has(scene_path):
+			_dirty_scenes.erase(scene_path)
+			_dirty_scenes[new_path] = true
 	
 	# Rename file
 	var err = DirAccess.rename_absolute(scene_path, new_path)
@@ -1105,232 +1218,6 @@ func _pre_save_resource_fix(node: Node):
 
 
 
-func _collect_sub_resources(node: Node) -> Array:
-	"""
-	Recorre el arbol de nodos y recolecta todos los recursos que necesitan
-	ser guardados como sub_resources en el .tscn.
-	Retorna un array de diccionarios con: node_path, prop_name, resource, resource_type
-	"""
-	var resources = []
-	if not node:
-		return resources
-	
-	# Recorrer propiedades del nodo
-	var property_list = node.get_property_list()
-	for prop in property_list:
-		var prop_name = prop.get("name", "")
-		var prop_type = prop.get("type", 0)
-		var prop_usage = prop.get("usage", 0)
-		
-		# Solo propiedades de almacenamiento
-		if prop_usage & PROPERTY_USAGE_STORAGE == 0:
-			continue
-		
-		# Si es OBJECT (Resource)
-		if prop_type == TYPE_OBJECT:
-			var value = node.get(prop_name)
-			if value and value is Resource and not value is Script:
-				# FIX: Capturar incluso si tiene path (puede ser sub-resource anidado)
-				resources.append({
-					"node_path": _get_node_path_relative(node),
-					"prop_name": prop_name,
-					"resource": value,
-					"resource_type": value.get_class()
-				})
-	
-	# Recursion en hijos
-	for child in node.get_children():
-		resources.append_array(_collect_sub_resources(child))
-	
-	return resources
-
-
-
-func _collect_connections(node: Node) -> Array:
-	"""
-	Recorre el arbol de nodos y recolecta todas las senales conectadas.
-	Retorna un array de diccionarios con: signal_name, from_path, to_path, method
-	"""
-	var connections = []
-	if not node:
-		return connections
-	
-	# Obtener senales del nodo
-	var signal_list = node.get_signal_list()
-	for sig in signal_list:
-		var signal_name = sig.get("name", "")
-		# Obtener conexiones de esta senal
-		var conns = node.get_signal_connection_list(signal_name)
-		for conn in conns:
-			var callable_obj = conn.get("callable", null)
-			if callable_obj:
-				var target_node = callable_obj.get_object() as Node
-				if target_node:
-					connections.append({
-						"signal_name": signal_name,
-						"from_path": _get_node_path_relative(node),
-						"to_path": _get_node_path_relative(target_node),
-						"method": callable_obj.get_method()
-					})
-	
-	# Recursion en hijos
-	for child in node.get_children():
-		connections.append_array(_collect_connections(child))
-	
-	return connections
-
-
-
-func _inject_into_tscn(scene_path: String, sub_resources: Array, connections: Array):
-	"""
-	Inyecta sub_resources, ext_resources y conexiones en un archivo .tscn existente.
-	Modifica el archivo directamente agregando [ext_resource], [sub_resource] y [connection].
-	Maneja recursos anidados (ej: ShaderMaterial.shader) y recursos externos.
-	
-	FIX: Los sub-resources deben insertarse ANTES de los nodos que los referencian.
-	Godot requiere definicion antes de referencia.
-	"""
-	if not FileAccess.file_exists(scene_path):
-		return
-	
-	var file = FileAccess.open(scene_path, FileAccess.READ)
-	if not file:
-		return
-	
-	var content = file.get_as_text()
-	file.close()
-	
-	var lines = content.split("\n")
-	var result_lines = []
-	var has_connections_section = false
-	
-	# Procesar lineas existentes
-	for line in lines:
-		if line.begins_with("[connection"):
-			has_connections_section = true
-		result_lines.append(line)
-	
-	# Diccionario para ext_resources (recursos externos como .gdshader)
-	var ext_resources_dict = {}
-	
-	# Preparar sub_resources a inyectar
-	var sub_resources_to_inject = []
-	if not sub_resources.is_empty():
-		# Primero recolectar todos los sub-resources anidados
-		var all_sub_resources = {}  # id -> {type, properties}
-		
-		for i in range(sub_resources.size()):
-			var res_info = sub_resources[i]
-			var res = res_info["resource"]
-			var res_type = res_info["resource_type"]
-			var res_id = res_type + "_heren_" + str(i)
-			
-			# Serializar propiedades, esto puede agregar sub-resources anidados y ext_resources
-			var nested_dict = {}
-			var res_properties = _serialize_resource_properties(res, nested_dict, ext_resources_dict)
-			
-			# Agregar sub-resources anidados primero
-			for nested_id in nested_dict.keys():
-				if not all_sub_resources.has(nested_id):
-					all_sub_resources[nested_id] = nested_dict[nested_id]
-			
-			# Agregar el sub-resource principal
-			all_sub_resources[res_id] = {
-				"type": res_type,
-				"properties": res_properties
-			}
-			
-			# Actualizar la referencia en el nodo correspondiente
-			var node_path = res_info["node_path"]
-			var prop_name = res_info["prop_name"]
-			_update_node_subresource_ref(result_lines, node_path, prop_name, res_id)
-		
-		# Preparar lineas de sub-resources
-		for res_id in all_sub_resources.keys():
-			var res_data = all_sub_resources[res_id]
-			sub_resources_to_inject.append("[sub_resource type=\"" + res_data["type"] + "\" id=\"" + res_id + "\"]")
-			for prop_line in res_data["properties"]:
-				sub_resources_to_inject.append(prop_line)
-			sub_resources_to_inject.append("")
-	
-	# Encontrar posicion de insercion para ext_resources: despues del header [gd_scene]
-	var ext_resources_to_inject = []
-	if not ext_resources_dict.is_empty():
-		for ext_id in ext_resources_dict.keys():
-			var ext_data = ext_resources_dict[ext_id]
-			ext_resources_to_inject.append("[ext_resource type=\"" + ext_data["type"] + "\" path=\"" + ext_data["path"] + "\" id=\"" + ext_id + "\"]")
-		ext_resources_to_inject.append("")
-	
-	# Insertar ext_resources despues del header [gd_scene ...]
-	var gd_scene_index = -1
-	for i in range(result_lines.size()):
-		if result_lines[i].begins_with("[gd_scene"):
-			gd_scene_index = i
-			break
-	
-	if gd_scene_index != -1 and not ext_resources_to_inject.is_empty():
-		var ext_injection = ["", "; ExtResources injectados por Heren MCP"]
-		ext_injection.append_array(ext_resources_to_inject)
-		
-		for i in range(ext_injection.size()):
-			result_lines.insert(gd_scene_index + 1 + i, ext_injection[i])
-	
-	# Encontrar posicion de insercion para sub-resources: despues del ultimo [sub_resource] existente
-	# pero antes del primer [node]
-	var insert_index = -1
-	var last_sub_resource_index = -1
-	var first_node_index = -1
-	
-	for i in range(result_lines.size()):
-		var line = result_lines[i]
-		if line.begins_with("[sub_resource"):
-			last_sub_resource_index = i
-		if first_node_index == -1 and line.begins_with("[node"):
-			first_node_index = i
-	
-	# Decidir donde insertar sub-resources
-	if last_sub_resource_index != -1:
-		# Insertar despues del ultimo sub-resource existente
-		# Buscar el final de ese bloque (siguiente linea vacia o seccion nueva)
-		insert_index = last_sub_resource_index + 1
-		while insert_index < result_lines.size():
-			var line = result_lines[insert_index].strip_edges()
-			if line.is_empty() or line.begins_with("["):
-				break
-			insert_index += 1
-	elif first_node_index != -1:
-		# No hay sub-resources existentes, insertar antes del primer nodo
-		insert_index = first_node_index
-	else:
-		# No hay nodos ni sub-resources, insertar al final
-		insert_index = result_lines.size()
-	
-	# Insertar sub-resources en la posicion correcta
-	if not sub_resources_to_inject.is_empty():
-		var injection = ["", "; Sub-resources injectados por Heren MCP"]
-		injection.append_array(sub_resources_to_inject)
-		
-		for i in range(injection.size()):
-			result_lines.insert(insert_index + i, injection[i])
-	
-	# Agregar conexiones si no existen
-	if not connections.is_empty() and not has_connections_section:
-		result_lines.append("")
-		result_lines.append("; Conexiones injectadas por Heren MCP")
-		
-		for conn in connections:
-			var conn_line = "[connection signal=\"" + conn["signal_name"] + "\""
-			conn_line += " from=\"" + conn["from_path"] + "\""
-			conn_line += " to=\"" + conn["to_path"] + "\""
-			conn_line += " method=\"" + conn["method"] + "\"]"
-			result_lines.append(conn_line)
-	
-	# Escribir archivo modificado
-	file = FileAccess.open(scene_path, FileAccess.WRITE)
-	if file:
-		file.store_string("\n".join(result_lines))
-		file.close()
-		print("[Inject] Inyectados ", sub_resources.size(), " sub-resources, ", ext_resources_dict.size(), " ext-resources y ", connections.size(), " conexiones en ", scene_path)
 
 
 
@@ -1371,236 +1258,36 @@ func _setup_resource_local_to_scene_recursive(resource: Resource):
 func _get_node_path_relative(node: Node) -> String:
 	"""
 	Obtiene el path relativo del nodo desde el root de la escena.
+	Ignora wrappers internos del daemon (HerenWrapper_*).
 	"""
 	if not node:
 		return ""
 	
-	var path = node.name
+	# Subir hasta encontrar el root de la escena (hijo directo de un wrapper o del contenedor)
+	var scene_root = node
 	var current = node.get_parent()
 	while current and not current is Viewport:
-		path = current.name + "/" + path
+		# Si el padre es un wrapper interno, el nodo acumulado es el root de la escena
+		if current.name.begins_with("HerenWrapper_") or current.name == "HerenSceneContainer":
+			break
+		scene_root = current
 		current = current.get_parent()
 	
-	# Remover el nombre del root (la escena)
-	var parts = path.split("/")
-	if parts.size() > 1:
-		parts.remove_at(0)
-		return "/".join(parts)
+	if node == scene_root:
+		return "."
 	
-	return "."
+	return scene_root.get_path_to(node)
 
 
-
-func _serialize_resource_properties(resource: Resource, sub_resources_dict: Dictionary = {}, ext_resources_dict: Dictionary = {}) -> Array:
+func _pre_save_root_cleanup(root: Node) -> void:
 	"""
-	Serializa las propiedades de un recurso a lineas de texto .tscn.
-	Maneja recursos anidados creando sub-resources adicionales.
-	Maneja recursos externos (con resource_path) creando ext_resources.
+	Limpia propiedades que wrappers anteriores pudieron haber inyectado en el root.
+	Esto evita que escenas guardadas tengan visible=false o process_mode=4 en su raiz.
 	"""
-	var lines = []
-	if not resource:
-		return lines
-	
-	var prop_list = resource.get_property_list()
-	for prop in prop_list:
-		var prop_name = prop.get("name", "")
-		var prop_usage = prop.get("usage", 0)
-		
-		# Solo propiedades de almacenamiento, no script o resource_name
-		if prop_name in ["script", "resource_name", "resource_path"]:
-			continue
-		if prop_usage & PROPERTY_USAGE_STORAGE == 0:
-			continue
-		
-		var value = resource.get(prop_name)
-		if value == null:
-			continue
-		
-		# Si es un recurso anidado, crear sub-resource o ext-resource
-		if value is Resource and not value is Script:
-			var nested_res = value as Resource
-			if not nested_res.resource_path.is_empty() and nested_res.resource_path.begins_with("res://"):
-				# Recurso externo: crear ExtResource
-				var ext_path = nested_res.resource_path
-				var ext_id = ""
-				
-				# Reutilizar ID si ya existe
-				for existing_id in ext_resources_dict.keys():
-					if ext_resources_dict[existing_id]["path"] == ext_path:
-						ext_id = existing_id
-						break
-				
-				if ext_id.is_empty():
-					ext_id = "ExtResource_heren_" + str(ext_resources_dict.size())
-					var ext_type = nested_res.get_class()
-					# Shaders son type="Shader", no "GDShader"
-					if ext_path.ends_with(".gdshader"):
-						ext_type = "Shader"
-					ext_resources_dict[ext_id] = {
-						"type": ext_type,
-						"path": ext_path
-					}
-				
-				lines.append(prop_name + " = ExtResource(\"" + ext_id + "\")")
-				continue
-			elif nested_res.resource_path.is_empty():
-				# Recurso interno: crear sub-resource anidado
-				var nested_type = nested_res.get_class()
-				var nested_id = nested_type + "_nested_" + str(sub_resources_dict.size())
-				sub_resources_dict[nested_id] = {
-					"type": nested_type,
-					"resource": nested_res,
-					"properties": _serialize_resource_properties(nested_res, sub_resources_dict, ext_resources_dict)
-				}
-				lines.append(prop_name + " = SubResource(\"" + nested_id + "\")")
-				continue
-		
-		# Serializar segun tipo
-		var serialized = _serialize_value_tscn(value)
-		if not serialized.is_empty():
-			lines.append(prop_name + " = " + serialized)
-	
-	return lines
+	if root is CanvasItem:
+		root.visible = true
+	root.process_mode = Node.PROCESS_MODE_INHERIT
 
-
-
-func _update_node_subresource_ref(lines: Array, node_path: String, prop_name: String, res_id: String):
-	"""
-	Actualiza la referencia de sub-resource en la linea del nodo correspondiente.
-	Busca el nodo por path y agrega/modifica la propiedad para usar SubResource().
-	Si la propiedad ya existe, la reemplaza (elimina duplicados).
-	"""
-	var target_node_line = -1
-	var target_indent = ""
-	
-	# Encontrar la linea del nodo
-	for i in range(lines.size()):
-		var line = lines[i]
-		if line.begins_with("[node "):
-			# Extraer path del nodo de la linea
-			var path_match = line.find("parent=\"")
-			if path_match != -1:
-				var path_start = path_match + 8
-				var path_end = line.find("\"", path_start)
-				var parent_path = line.substr(path_start, path_end - path_start)
-				
-				# Extraer nombre del nodo
-				var name_match = line.find("name=\"")
-				if name_match != -1:
-					var name_start = name_match + 6
-					var name_end = line.find("\"", name_start)
-					var node_name = line.substr(name_start, name_end - name_start)
-					
-					# Construir path completo
-					var full_path = node_name
-					if parent_path != ".":
-						full_path = parent_path + "/" + node_name
-					
-					if full_path == node_path or (node_path == "." and parent_path == "."):
-						target_node_line = i
-						target_indent = "\t"
-						break
-	
-	if target_node_line == -1:
-		return
-	
-	# Buscar y eliminar propiedad existente dentro del bloque del nodo
-	# Un bloque de nodo termina cuando encontramos otra linea [node, [sub_resource, [connection, o linea vac├¡a]
-	var existing_prop_line = -1
-	for i in range(target_node_line + 1, lines.size()):
-		var line = lines[i]
-		# Si encontramos inicio de otra secci├│n, salimos
-		if line.begins_with("[node ") or line.begins_with("[sub_resource ") or line.begins_with("[connection "):
-			break
-		# Si encontramos la propiedad existente
-		if line.strip_edges().begins_with(prop_name + " ="):
-			existing_prop_line = i
-			lines[i] = ""  # Eliminar linea existente
-			break
-	
-	# Insertar nueva referencia despues de la linea del nodo
-	var prop_line = target_indent + prop_name + " = SubResource(\"" + res_id + "\")"
-	lines.insert(target_node_line + 1, prop_line)
-
-
-
-
-func _serialize_value_tscn(value) -> String:
-	"""
-	Serializa un valor de Godot a formato texto .tscn.
-	"""
-	if value == null:
-		return ""
-	
-	match typeof(value):
-		TYPE_INT, TYPE_FLOAT:
-			return str(value)
-		TYPE_STRING, TYPE_STRING_NAME:
-			return "\"" + value + "\""
-		TYPE_BOOL:
-			return "true" if value else "false"
-		TYPE_VECTOR2:
-			var v = value as Vector2
-			return "Vector2(" + str(v.x) + ", " + str(v.y) + ")"
-		TYPE_VECTOR2I:
-			var v = value as Vector2i
-			return "Vector2i(" + str(v.x) + ", " + str(v.y) + ")"
-		TYPE_VECTOR3:
-			var v = value as Vector3
-			return "Vector3(" + str(v.x) + ", " + str(v.y) + ", " + str(v.z) + ")"
-		TYPE_VECTOR3I:
-			var v = value as Vector3i
-			return "Vector3i(" + str(v.x) + ", " + str(v.y) + ", " + str(v.z) + ")"
-		TYPE_COLOR:
-			var c = value as Color
-			return "Color(" + str(c.r) + ", " + str(c.g) + ", " + str(c.b) + ", " + str(c.a) + ")"
-		TYPE_RECT2:
-			var r = value as Rect2
-			return "Rect2(" + _serialize_value_tscn(r.position) + ", " + _serialize_value_tscn(r.size) + ")"
-		TYPE_RECT2I:
-			var r = value as Rect2i
-			return "Rect2i(" + _serialize_value_tscn(r.position) + ", " + _serialize_value_tscn(r.size) + ")"
-		TYPE_TRANSFORM2D:
-			var t = value as Transform2D
-			return "Transform2D(" + str(t.x.x) + ", " + str(t.x.y) + ", " + str(t.y.x) + ", " + str(t.y.y) + ", " + str(t.origin.x) + ", " + str(t.origin.y) + ")"
-		TYPE_TRANSFORM3D:
-			var t = value as Transform3D
-			return "Transform3D(" + str(t.basis.x.x) + ", " + str(t.basis.x.y) + ", " + str(t.basis.x.z) + ", " + str(t.basis.y.x) + ", " + str(t.basis.y.y) + ", " + str(t.basis.y.z) + ", " + str(t.basis.z.x) + ", " + str(t.basis.z.y) + ", " + str(t.basis.z.z) + ", " + str(t.origin.x) + ", " + str(t.origin.y) + ", " + str(t.origin.z) + ")"
-		TYPE_AABB:
-			var a = value as AABB
-			return "AABB(" + str(a.position.x) + ", " + str(a.position.y) + ", " + str(a.position.z) + ", " + str(a.size.x) + ", " + str(a.size.y) + ", " + str(a.size.z) + ")"
-		TYPE_BASIS:
-			var b = value as Basis
-			return "Basis(" + str(b.x.x) + ", " + str(b.x.y) + ", " + str(b.x.z) + ", " + str(b.y.x) + ", " + str(b.y.y) + ", " + str(b.y.z) + ", " + str(b.z.x) + ", " + str(b.z.y) + ", " + str(b.z.z) + ")"
-		TYPE_QUATERNION:
-			var q = value as Quaternion
-			return "Quaternion(" + str(q.x) + ", " + str(q.y) + ", " + str(q.z) + ", " + str(q.w) + ")"
-		TYPE_PLANE:
-			var p = value as Plane
-			return "Plane(" + str(p.normal.x) + ", " + str(p.normal.y) + ", " + str(p.normal.z) + ", " + str(p.d) + ")"
-		TYPE_ARRAY, TYPE_PACKED_STRING_ARRAY, TYPE_PACKED_INT32_ARRAY, TYPE_PACKED_FLOAT32_ARRAY:
-			var arr = value as Array
-			var parts = []
-			for item in arr:
-				parts.append(_serialize_value_tscn(item))
-			return "[" + ", ".join(parts) + "]"
-		TYPE_DICTIONARY:
-			var dict = value as Dictionary
-			var parts = []
-			for key in dict.keys():
-				parts.append(_serialize_value_tscn(key) + ": " + _serialize_value_tscn(dict[key]))
-			return "{" + ", ".join(parts) + "}"
-		TYPE_OBJECT:
-			if value is Resource:
-				var res = value as Resource
-				if not res.resource_path.is_empty():
-					return "ExtResource(\"" + res.resource_path + "\")"
-				else:
-					# Referencia a sub_resource (no deberia ocurrir aqui)
-					return "SubResource(\"" + res.get_class() + "\")"
-			return ""
-		_:
-			return str(value)
 
 
 # ============================================================

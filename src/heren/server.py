@@ -5,9 +5,10 @@ Servidor MCP usando FastMCP para OpenCode.
 Expone las tools de Heren Godot MCP.
 
 FILOSOFÍA DE TOOLS:
-- Centralizadas: 10 tools que agrupan TODO
-- Modulares: múltiples modos via parámetro 'action'
-- Potentes: Godot hace el trabajo pesado
+- Centralizadas: 14 tools que agrupan TODO
+- Modulares: múltiples modos via parámetro 'action'  
+- Potentes: GodotDaemon hace el trabajo pesado
+- Sin fallback: GodotDaemon es el UNICO modo
 
 Tools:
 1. session   - Gestión de sesiones (open, close, list, info, health)
@@ -24,13 +25,13 @@ Tools:
 12. validate - Validación (scene, script, node, resource)
 13. signal   - Señales entre nodos (connect, disconnect, list, set_script)
 14. global   - Configuración global (autoload, project_setting, shader_global)
-15. index    - Índice de tools (list, info, example)
 
 Filosofia: Poder. Eficiencia. Rapidez.
 """
 
 import argparse
 import logging
+import os
 import sys
 
 from typing import Any, Optional
@@ -52,7 +53,6 @@ from heren.tools.debug_tool import debug
 from heren.tools.validate_tool import validate
 from heren.tools.signal_tool import signal_tool as _signal_tool_impl
 from heren.tools.global_tool import global_tool as _global_tool_impl
-from heren.tools.tools_index import list_tools, get_tool_info, get_action_example
 
 logging.basicConfig(
     level=logging.INFO,
@@ -75,49 +75,11 @@ def session(
     project_path: str = None,
     session_id: str = None,
     godot_path: str = None,
-    use_daemon: bool = True,
 ) -> dict:
     """
-    Tool centralizada para TODAS las operaciones de sesión.
-    
-    FILOSOFÍA: Una tool, múltiples modos. Centralizada pero modular.
-    
-    Args:
-        action: Operación a realizar
-            - "open": Inicia nueva sesión con Godot
-            - "close": Cierra sesión existente
-            - "list": Lista todas las sesiones activas
-            - "info": Obtiene información de una sesión
-            - "health": Verifica salud del daemon
-        project_path: (para action="open") Ruta absoluta al proyecto Godot
-        session_id: (para action="close|info|health") ID de sesión
-        godot_path: (opcional) Ruta al ejecutable Godot
-        use_daemon: (para action="open") Si True, usa GodotDaemon WebSocket (recomendado)
-    
-    Returns:
-        - open: {"success": True, "session_id": "...", "project_path": "...", "daemon_active": True}
-        - close: {"success": True}
-        - list: {"success": True, "count": 2, "sessions": [{"id": "...", "project": "..."}]}
-        - info: {"success": True, "session": {"id": "...", "daemon_active": True, ...}}
-        - health: {"success": True, "status": "healthy", "fps": 60, ...}
-    
-    Examples:
-        # Abrir sesión (inicia daemon automáticamente)
-        session("open", project_path="D:/MiJuego")
-        
-        # Cerrar sesión
-        session("close", session_id="abc123")
-        
-        # Listar sesiones
-        session("list")
-        
-        # Ver info
-        session("info", session_id="abc123")
-        
-        # Health check del daemon
-        session("health", session_id="abc123")
+    Gestión de sesiones Godot. Actions: open(project_path, godot_path) | close(session_id) | list | info(session_id) | health(session_id)
     """
-    return session_tool(action, project_path, session_id, godot_path, use_daemon)
+    return session_tool(action, project_path, session_id, godot_path)
 
 
 # ============================================================
@@ -138,48 +100,8 @@ def scene(
     root_name: str = None,
 ) -> dict:
     """
-    Tool centralizada para TODAS las operaciones de escenas.
-    
-    CON DAEMON: Operaciones en ~20ms (cache en RAM)
-    SIN DAEMON: Fallback a scripts temporales (~370ms)
-    
-    Args:
-        action: Operación a realizar
-            - "get_tree": Obtiene árbol de nodos de la escena
-            - "save": Guarda escena en disco
-            - "load": Carga escena en cache del daemon (rápido)
-            - "unload": Descarga escena del cache
-            - "list_loaded": Lista escenas cargadas en cache
-            - "screenshot": Captura screenshot con rendering GPU
-            - "create": Crea nueva escena (acepta root_type, root_name)
-            - "set_editable_paths": Marca paths de instancias como editables
-        session_id: ID de sesión activa
-        scene_path: Ruta a la escena (res://Player.tscn)
-        output_path: (para screenshot) Ruta de salida. None = temp
-        resolution: (para screenshot) Resolución
-        wait_frames: (para screenshot) Frames a esperar
-        format: (para screenshot) "png", "jpeg" o "webp"
-        quality: (para screenshot) Calidad 0.0-1.0
-        **kwargs: Parámetros adicionales como root_type, root_name para create
-    
-    Returns:
-        - get_tree: {"success": True, "tree": {"name": "Root", "type": "Node2D", "children": [...]}}
-        - save: {"success": True}
-        - load: {"success": True, "cached": True, "node_count": 15}
-        - unload: {"success": True}
-        - list_loaded: {"success": True, "scenes": [{"path": "...", "type": "Node2D"}]}
-        - screenshot: {"success": True, "image_path": "...", "resolution": [1920, 1080]}
-        - set_editable_paths: {"success": True, "paths": [...], "editable": true}
-    
-    Examples:
-        # Obtener árbol de nodos
-        scene("get_tree", session_id="abc", scene_path="res://Player.tscn")
-        
-        # Crear escena con tipo específico
-        scene("create", session_id="abc", scene_path="res://Level.tscn", root_type="Node3D", root_name="Main")
-        
-        # Screenshot con rendering GPU
-        scene("screenshot", session_id="abc", scene_path="res://Player.tscn", resolution=(1920, 1080))
+    Escenas: get_tree|save|load|unload|list_loaded|screenshot(output_path,resolution,format,quality)|create(root_type,root_name)|set_editable_paths
+    scene_path: res://ruta.tscn
     """
     return scene_tool(action, session_id, scene_path, output_path, resolution, wait_frames, format, quality, root_type=root_type, root_name=root_name)
 
@@ -204,62 +126,8 @@ def node(
     index: int = -1,
 ) -> dict:
     """
-    Tool centralizada para TODAS las operaciones de nodos.
-    
-    CON DAEMON: ~20ms por operación
-    SIN DAEMON: Fallback automático a scripts (~370ms)
-    
-    Args:
-        action: Operación a realizar
-            - "add": Añade nodo a la escena
-            - "remove": Elimina nodo
-            - "set_prop": Cambia propiedad del nodo
-            - "get_prop": Obtiene propiedad del nodo
-            - "duplicate": Duplica nodo
-            - "rename": Renombra nodo
-            - "move": Mueve nodo a otro padre
-            - "array_append": Añade elemento a array property
-            - "array_remove": Remueve elemento de array property
-        session_id: ID de sesión activa
-        scene_path: Ruta a la escena (res://Player.tscn)
-        node_path: Ruta al nodo (ej: "Player/Sprite2D")
-        node_type: (para add) Tipo de nodo (Sprite2D, Area2D, etc.)
-        node_name: (para add) Nombre del nuevo nodo
-        properties: (para add) Propiedades iniciales {"position": {"x": 100, "y": 200}}
-        property_name: (para set_prop/get_prop/array_*) Nombre de la propiedad
-        value: (para set_prop/array_append/array_remove) Nuevo valor
-        new_name: (para rename) Nuevo nombre
-        new_parent: (para move) Nueva ruta padre
-        index: (para array_remove) Índice del elemento a remover
-    
-    Returns:
-        - add: {"success": True, "node_path": "Player/Sprite2D"}
-        - remove: {"success": True}
-        - set_prop: {"success": True}
-        - get_prop: {"success": True, "value": ...}
-        - duplicate: {"success": True, "node_path": "..."}
-        - rename: {"success": True}
-        - move: {"success": True}
-        - array_append: {"success": True, "array_size": N}
-        - array_remove: {"success": True, "removed_value": ...}
-    
-    Examples:
-        # Añadir Sprite2D
-        node("add", session_id="abc", scene_path="res://Player.tscn",
-             node_path=".", node_type="Sprite2D", node_name="Hat",
-             properties={"position": {"x": 0, "y": -50}})
-        
-        # Cambiar posición
-        node("set_prop", session_id="abc", scene_path="res://Player.tscn",
-             node_path="Player", property_name="position", value={"x": 100, "y": 200})
-        
-        # Eliminar nodo
-        node("remove", session_id="abc", scene_path="res://Player.tscn",
-             node_path="Player/OldNode")
-        
-        # Añadir a array
-        node("array_append", session_id="abc", scene_path="res://Player.tscn",
-             node_path="Player", property_name="inventory", value="sword")
+    Nodos: add(properties) | remove | set_prop(property_name,value) | get_prop | duplicate | rename(new_name) | move(new_parent) | array_append(value) | array_remove(index/value)
+    node_path: ruta al nodo, node_type: Sprite2D|Area2D|..., properties: dict inicial
     """
     return node_tool(action, session_id, scene_path, node_path, node_type, node_name,
                      properties, property_name, value, new_name, new_parent, index)
@@ -276,59 +144,7 @@ def batch(
     stop_on_error: bool = False,
 ) -> dict:
     """
-    Ejecuta múltiples operaciones en batch optimizado.
-    
-    CON DAEMON: Envía todas las operaciones en UNA sola llamada WebSocket
-    SIN DAEMON: Ejecuta secuencialmente via scripts
-    
-    PERFECTO para:
-    - Crear escenas complejas (múltiples nodos)
-    - Refactorizaciones (mover, renombrar, modificar)
-    - Importaciones (crear estructura completa)
-    
-    Args:
-        session_id: ID de sesión activa
-        operations: Lista de operaciones
-            Cada operación es un dict con:
-            - "action": str - Tipo de operación (add, remove, set_prop, etc.)
-            - "params": dict - Parámetros específicos
-        stop_on_error: Si True, detiene en el primer error
-    
-    Returns:
-        {
-            "success": bool,
-            "results": list[dict],  # Resultados de cada operación
-            "errors": list[dict],   # Errores si los hubo
-            "success_count": int,
-            "error_count": int,
-        }
-    
-    Example:
-        batch(session_id="abc", operations=[
-            {
-                "action": "add",
-                "params": {
-                    "scene_path": "res://Player.tscn",
-                    "parent_path": ".",
-                    "node_type": "Sprite2D",
-                    "node_name": "Body",
-                    "properties": {"position": {"x": 100, "y": 200}}
-                }
-            },
-            {
-                "action": "add",
-                "params": {
-                    "scene_path": "res://Player.tscn",
-                    "parent_path": "Body",
-                    "node_type": "CollisionShape2D",
-                    "node_name": "Hitbox"
-                }
-            },
-            {
-                "action": "save",
-                "params": {"scene_path": "res://Player.tscn"}
-            }
-        ])
+    Multi-operación en 1 llamada. operations: [{action, params}]. stop_on_error: True para abortar en error.
     """
     return heren_batch(session_id, operations, stop_on_error)
 
@@ -348,26 +164,8 @@ def resource_tool(
     recursive: bool = False,
 ) -> dict:
     """
-    Tool centralizada para TODOS los recursos Godot (.tres, materiales, etc.)
-    
-    Actions:
-        - "create": Crear nuevo recurso .tres
-        - "read": Leer recurso existente
-        - "update": Actualizar propiedades
-        - "delete": Eliminar recurso
-        - "list": Listar recursos del proyecto
-    
-    Args:
-        action: Operación a realizar
-        resource_path: Ruta al recurso (res://materials/my_material.tres)
-        resource_type: Tipo de recurso (ShaderMaterial, PhysicsMaterial, etc.)
-        properties: Propiedades del recurso
-        directory: Directorio para listar
-        extension: Filtro de extensión
-        recursive: Buscar recursivamente
-    
-    Returns:
-        Dict con resultado de la operación
+    Recursos .tres y scripts .gd. Actions: create|read|update|delete|list|create_script|read_script|edit_script
+    resource_path: res://ruta, resource_type: ShaderMaterial|PhysicsMaterial|...
     """
     return resource(action=action, resource_path=resource_path, resource_type=resource_type,
                    properties=properties, directory=directory, extension=extension, recursive=recursive)
@@ -397,32 +195,9 @@ def animation_tool(
     transitions: list = None,
 ) -> dict:
     """
-    Tool centralizada para animaciones y state machines.
-    
-    Actions:
-        - "create_player": Crear AnimationPlayer
-        - "create": Crear Animation
-        - "add_track": Añadir track
-        - "add_key": Añadir keyframe
-        - "state_machine": Crear AnimationNodeStateMachine
-    
-    Args:
-        action: Operación a realizar
-        session_id: ID de sesión activa
-        scene_path: Ruta a la escena
-        player_path: Ruta al AnimationPlayer
-        anim_name: Nombre de la animación
-        length: Duración en segundos
-        loop: Si loop o no
-        track_type: Tipo de track (value, position_3d, rotation_3d, scale_3d, method)
-        node_path: Ruta al nodo a animar
-        property: Propiedad a animar
-        track_idx: Índice del track
-        time: Tiempo del keyframe
-        value: Valor del keyframe
-        transition: Curva de transición
-        states: Lista de estados para state machine
-        transitions: Lista de transiciones
+    Animaciones. Actions: create_player|create|add_track|add_key|state_machine
+    player_path: ruta AnimationPlayer, anim_name, track_type: value|position_3d|rotation_3d|scale_3d|method
+    states/transitions para state_machine
     """
     return animation(action=action, session_id=session_id, scene_path=scene_path, player_path=player_path,
                     anim_name=anim_name, length=length, loop=loop, track_type=track_type,
@@ -453,30 +228,8 @@ def skeleton_tool(
     attachment_name: str = "Attachment",
 ) -> dict:
     """
-    Tool centralizada para esqueletos y rigging.
-    
-    Actions:
-        - "create": Crear Skeleton2D/3D
-        - "add_bone": Añadir hueso
-        - "set_rest": Setear rest pose
-        - "skin": Configurar skinning Polygon2D
-        - "attachment": Añadir BoneAttachment3D
-    
-    Args:
-        action: Operación a realizar
-        session_id: ID de sesión activa
-        scene_path: Ruta a la escena
-        parent_path: Ruta al padre
-        skeleton_name: Nombre del skeleton
-        is_3d: True para Skeleton3D
-        skeleton_path: Ruta al skeleton existente
-        bone_name: Nombre del hueso
-        rest_transform: Transform de rest (dict con x, y, z, rotation)
-        length: Longitud del hueso (2D)
-        bone_angle: Ángulo del hueso (2D)
-        polygon_path: Ruta al Polygon2D para skinning
-        bone_weights: Pesos de huesos para skinning
-        attachment_name: Nombre del attachment
+    Esqueletos 2D/3D. Actions: create(is_3d) | add_bone(length,angle) | set_rest(rest_transform) | skin | attachment
+    skeleton_path, bone_name, rest_transform: dict{x,y,z,rotation}
     """
     return skeleton(action=action, session_id=session_id, scene_path=scene_path, parent_path=parent_path,
                    skeleton_name=skeleton_name, is_3d=is_3d, skeleton_path=skeleton_path,
@@ -505,28 +258,8 @@ def shader_tool(
     value = None,
 ) -> dict:
     """
-    Tool centralizada para shaders y materiales.
-    
-    Actions:
-        - "create": Crear .gdshader
-        - "edit": Editar código de shader
-        - "validate": Validar compilación
-        - "material": Crear ShaderMaterial
-        - "uniform": Setear uniform
-    
-    Args:
-        action: Operación a realizar
-        session_id: ID de sesión activa
-        shader_path: Ruta al shader
-        shader_type: Tipo (canvas_item, spatial, particles)
-        code: Código GDShader
-        append: True para añadir al final
-        scene_path: Ruta a la escena (para material/uniform)
-        node_path: Ruta al nodo (para material/uniform)
-        material_name: Nombre del material
-        uniforms: Dict de uniforms
-        uniform_name: Nombre del uniform
-        value: Valor del uniform
+    Shaders y materiales. Actions: create|edit|validate|material(uniforms)|uniform(name,value)
+    shader_type: canvas_item|spatial|particles, shader_path: res://.gdshader
     """
     return shader(action=action, session_id=session_id, shader_path=shader_path, shader_type=shader_type,
                  code=code, append=append, scene_path=scene_path, node_path=node_path,
@@ -557,31 +290,8 @@ def tilemap_tool(
     pattern_name: str = "Pattern",
 ) -> dict:
     """
-    Tool centralizada para TileMaps y TileSets.
-    
-    Actions:
-        - "inspect_set": Inspeccionar TileSet
-        - "inspect_map": Inspeccionar TileMap
-        - "set_cell": Setear celda individual
-        - "terrain": Aplicar terrain painting
-        - "pattern": Crear/aplicar pattern
-    
-    Args:
-        action: Operación a realizar
-        session_id: ID de sesión activa
-        tileset_path: Ruta al TileSet
-        scene_path: Ruta a la escena
-        tilemap_path: Ruta al TileMap
-        layer: Índice de layer
-        coords: Coordenadas de celda {x, y}
-        atlas_coords: Coordenadas de atlas {x, y}
-        source_id: ID de source
-        alternative_tile: Tile alternativo
-        cells: Lista de celdas para terrain
-        terrain_set: Índice de terrain set
-        terrain: Índice de terrain
-        region: Región para pattern {x, y, w, h}
-        pattern_name: Nombre del pattern
+    TileMaps/TileSets. Actions: inspect_set|inspect_map|set_cell(atlas_coords)|terrain|pattern
+    coords{x,y}, atlas_coords{x,y}, layer, source_id, cells para terrain
     """
     return tilemap(action=action, session_id=session_id, tileset_path=tileset_path, scene_path=scene_path,
                   tilemap_path=tilemap_path, layer=layer, coords=coords,
@@ -615,36 +325,9 @@ def project_tool(
     scale_mode: str = "canvas_items",
 ) -> dict:
     """
-    Tool centralizada para configuración del proyecto Godot.
-    
-    Actions:
-        - "create": Crear nuevo proyecto Godot (configura daemon automáticamente)
-        - "setup_daemon": Configurar daemon Heren en proyecto existente
-        - "setting": Leer/escribir project setting
-        - "autoload": Añadir autoload
-        - "remove_autoload": Quitar autoload
-        - "shader_global": Setear shader global
-    
-    Args:
-        action: Operación a realizar
-        session_id: ID de sesión activa
-        project_path: (para create/setup_daemon) Ruta del proyecto
-        project_name: (para create) Nombre del proyecto
-        renderer: (para create) Renderer: "forward_plus", "mobile", "compatibility"
-        viewport_width: (para create) Ancho de ventana
-        viewport_height: (para create) Alto de ventana
-        window_mode: (para create) Modo: "windowed", "fullscreen", "exclusive_fullscreen"
-        fps_max: (para create) FPS máximo (0 = ilimitado)
-        vsync: (para create) Activar VSync
-        scale_mode: (para create) Modo de escala: "canvas_items", "viewport", "disabled"
-        setting_name: Nombre del setting (ej: "display/window/size/viewport_width")
-        value: Valor a escribir (None para leer)
-        autoload_name: Nombre del autoload
-        script_path: Ruta al script del autoload
-        global_name: Nombre del shader global
-    
-    Returns:
-        Dict con resultado de la operación
+    Config proyecto Godot. Actions: create|setup_daemon|setting|autoload|remove_autoload|shader_global
+    create: project_path/name/renderer(forward_plus|mobile|compatibility)/viewport_width/height/window_mode/fps_max/vsync
+    setting: "display/window/size/viewport_width"
     """
     return project(action=action, session_id=session_id, setting_name=setting_name, value=value,
                   autoload_name=autoload_name, script_path=script_path,
@@ -678,39 +361,8 @@ def debug_tool(
     debug_navigation: bool = False,
 ) -> dict:
     """
-    Tool centralizada para depuración de escenas Godot.
-    
-    Soporta dos modos:
-    1. Daemon mode (requiere daemon en editor): breakpoint, stack_trace, watch, console, stop_scene, get_editor_errors
-    2. Subprocess mode (standalone): run_scene, execute_editor_script, check_script_syntax
-    
-    Actions:
-        - "breakpoint": Setear/quitar breakpoint (requiere daemon)
-        - "stack_trace": Obtener stack trace (requiere daemon)
-        - "watch": Watch variable (requiere daemon)
-        - "console": Capturar output de consola (requiere daemon)
-        - "run_scene": Ejecutar escena vía subprocess (standalone)
-        - "stop_scene": Detener ejecución (requiere daemon)
-        - "get_editor_errors": Obtener errores del editor (requiere daemon)
-        - "execute_editor_script": Ejecutar GDScript vía subprocess (standalone, soporta FileAccess, ClassDB, etc.)
-        - "check_script_syntax": Verificar sintaxis GDScript vía subprocess (standalone)
-    
-    Args:
-        action: Operación a realizar
-        session_id: ID de sesión activa (requerido para daemon mode, opcional para subprocess si se da project_path)
-        script_path: Ruta al script (para breakpoint o check_script_syntax)
-        line: Número de línea (para breakpoint)
-        variable_name: Nombre de variable (para watch)
-        lines: Cantidad de líneas de consola a capturar
-        scene_path: Ruta a la escena (para run_scene, opcional)
-        script_code: Código GDScript a ejecutar (para execute_editor_script)
-        context: Variables de contexto (para execute_editor_script)
-        project_path: Ruta al proyecto (para subprocess mode, alternativa a session_id)
-        godot_path: Ruta al ejecutable de Godot (opcional, auto-detecta)
-        timeout: Timeout en segundos (para subprocess, default 30)
-        debug_collisions: Activar debug de colisiones (para run_scene)
-        debug_paths: Activar debug de paths (para run_scene)
-        debug_navigation: Activar debug de navegación (para run_scene)
+    Depuración. Actions: breakpoint(line)|stack_trace|watch(variable)|console(lines)|run_scene(scene_path)|stop_scene|get_editor_errors|execute_editor_script(script_code,context)|check_script_syntax
+    Daemon mode: breakpoint/stack_trace/watch/console/stop_scene/get_editor_errors | Subprocess: run_scene/execute_editor_script/check_script_syntax
     """
     return debug(action=action, session_id=session_id, script_path=script_path,
                 line=line, variable_name=variable_name, lines=lines, scene_path=scene_path,
@@ -733,21 +385,7 @@ def validate_tool(
     resource_path: str = None,
 ) -> dict:
     """
-    Tool centralizada para validación de escenas, scripts y recursos.
-    
-    Actions:
-        - "scene": Validar archivo .tscn
-        - "script": Validar script GDScript
-        - "node": Validar nodo en escena
-        - "resource": Validar recurso .tres
-    
-    Args:
-        action: Operación a realizar
-        session_id: ID de sesión activa
-        scene_path: Ruta a la escena
-        script_path: Ruta al script
-        node_path: Ruta al nodo
-        resource_path: Ruta al recurso
+    Validación. Actions: scene|script|node|resource. Verifica integridad de archivos Godot.
     """
     return validate(action=action, session_id=session_id, scene_path=scene_path,
                    script_path=script_path, node_path=node_path,
@@ -771,41 +409,8 @@ def signal(
     script_path: str = "",
 ) -> dict:
     """
-    Tool centralizada para gestión de señales y scripts de nodos.
-    
-    Actions:
-        - "connect": Conecta una señal de un nodo a un método de otro
-        - "disconnect": Desconecta una señal previamente conectada
-        - "list": Lista todas las señales (built-in y conectadas) de un nodo
-        - "set_script": Asigna un script GDScript a un nodo
-    
-    Args:
-        action: Operación a realizar
-        session_id: ID de sesión activa
-        scene_path: Ruta a la escena
-        from_node: Ruta del nodo emisor (para connect/disconnect/list)
-        signal_name: Nombre de la señal (para connect/disconnect)
-        to_node: Ruta del nodo receptor (para connect/disconnect)
-        method: Nombre del método callback (para connect/disconnect)
-        node_path: Ruta del nodo a modificar (para set_script)
-        script_path: Ruta al script .gd (para set_script)
-    
-    Returns:
-        Dict con resultado de la operación
-    
-    Examples:
-        # Conectar señal body_entered de Area2D a método del Player
-        signal("connect", session_id="abc", scene_path="res://Player.tscn",
-               from_node="Player/Area2D", signal_name="body_entered",
-               to_node="Player", method="_on_area_body_entered")
-        
-        # Listar señales de un nodo
-        signal("list", session_id="abc", scene_path="res://Player.tscn",
-               from_node="Player/Area2D")
-        
-        # Asignar script a un nodo
-        signal("set_script", session_id="abc", scene_path="res://Player.tscn",
-               node_path="Player", script_path="res://scripts/player.gd")
+    Señales y scripts entre nodos. Actions: connect(signal_name,from_node,to_node,method)|disconnect|list|set_script(script_path)
+    CONNECT_PERSIST flags las señales para que pack() las serialice nativamente en save.
     """
     return _signal_tool_impl(
         action=action,
@@ -835,44 +440,8 @@ def global_tool(
     global_name: str = "",
 ) -> dict:
     """
-    Tool centralizada para configuración global del proyecto Godot.
-    
-    Gestiona autoloads, project settings y shader globals.
-    Puede funcionar en modo directo (editando project.godot) o via daemon.
-    
-    Actions:
-        - "autoload": Añade, quita o lista autoloads
-            - Añadir: proporciona autoload_name + script_path
-            - Quitar: proporciona solo autoload_name
-            - Listar: no proporciones autoload_name
-        - "project_setting": Lee o escribe settings de project.godot
-            - Leer: proporciona solo setting_name
-            - Escribir: proporciona setting_name + value
-        - "shader_global": Gestiona shader globals (requiere daemon)
-    
-    Args:
-        action: Operación a realizar
-        session_id: ID de sesión activa
-        autoload_name: Nombre del autoload
-        script_path: Ruta al script del autoload
-        setting_name: Nombre del setting (formato "section/key")
-        value: Valor a escribir (None para leer)
-        global_name: Nombre del shader global
-    
-    Returns:
-        Dict con resultado de la operación
-    
-    Examples:
-        # Añadir autoload
-        global_tool("autoload", session_id="abc", autoload_name="GameManager",
-                   script_path="res://autoloads/game_manager.gd")
-        
-        # Listar autoloads
-        global_tool("autoload", session_id="abc")
-        
-        # Cambiar resolución
-        global_tool("project_setting", session_id="abc",
-                   setting_name="display/window/size/viewport_width", value=1920)
+    Config global del proyecto Godot. Actions: autoload(name,script_path)|project_setting(name,value)|shader_global(name,value)
+    setting: "display/window/size/viewport_width" en project.godot. autoload sin name lista autoloads.
     """
     return _global_tool_impl(
         action=action,
@@ -885,68 +454,12 @@ def global_tool(
     )
 
 
-# ============================================================
-# TOOL 15: INDEX (Índice de Tools)
-# ============================================================
-
-@mcp.tool()
-def index(
-    action: str = "list",
-    tool_name: str = None,
-    action_name: str = None,
-) -> dict:
-    """
-    Índice de todas las tools disponibles en Heren MCP.
-    
-    Usa esta tool para descubrir qué tools existen y cómo usarlas.
-    
-    Actions:
-        - "list": Lista todas las tools disponibles
-        - "info": Obtiene información detallada de una tool
-        - "example": Obtiene un ejemplo de uso
-    
-    Args:
-        action: Operación a realizar
-        tool_name: (para info/example) Nombre de la tool
-        action_name: (para example) Nombre del action
-    
-    Returns:
-        Dict con información de las tools
-    
-    Examples:
-        # Listar todas las tools
-        index(action="list")
-        
-        # Info de una tool
-        index(action="info", tool_name="scene")
-        
-        # Ejemplo de uso
-        index(action="example", tool_name="scene", action_name="create")
-    """
-    if action == "list":
-        return list_tools()
-    
-    elif action == "info":
-        if not tool_name:
-            return {"success": False, "error": "tool_name requerido para action='info'"}
-        info = get_tool_info(tool_name)
-        if "error" in info:
-            return {"success": False, "error": info["error"]}
-        return {"success": True, "tool": tool_name, **info}
-    
-    elif action == "example":
-        if not tool_name or not action_name:
-            return {"success": False, "error": "tool_name y action_name requeridos para action='example'"}
-        example = get_action_example(tool_name, action_name)
-        return {"success": True, "tool": tool_name, "action": action_name, "example": example}
-    
-    else:
-        return {"success": False, "error": f"Action no soportada: '{action}'. Use: list, info, example"}
-
-
 def main():
     parser = argparse.ArgumentParser(description="Heren Godot MCP Server")
     parser.add_argument("--project-path", help="Ruta al proyecto Godot (opcional)")
+    parser.add_argument("--transport", default="stdio", help="Transporte MCP: stdio, http, sse")
+    parser.add_argument("--host", default="0.0.0.0", help="Host para transporte HTTP/SSE")
+    parser.add_argument("--port", type=int, default=8000, help="Puerto para transporte HTTP/SSE")
     
     args = parser.parse_args()
     
@@ -955,16 +468,25 @@ def main():
     logger.info("Filosofia: Centralizado. Modular. Potente.")
     logger.info("=" * 60)
     
-    if args.project_path:
-        result = session_tool("open", project_path=args.project_path)
+    # Proyecto por defecto para discovery: crear uno vacio si no existe
+    project_path = args.project_path or os.environ.get("HEREN_PROJECT_PATH")
+    if project_path:
+        result = session_tool("open", project_path=project_path)
         if result.get("success"):
             logger.info(f"Sesion iniciada: {result['session_id']}")
         else:
             logger.error(f"Error iniciando sesion: {result.get('error')}")
     
     # Iniciar servidor MCP
-    logger.info("Iniciando servidor MCP...")
-    mcp.run()
+    logger.info(f"Iniciando servidor MCP (transport={args.transport})...")
+    if args.transport == "stdio":
+        mcp.run()
+    elif args.transport == "http":
+        mcp.run(transport="http", host=args.host, port=args.port)
+    elif args.transport == "sse":
+        mcp.run(transport="sse", host=args.host, port=args.port)
+    else:
+        raise ValueError(f"Transporte desconocido: {args.transport}")
 
 
 if __name__ == "__main__":

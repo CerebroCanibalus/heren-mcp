@@ -6,6 +6,7 @@ extends SceneTree
 const DEFAULT_PORT := 49631
 const PORT_RANGE := 100
 const HEARTBEAT_INTERVAL := 5.0
+const AUTOSAVE_INTERVAL := 10.0  # Guardar escenas sucias cada 10 segundos
 
 # ============================================================
 # ESTADO COMPARTIDO (inyectado en módulos)
@@ -16,10 +17,12 @@ var _peers: Dictionary = {}
 var _clients: Dictionary = {}
 var _scene_cache: Dictionary = {}
 var _resource_cache: Dictionary = {}
+var _scene_container: Node = null
 var _breakpoints: Dictionary = {}
 var _watch_list: Dictionary = {}
 var _handlers: Dictionary = {}
 var _heartbeat_accumulator: float = 0.0
+var _autosave_timer: float = 0.0
 var _inactivity_timer: float = 0.0
 const INACTIVITY_TIMEOUT: float = 600.0
 var _project_path: String = ""
@@ -56,6 +59,14 @@ func _initialize():
 	
 	# Configurar ventana no intrusiva
 	_configure_window()
+	
+	# Crear contenedor para escenas cargadas
+	_scene_container = Node2D.new()
+	_scene_container.name = "HerenSceneContainer"
+	# Fuera de pantalla: evita renderizar sin forzar visible=false en los hijos
+	_scene_container.position = Vector2(-1000000, -1000000)
+	get_root().add_child(_scene_container)
+	print("[HEREN] Contenedor de escenas creado")
 	
 	# Inicializar módulos
 	_init_modules()
@@ -117,6 +128,7 @@ func _init_modules():
 	_scene_ops = preload("heren_scene_ops.gd").new()
 	_scene_ops.init(self)
 	_scene_ops._scene_cache = _scene_cache
+	_scene_ops._scene_container = _scene_container
 	_scene_ops._serialize_value_callback = _core_utils.serialize_value
 	_scene_ops._deserialize_value_callback = _core_utils.deserialize_value
 	_scene_ops._dispatch_callback = _dispatch
@@ -126,6 +138,7 @@ func _init_modules():
 	_resource_ops.init(self)
 	_resource_ops._scene_cache = _scene_cache
 	_resource_ops._deserialize_value_callback = _core_utils.deserialize_value
+	_resource_ops._serialize_value_tscn_callback = _core_utils.serialize_value
 	
 	# Animation Operations
 	_animation_ops = preload("heren_animation_ops.gd").new()
@@ -184,6 +197,9 @@ func _register_handlers():
 	
 	# Batch
 	_handlers["batch"] = _scene_ops.handle_batch
+	
+	# Save All (auto-save & shutdown)
+	_handlers["save_all_dirty"] = _scene_ops.handle_save_all_dirty
 	
 	# Resource handlers
 	_handlers["create_resource"] = _resource_ops.handle_create_resource
@@ -267,6 +283,15 @@ func _process(delta):
 		return
 	
 	_process_heartbeat(delta)
+	
+	# Auto-save cada N segundos: escenas sucias se guardan solas
+	_autosave_timer += delta
+	if _autosave_timer >= AUTOSAVE_INTERVAL:
+		_autosave_timer = 0.0
+		var dirty = _scene_ops.get_dirty_scenes()
+		if dirty.size() > 0:
+			print("[HEREN] Auto-save: ", dirty.size(), " escenas sucias")
+			_scene_ops.handle_save_all_dirty({})
 	
 	# Re-aplicar protección anti-mouse-lock cada 0.5 segundos
 	_window_check_timer += delta
@@ -395,6 +420,14 @@ func _handle_health(params: Dictionary) -> Dictionary:
 
 func _handle_quit(params: Dictionary) -> Dictionary:
 	print("[HEREN] Recibido comando quit. Cerrando...")
+	
+	# ✅ Salvar todo lo sucio ANTES de cerrar
+	var dirty = _scene_ops.get_dirty_scenes()
+	if dirty.size() > 0:
+		print("[HEREN] Shutdown: guardando ", dirty.size(), " escenas sucias antes de cerrar...")
+		var save_result = _scene_ops.handle_save_all_dirty({})
+		print("[HEREN] Shutdown: ", save_result.get("saved", 0), " guardadas, ", save_result.get("errors", []).size(), " errores")
+	
 	for peer_id in _peers.keys():
 		_peers[peer_id].close(1000, "Server shutting down")
 	for scene_path in _scene_cache.keys():
@@ -403,6 +436,8 @@ func _handle_quit(params: Dictionary) -> Dictionary:
 			scene.queue_free()
 	_scene_cache.clear()
 	_resource_cache.clear()
+	if is_instance_valid(_scene_container):
+		_scene_container.queue_free()
 	if _server:
 		_server.stop()
 	call_deferred("_do_quit")

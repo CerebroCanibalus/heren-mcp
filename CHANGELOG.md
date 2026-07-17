@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `batch` - Batch operations for complex multi-step workflows
   - `debug` - Debugging tools (breakpoint/stack_trace/watch/console)
   - `validate` - Validation (scene/script/node/resource)
-  - `index` - Tool discovery (list/info/example)
+  - `annotation` - Annotate nodes for tool callbacks
 
 #### WebSocket Daemon
 - **Persistent Godot Daemon** via WebSocket (~20ms per operation)

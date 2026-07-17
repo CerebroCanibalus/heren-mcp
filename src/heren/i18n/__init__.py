@@ -118,13 +118,13 @@ def get_text(key: str, lang: str = "", **kwargs) -> str:
     
     Examples:
         >>> get_text("daemon_not_running")
-        'GodotDaemon no está en ejecución. Inicia una sesión con use_daemon=True.'
+        'GodotDaemon no está en ejecución. Inicia una sesión con session('open', ...).'
         
         >>> get_text("operation_successful", operation="conectar señal")
         'Operación "conectar señal" completada exitosamente.'
         
         >>> get_text("daemon_not_running", lang="en")
-        'GodotDaemon is not running. Start a session with use_daemon=True.'
+        'GodotDaemon is not running. Start a session with session('open', ...).'
     """
     # Usar idioma forzado si existe
     global _forced_language

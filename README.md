@@ -269,7 +269,7 @@ batch(session_id="abc123", operations=[
 | Tool | Acciones | ¿Qué hace? |
 |------|----------|-----------|
 | **session** | open, close, list, info, health | Controla el daemon de Godot. Abre, cierra, monitoriza |
-| **index** | list, info, example | Descubre tools y acciones. Pregunta "¿qué puedo hacer?" |
+
 
 ### 🎬 Escenas y Nodos
 

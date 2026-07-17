@@ -90,7 +90,7 @@ def print_banner():
         print("=" * 70 + "\n")
     print("\n" + "=" * 70)
     print(f"  {get_text('ui.title_main')}")
-    print("  Version: 2.0.0")
+    print("  Version: 1.2")
     print("=" * 70 + "\n")
 
 
@@ -122,43 +122,16 @@ def find_godot(os_type):
             os.path.expanduser(r"~\AppData\Local\Godot\Godot.exe"),
             os.path.expanduser(r"~\Godot\Godot.exe"),
         ]
-        # Buscar en PATH
-        for path_dir in os.environ.get("PATH", "").split(os.pathsep):
-            for name in ["godot.exe", "Godot.exe"]:
-                candidates.append(os.path.join(path_dir.strip('"'), name))
-    
-    elif os_type == "macos":
-        candidates = [
-            "/Applications/Godot.app/Contents/MacOS/Godot",
-            os.path.expanduser("~/Applications/Godot.app/Contents/MacOS/Godot"),
-            "/usr/local/bin/godot",
-            "/opt/homebrew/bin/godot",
-        ]
-        # Buscar en PATH
-        godot_path = shutil.which("godot")
-        if godot_path:
-            candidates.insert(0, godot_path)
-    
-    elif os_type == "linux":
-        candidates = [
-            "/usr/bin/godot",
-            "/usr/local/bin/godot",
-            "/usr/games/godot",
-            "/opt/godot/godot",
-            os.path.expanduser("~/.local/bin/godot"),
-        ]
-        # Buscar en PATH
-        godot_path = shutil.which("godot")
-        if godot_path:
-            candidates.insert(0, godot_path)
-        # Flatpak
-        candidates.append(os.path.expanduser("~/.local/share/flatpak/exports/bin/org.godotengine.Godot"))
-    
+    # Buscar en PATH primero
+    godot_path = shutil.which("godot") or shutil.which("Godot")
+    if godot_path:
+        candidates.insert(0, godot_path)
+
     # Buscar en candidatos
     for candidate in candidates:
         if candidate and os.path.exists(candidate):
             return candidate
-    
+
     return None
 
 
@@ -192,76 +165,32 @@ def install_python_dependencies():
 
 
 def setup_godot_daemon(project_path=None):
-    """Configura Godot Daemon en el proyecto."""
+    """Configura Godot Daemon en el proyecto usando el setup real de Heren."""
     print(f"🔌 {get_text('installer.configuring_daemon')}")
-    
-    # Buscar el archivo del daemon
-    daemon_source = Path(__file__).parent / "src" / "heren" / "daemon" / "godot_daemon.py"
-    
-    if not daemon_source.exists():
-        print("⚠️  godot_daemon.py not found in installation")
-        return False
-    
-    if project_path:
-        # Copiar daemon al proyecto
-        project_daemon_dir = Path(project_path) / "addons" / "heren_daemon"
-        project_daemon_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Crear script GDScript del daemon
-        daemon_gd = project_daemon_dir / "heren_daemon.gd"
-        daemon_gd_content = '''extends Node
 
-class_name HerenDaemon
-
-# Heren MCP - Godot Daemon
-# This script runs inside Godot editor
-# to allow WebSocket communication with Heren MCP
-
-const PORT = 9742
-var server: TCPServer
-var peers: Array[StreamPeerTCP] = []
-var websocket: WebSocketPeer
-
-func _ready():
-    print("[HerenDaemon] Starting...")
-    start_server()
-
-func start_server():
-    server = TCPServer.new()
-    var err = server.listen(PORT)
-    if err != OK:
-        push_error("[HerenDaemon] Could not start server on port " + str(PORT))
-        return
-    print("[HerenDaemon] WebSocket server listening on port " + str(PORT))
-
-func _process(delta):
-    if server and server.is_connection_available():
-        var peer = server.take_connection()
-        peers.append(peer)
-        print("[HerenDaemon] Client connected")
-    
-    for peer in peers:
-        if peer.get_available_bytes() > 0:
-            var data = peer.get_utf8_string(peer.get_available_bytes())
-            handle_message(data, peer)
-
-func handle_message(data: String, peer: StreamPeerTCP):
-    var response = JSON.stringify({"success": true, "message": "received", "data": data})
-    peer.put_utf8_string(response)
-
-func _exit_tree():
-    if server:
-        server.stop()
-    print("[HerenDaemon] Server stopped")
-'''
-        with open(daemon_gd, "w") as f:
-            f.write(daemon_gd_content)
-        
-        print(f"✅ {get_text('installer.daemon_configured', path=str(project_daemon_dir))}")
-        return True
-    else:
+    if not project_path:
         print("ℹ️  No project_path provided. Skipping daemon setup.")
         return True
+
+    project_file = Path(project_path) / "project.godot"
+    if not project_file.exists():
+        print(f"⚠️  No project.godot found at {project_path}. Skipping daemon setup.")
+        return False
+
+    try:
+        from heren.tools.project_tool import _action_setup_daemon
+        from heren.core.session_manager import get_session_manager
+
+        result = _action_setup_daemon(get_session_manager(), project_path)
+        if result.get("success"):
+            print(f"✅ {get_text('installer.daemon_configured', path=result.get('daemon_path'))}")
+            return True
+        else:
+            print(f"❌ Daemon setup failed: {result.get('error')}")
+            return False
+    except Exception as e:
+        print(f"❌ Error during daemon setup: {e}")
+        return False
 
 
 def configure_mcp_server(project_path=None, godot_path=None):
@@ -286,16 +215,21 @@ def configure_mcp_server(project_path=None, godot_path=None):
     }
     
     if project_path:
-        config["mcpServers"]["heren-godot"]["env"]["GODOT_PROJECT_PATH"] = str(project_path)
+        config["mcpServers"]["heren-godot"]["env"]["HEREN_PROJECT_PATH"] = str(project_path)
     
     if godot_path:
-        config["mcpServers"]["heren-godot"]["env"]["GODOT_PATH"] = str(godot_path)
+        config["mcpServers"]["heren-godot"]["env"]["GODOT_EXE"] = str(godot_path)
     
-    print("Add this to your MCP configuration (opencode.jsonc or similar):\n")
+    print("Add this to your MCP configuration (opencode.jsonc, claude_desktop_config.json, etc.):\n")
     print(json.dumps(config, indent=2))
     
     print("\n" + "-" * 70)
-    print(f"{get_text('installer.instructions')}")
+    print("Environment variables supported:")
+    print("  GODOT_EXE          Path to Godot executable")
+    print("  GODOT_PATH         Alias for GODOT_EXE")
+    print("  HEREN_PROJECT_PATH Default Godot project path")
+    print("  HEREN_PORT         Daemon WebSocket port (auto if not set)")
+    print("  HEREN_LOG_LEVEL    INFO, DEBUG")
     print("-" * 70)
     print(f"""
 {get_text('installer.step1')}

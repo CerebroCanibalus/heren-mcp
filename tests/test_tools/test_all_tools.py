@@ -1,5 +1,5 @@
 """
-Tests para tools restantes: batch, resource, animation, skeleton, shader, tilemap, project, debug, validate, index.
+Tests para tools restantes: batch, resource, animation, skeleton, shader, tilemap, project, debug, validate, signal, global.
 
 Cubre operaciones básicas de cada tool.
 """
@@ -39,25 +39,6 @@ class TestBatchTool:
         assert result["success_count"] == 4
         assert result["error_count"] == 0
     
-    def test_batch_fallback(self, fallback_session, temp_project):
-        """Test batch in fallback mode."""
-        from heren.tools.batch_tools import heren_batch
-        from heren.tools.scene_tool import scene_tool
-        
-        scene_path = f"res://batch_fallback_scene.tscn"
-        
-        # Create scene
-        scene_tool(action="create", session_id=fallback_session, scene_path=scene_path)
-        
-        operations = [
-            {"action": "get_tree", "params": {"scene_path": scene_path}}
-        ]
-        
-        result = heren_batch(session_id=fallback_session, operations=operations)
-        
-        assert result["success"] is True
-        assert result["success_count"] == 1
-
 
 @pytest.mark.tool
 @pytest.mark.integration
@@ -337,35 +318,3 @@ class TestValidateTool:
         assert result["valid"] is True
 
 
-@pytest.mark.tool
-class TestIndexTool:
-    """Test index tool operations."""
-    
-    def test_index_list(self):
-        """Test listing all tools."""
-        from heren.tools.tools_index import list_tools
-        
-        result = list_tools()
-        
-        assert "tools" in result
-        assert len(result["tools"]) >= 12
-        assert result["tools_count"] >= 12
-    
-    def test_index_info(self):
-        """Test getting tool info."""
-        from heren.tools.tools_index import get_tool_info
-        
-        result = get_tool_info("scene")
-        
-        assert "description" in result
-        assert "actions" in result
-        assert "get_tree" in result["actions"]
-    
-    def test_index_example(self):
-        """Test getting action example."""
-        from heren.tools.tools_index import get_action_example
-        
-        result = get_action_example("scene", "create")
-        
-        assert result is not None
-        assert len(result) > 0

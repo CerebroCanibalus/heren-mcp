@@ -6,7 +6,7 @@
   },
   
   "errors": {
-    "daemon_not_running": "GodotDaemon is not running. Start a session with use_daemon=True.",
+    "daemon_not_running": "GodotDaemon is not running. Start a session with session('open', ...).",
     "scene_not_found": "Scene not found: {scene_path}",
     "invalid_parameters": "Invalid parameters for operation '{operation}'",
     "node_not_found": "Node not found: {node_path}",
@@ -110,7 +110,7 @@
     "step3": "3. Configure your MCP client (OpenCode, Claude Desktop, etc.)",
     "step4": "4. Open your Godot project before using Heren MCP",
     "step5": "5. Start a session: session(action='open', project_path='D:/YourProject')",
-    "step6": "6. Ready! Use index(action='list') to see available tools.",
+    "step6": "6. Ready! Use session(action='list') to see available sessions, or scene(action='get_tree') to inspect a scene.",
     "summary_title": "Installation Summary",
     "summary_os": "Operating System: {os}",
     "summary_python": "Python: {version}",

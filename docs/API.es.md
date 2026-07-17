@@ -22,7 +22,7 @@ Heren MCP proporciona **15 tools centralizadas** que cubren todas las operacione
 | `validate` | Validación | `scene`, `script`, `node`, `resource` |
 | `signal` | Señales entre nodos | `connect`, `disconnect`, `list`, `set_script` |
 | `global` | Configuración global | `autoload`, `project_setting`, `shader_global` |
-| `index` | Descubrimiento de tools | `list`, `info`, `example` |
+
 
 ---
 
@@ -321,23 +321,6 @@ batch(
     ],
     stop_on_error=True
 )
-```
-
----
-
-## Tool Index
-
-Descubre las tools disponibles.
-
-```python
-# Listar todas las tools
-index(action="list")
-
-# Obtener info de una tool
-index(action="info", tool_name="scene")
-
-# Obtener ejemplo de uso
-index(action="example", tool_name="node", action_name="add")
 ```
 
 ---

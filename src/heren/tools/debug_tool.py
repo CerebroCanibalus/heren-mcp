@@ -235,37 +235,9 @@ def _action_run_scene_subprocess(
     **kwargs
 ) -> dict:
     """
-    Ejecutar escena. Intenta usar daemon primero (rendering real), 
-    fallback a subprocess headless.
+    Ejecutar escena via subprocess (standalone).
+    Para screenshots con rendering real, usa scene('screenshot', ...).
     """
-    # FIX: Intentar usar daemon primero (tiene ventana real con rendering)
-    session_manager = get_session_manager()
-    if session_id:
-        session = session_manager.get_session(session_id)
-        if session:
-            daemon = session_manager.get_godot_daemon(session.id)
-            if daemon and scene_path:
-                try:
-                    # El daemon carga la escena y toma screenshot
-                    daemon.call("load_scene", {"scene_path": scene_path})
-                    result = daemon.call("screenshot", {
-                        "scene_path": scene_path,
-                        "output_path": output_path,
-                        "resolution": resolution,
-                        "wait_frames": wait_frames
-                    })
-                    
-                    if result.get("success"):
-                        return {
-                            "success": True,
-                            "scene_path": scene_path,
-                            "screenshot_path": result.get("image_path"),
-                            "mode": "daemon_with_rendering",
-                            "note": "La escena se cargo en el daemon y se capturo screenshot"
-                        }
-                except Exception as e:
-                    logger.warning(f"[Debug] Daemon fallo para run_scene, usando fallback: {e}")
-    
     # Si no se proporciona project_path, intentar obtenerlo de la sesión
     if not project_path and session_id:
         session = session_manager.get_session(session_id)

@@ -1,19 +1,19 @@
-# Guía de Instalación - Heren MCP
+# Guia de Instalacion - Heren MCP
 
-Heren MCP es un servidor Model Context Protocol (MCP) para Godot Engine 4.x. Permite que asistentes de IA interactúen con proyectos Godot a través de un sistema de tools centralizado.
+Heren MCP es un servidor Model Context Protocol (MCP) para Godot Engine 4.x. Permite que asistentes de IA interactuen con proyectos Godot a traves de un sistema de tools centralizado.
 
 ## Requisitos
 
 - **Python**: 3.10 o superior
-- **Godot Engine**: 4.0 o superior (4.2+ recomendado)
+- **Godot Engine**: 4.2 o superior (4.6+ recomendado)
 - **Sistema Operativo**: Windows, Linux o macOS
 
-## Inicio Rápido
+## Inicio Rapido
 
 ### 1. Clonar el Repositorio
 
 ```bash
-git clone https://github.com/your-org/heren-mcp.git
+git clone https://github.com/CerebroCanibalus/heren-mcp.git
 cd heren-mcp
 ```
 
@@ -23,16 +23,22 @@ cd heren-mcp
 python install.py
 ```
 
-El instalador hará:
+O con un proyecto especifico:
+
+```bash
+python install.py --project-path D:/TuJuego
+```
+
+El instalador hara:
 - Detectar tu sistema operativo
-- Buscar tu instalación de Godot
+- Buscar tu instalacion de Godot
 - Instalar dependencias de Python
-- Configurar el Godot Daemon
-- Mostrar instrucciones de configuración MCP
+- Copiar los archivos del daemon Heren a tu proyecto Godot (`addons/heren/daemon/`)
+- Mostrar instrucciones de configuracion MCP
 
 ### 3. Configurar tu Cliente MCP
 
-Añade lo siguiente a la configuración de tu cliente MCP (ej: `opencode.jsonc`):
+Anade lo siguiente a la configuracion de tu cliente MCP (ej: `opencode.jsonc`):
 
 ```json
 {
@@ -41,7 +47,9 @@ Añade lo siguiente a la configuración de tu cliente MCP (ej: `opencode.jsonc`)
       "command": "python",
       "args": ["-m", "heren.server"],
       "env": {
-        "PYTHONPATH": "./src"
+        "PYTHONPATH": "./src",
+        "GODOT_EXE": "D:/Mis Juegos/Godot/Godot_v4.6.1-stable_win64.exe",
+        "HEREN_PROJECT_PATH": "D:/TuJuego"
       }
     }
   }
@@ -50,15 +58,15 @@ Añade lo siguiente a la configuración de tu cliente MCP (ej: `opencode.jsonc`)
 
 ### 4. Empezar a Usar Heren MCP
 
-Abre un proyecto Godot e inicia una sesión:
+Abre un proyecto Godot e inicia una sesion:
 
 ```python
 session(action="open", project_path="D:/TuJuego")
 ```
 
-## Instalación Manual
+## Instalacion Manual
 
-Si prefieres la instalación manual o el instalador automático falla:
+Si prefieres la instalacion manual o el instalador automatico falla:
 
 ### Paso 1: Instalar Dependencias Python
 
@@ -68,34 +76,54 @@ pip install -r requirements.txt
 
 Paquetes requeridos:
 - `fastmcp>=1.0.0` - Framework MCP
-- `pydantic>=2.0.0` - Validación de datos
-- `websocket-client>=1.6.0` - Comunicación WebSocket con Godot
+- `pydantic>=2.0.0` - Validacion de datos
+- `websocket-client>=1.6.0` - Comunicacion WebSocket con Godot
 
-### Paso 2: Configurar Godot Daemon (Opcional pero Recomendado)
+### Paso 2: Configurar Godot Daemon en tu Proyecto
 
-El Godot Daemon proporciona operaciones rápidas (~20ms). Para configurarlo:
+El Godot Daemon proporciona operaciones rapidas (~20ms). Para configurarlo, ejecuta desde el directorio de heren-mcp:
 
-1. Copia `src/heren/daemon/heren_daemon.gd` a la carpeta `addons/heren_daemon/` de tu proyecto Godot
-2. Habilita el addon en Configuración del Proyecto
+```bash
+python -m heren.tools.project_tool setup_daemon --project-path D:/TuJuego
+```
+
+O programaticamente:
+
+```python
+from heren.tools.project_tool import project_tool
+project_tool("setup_daemon", project_path="D:/TuJuego")
+```
+
+Esto copia todos los archivos del daemon (`heren_daemon.gd` + modulos) a `D:/TuJuego/addons/heren/daemon/`.
 
 ### Paso 3: Configurar Variables de Entorno (Opcional)
 
 ```bash
 # Windows
-set GODOT_PATH=D:\Mis Juegos\Godot\Godot.exe
-set GODOT_PROJECT_PATH=D:\TuJuego
+set GODOT_EXE=D:\Mis Juegos\Godot\Godot_v4.6.1-stable_win64.exe
+set HEREN_PROJECT_PATH=D:\TuJuego
 
 # Linux/macOS
-export GODOT_PATH=/usr/bin/godot
-export GODOT_PROJECT_PATH=/home/user/TuJuego
+export GODOT_EXE=/usr/bin/godot
+export HEREN_PROJECT_PATH=/home/user/TuJuego
 ```
+
+Variables soportadas:
+
+| Variable | Descripcion | Ejemplo |
+|----------|-------------|---------|
+| `GODOT_EXE` | Ruta al ejecutable de Godot | `D:/Godot/Godot.exe` |
+| `GODOT_PATH` | Alias de `GODOT_EXE` | `D:/Godot/Godot.exe` |
+| `HEREN_PROJECT_PATH` | Ruta por defecto del proyecto Godot | `D:/TuJuego` |
+| `HEREN_PORT` | Puerto WebSocket del daemon | `4567` |
+| `HEREN_LOG_LEVEL` | Nivel de logging | `INFO`, `DEBUG` |
 
 ## Notas por Plataforma
 
 ### Windows
 
-- Godot se instala comúnmente en `D:\Mis Juegos\Godot\` o `C:\Program Files\Godot\`
-- El instalador busca en estas rutas automáticamente
+- Godot se instala comunmente en `D:\Mis Juegos\Godot\` o `C:\Program Files\Godot\`
+- El instalador busca en estas rutas automaticamente
 - Si no encuentra Godot, especifica la ruta con `--godot-path`
 
 ### Linux
@@ -106,25 +134,30 @@ export GODOT_PROJECT_PATH=/home/user/TuJuego
 
 ### macOS
 
-- Godot típicamente está en `/Applications/Godot.app`
+- Godot tipicamente esta en `/Applications/Godot.app`
 - El instalador verifica directorios comunes de aplicaciones
-- También puedes instalar via Homebrew: `brew install --cask godot`
+- Tambien puedes instalar via Homebrew: `brew install --cask godot`
 
-## Verificación
+## Verificacion
 
-Prueba tu instalación:
+Prueba tu instalacion:
 
 ```bash
 python -c "from heren.server import mcp; print('Heren MCP cargado exitosamente')"
 ```
 
-Lista las tools disponibles:
+Abre una sesion y lista las escenas cargadas:
 
 ```python
-index(action="list")
+from heren.tools.session_tool import session_tool
+from heren.tools.scene_tool import scene_tool
+
+session = session_tool("open", project_path="D:/TuJuego")
+print(session)
+scene_tool("list_loaded", session_id=session["session_id"])
 ```
 
-## Solución de Problemas
+## Solucion de Problemas
 
 Consulta [TROUBLESHOOTING.md](TROUBLESHOOTING.md) para problemas comunes.
 
@@ -132,4 +165,4 @@ Consulta [TROUBLESHOOTING.md](TROUBLESHOOTING.md) para problemas comunes.
 
 - Lee la [Referencia API](API.es.md)
 - Aprende sobre la [Arquitectura](ARCHITECTURE.md)
-- Explora la [documentación en inglés](INSTALL.md)
+- Explora la [documentacion en ingles](INSTALL.md)

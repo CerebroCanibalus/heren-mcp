@@ -202,7 +202,7 @@ New tools can be added by:
 1. Creating a module in `src/heren/tools/`
 2. Implementing the tool function
 3. Registering in `server.py`
-4. Adding to `tools_index.py`
+4. Registering the new tool in `server.py`
 
 ## Performance Benchmarks
 

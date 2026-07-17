@@ -22,7 +22,7 @@ Heren MCP provides **15 centralized tools** that cover all Godot operations:
 | `validate` | Validation | `scene`, `script`, `node`, `resource` |
 | `signal` | Node signals | `connect`, `disconnect`, `list`, `set_script` |
 | `global` | Global configuration | `autoload`, `project_setting`, `shader_global` |
-| `index` | Tool discovery | `list`, `info`, `example` |
+
 
 ---
 
@@ -321,23 +321,6 @@ batch(
     ],
     stop_on_error=True
 )
-```
-
----
-
-## Index Tool
-
-Discovers available tools.
-
-```python
-# List all tools
-index(action="list")
-
-# Get tool info
-index(action="info", tool_name="scene")
-
-# Get usage example
-index(action="example", tool_name="node", action_name="add")
 ```
 
 ---
