@@ -198,30 +198,36 @@ func handle_execute_editor_script(params: Dictionary) -> Dictionary:
 		"result_type": typeof(result),
 		"script_code": script_code,
 		"context_keys": input_names
-	}
-
-
-func handle_run_scene(params: Dictionary) -> Dictionary:
-	var scene_path = params.get("scene_path", "")
-	
-	var editor_interface = _get_editor_interface_or_fail()
-	if editor_interface is Dictionary:
-		return editor_interface
-	
-	if scene_path.is_empty():
-		# Ejecutar escena actual
-		editor_interface.play_current_scene()
-		return {
-			"success": true,
-			"mode": "current_scene",
-			"note": "Ejecutando escena actual del editor"
-		}
-	else:
-		# Ejecutar escena específica
-		editor_interface.play_custom_scene(scene_path)
-		return {
-			"success": true,
-			"scene_path": scene_path,
+ func handle_run_scene(params: Dictionary) -> Dictionary:
+ 	var scene_path = params.get("scene_path", "")
+ 	
+ 	var editor_interface = _get_editor_interface_or_fail()
+ 	if editor_interface is Dictionary:
+ 		return editor_interface
+ 	
+ 	# FIX BUG #2: Salvar dirty y desenganchar cache antes de runtime
+ 	# para prevenir mutacion de transforms/estado durante gameplay
+ 	_daemon.save_all_dirty()
+ 	_daemon._detach_cached_scenes()
+ 	_daemon._scene_running = true
+ 	
+ 	if scene_path.is_empty():
+ 		# Ejecutar escena actual
+ 		editor_interface.play_current_scene()
+ 		return {
+ 			"success": true,
+ 			"mode": "current_scene",
+ 			"note": "Ejecutando escena actual del editor"
+ 		}
+ 	else:
+ 		# Ejecutar escena especifica
+ 		editor_interface.play_custom_scene(scene_path)
+ 		return {
+ 			"success": true,
+ 			"scene_path": scene_path,
+ 			"mode": "custom_scene",
+ 			"note": "Ejecutando escena especifica"
+ 		}
 			"mode": "custom_scene",
 			"note": "Ejecutando escena específica"
 		}

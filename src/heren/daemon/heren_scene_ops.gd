@@ -8,6 +8,9 @@ var _scene_cache: Dictionary = {}
 # Rastro de escenas modificadas desde el último guardado
 var _dirty_scenes: Dictionary = {}
 
+# 🐛 FIX BUG #3: Timestamps de modificación para detectar ediciones externas
+var _loaded_mtimes: Dictionary = {}
+
 # Contenedor donde se montan las escenas cargadas (inyectado por el daemon)
 var _scene_container: Node = null
 
@@ -126,6 +129,9 @@ func handle_load_scene(params: Dictionary) -> Dictionary:
 	
 	_scene_cache[scene_path] = scene_instance
 	
+	# 🐛 FIX BUG #3: Registrar timestamp de modificación para detectar ediciones externas
+	_loaded_mtimes[scene_path] = Time.get_unix_time_from_system()
+	
 	return {
 		"success": true,
 		"cached": false,
@@ -154,6 +160,7 @@ func handle_unload_scene(params: Dictionary) -> Dictionary:
 	_remove_scene_wrapper(scene_path)
 	_scene_cache.erase(scene_path)
 	_clear_dirty(scene_path)
+	_loaded_mtimes.erase(scene_path)  # 🐛 FIX BUG #3
 	
 	return {"success": true, "scene_path": scene_path}
 
@@ -749,6 +756,142 @@ func handle_batch(params: Dictionary) -> Dictionary:
 
 
 # ============================================================
+# ORCHESTRATE (multi-scene plan - reemplaza batch público)
+# ============================================================
+
+const _OP_MAP = {
+	"add": "add_node",
+	"set_prop": "set_property",
+	"remove": "remove_node",
+	"duplicate": "duplicate_node",
+	"rename": "rename_node",
+	"move": "move_node",
+	"signal": "connect_signal",
+	"unsignal": "disconnect_signal",
+	"script": "set_script",
+	"save": "save_scene",
+	"set_cell": "set_tilemap_cell",
+	"material": "create_shader_material",
+	"uniform": "set_shader_uniform",
+}
+
+func handle_orchestrate(params: Dictionary) -> Dictionary:
+	"""Ejecuta un plan multi-escena.
+	
+	plan: {scene_path: {ops: [{action: params}, ...], create?: {root_type, root_name}, save?: bool}}
+	on_error: "stop"|"continue"
+	auto_save: bool
+	"""
+	var plan = params.get("plan", {})
+	var on_error = params.get("on_error", "stop")
+	var auto_save = params.get("auto_save", true)
+	
+	if plan.is_empty():
+		return {"success": false, "error": "empty_plan", "message": "El plan no puede estar vacio"}
+	
+	var scenes_result = {}
+	var all_success = true
+	var total_ops = 0
+	var failed_ops = 0
+	
+	for scene_path in plan.keys():
+		var scene_plan = plan[scene_path]
+		var ops = scene_plan.get("ops", [])
+		var create_info = scene_plan.get("create", null)
+		var scene_save = scene_plan.get("save", false)
+		var scene_ok = true
+		var scene_results = []
+		var scene_ops_count = 0
+		
+		# Create scene if requested and not exists
+		if create_info is Dictionary and not FileAccess.file_exists(scene_path):
+			var cr = handle_create_scene({
+				"scene_path": scene_path,
+				"root_type": create_info.get("root_type", "Node2D"),
+				"root_name": create_info.get("root_name", "Root")
+			})
+			if not cr.get("success", false):
+				if on_error == "stop":
+					return {"success": false, "error": "create_failed", "scene": scene_path, "detail": cr}
+				scene_ok = false
+				failed_ops += 1
+				scenes_result[scene_path] = {"success": false, "error": "create_failed", "detail": cr}
+				continue
+		
+		# Ensure scene is loaded in cache
+		if not _scene_cache.has(scene_path):
+			var lr = handle_load_scene({"scene_path": scene_path})
+			if not lr.get("success", false):
+				if on_error == "stop":
+					return {"success": false, "error": "load_failed", "scene": scene_path, "detail": lr}
+				scene_ok = false
+				failed_ops += 1
+				scenes_result[scene_path] = {"success": false, "error": "load_failed", "detail": lr}
+				continue
+		
+		# Execute all ops for this scene
+		for i in range(ops.size()):
+			var op = ops[i]
+			var action = ""
+			var op_params = {}
+			for key in op.keys():
+				action = key
+				op_params = op[key]
+				break
+			
+			if not action:
+				continue
+			
+			total_ops += 1
+			scene_ops_count += 1
+			
+			# Map action to handler method
+			var method = _OP_MAP.get(action, action)
+			op_params["scene_path"] = scene_path
+			
+			var result = _dispatch_callback.call(method, op_params) if _dispatch_callback else {"success": false, "error": "dispatch_not_available"}
+			result["_op"] = action
+			result["_index"] = i
+			scene_results.append(result)
+			
+			if not result.get("success", false):
+				failed_ops += 1
+				scene_ok = false
+				if on_error == "stop":
+					break
+		
+		# Save scene if requested
+		if scene_save and scene_ok:
+			var sr = handle_save_scene({"scene_path": scene_path})
+			scene_results.append({"op": "save", "result": sr})
+		
+		scenes_result[scene_path] = {
+			"success": scene_ok,
+			"ops_count": scene_ops_count,
+			"results": scene_results
+		}
+		
+		if not scene_ok:
+			all_success = false
+	
+	# Auto-save all dirty at end
+	if auto_save:
+		var dirty = _dirty_scenes.keys()
+		if dirty.size() > 0:
+			print("[Orchestrate] Auto-save: ", dirty.size(), " escenas dirty")
+			handle_save_all_dirty({})
+	
+	return {
+		"success": all_success,
+		"scenes_count": plan.size(),
+		"total_ops": total_ops,
+		"failed_ops": failed_ops,
+		"scenes": scenes_result,
+		"note": "Revisa 'scenes' para resultados por escena"
+	}
+
+
+# ============================================================
 # SIGNAL & SCRIPT HANDLERS
 # ============================================================
 
@@ -934,6 +1077,16 @@ func handle_save_scene(params: Dictionary) -> Dictionary:
 			if copy_err == OK:
 				print("[Save] Backup creado: ", backup_path)
 	
+	# 🐛 FIX BUG #3: Detectar ediciones externas desde que se cargó
+	if _loaded_mtimes.has(scene_path):
+		var file = FileAccess.open(scene_path, FileAccess.READ)
+		if file:
+			var disk_mtime = file.get_modified_time()
+			var cached_mtime = _loaded_mtimes[scene_path]
+			if disk_mtime != cached_mtime:
+				push_warning("[Save] El archivo fue modificado externamente desde la ultima carga! " + scene_path)
+				print("[Save] Disk mtime: ", disk_mtime, " | Cached mtime: ", cached_mtime)
+	
 	var root = _scene_cache[scene_path]
 	
 	# FIX: Limpiar propiedades inyectadas por wrappers anteriores en el root
@@ -949,12 +1102,10 @@ func handle_save_scene(params: Dictionary) -> Dictionary:
 	if err != OK:
 		return {"success": false, "error": "pack_failed", "code": err}
 	
-	# Pipeline limpio: Godot maneja TODO nativamente.
-	# pack() serializa nodos, propiedades, sub-recursos y señales (Godot 4.2+).
-	# FLAG_BUNDLE_RESOURCES incrusta todos los recursos en el .tscn.
-	# resource_local_to_scene=true (seteado en _pre_save_resource_fix) fuerza embedding.
-	# No hay inyección de texto — eso causaba IDs duplicados y corrupción de referencias.
-	var save_flags = ResourceSaver.FLAG_BUNDLE_RESOURCES
+	# 🐛 FIX BUG #1: NO usar FLAG_BUNDLE_RESOURCES — fuerza embebido de scripts
+	# Usar FLAG_RELATIVE_PATHS para rutas relativas limpias. pack() ya serializa
+	# sub-recursos, señales y propiedades correctamente sin bundling forzado.
+	var save_flags = ResourceSaver.FLAG_RELATIVE_PATHS
 	err = ResourceSaver.save(packed, scene_path, save_flags)
 	if err != OK:
 		return {"success": false, "error": "save_failed", "code": err}
@@ -981,6 +1132,9 @@ func handle_save_scene(params: Dictionary) -> Dictionary:
 	
 	# Limpiar flag de sucio: esta escena ya está en disco
 	_clear_dirty(scene_path)
+	
+	# 🐛 FIX BUG #3: Actualizar mtime tras guardado exitoso
+	_loaded_mtimes[scene_path] = Time.get_unix_time_from_system()
 	
 	# Liberar mouse después de operación de I/O
 	if _daemon:
@@ -1052,6 +1206,7 @@ func handle_delete_scene(params: Dictionary) -> Dictionary:
 			scene.queue_free()
 		_scene_cache.erase(scene_path)
 		_clear_dirty(scene_path)
+		_loaded_mtimes.erase(scene_path)  # 🐛 FIX BUG #3
 	
 	# Delete file
 	var err = DirAccess.remove_absolute(scene_path)
@@ -1084,6 +1239,10 @@ func handle_rename_scene(params: Dictionary) -> Dictionary:
 		if _dirty_scenes.has(scene_path):
 			_dirty_scenes.erase(scene_path)
 			_dirty_scenes[new_path] = true
+		# 🐛 FIX BUG #3: Transferir mtime a la nueva ruta
+		if _loaded_mtimes.has(scene_path):
+			_loaded_mtimes[new_path] = _loaded_mtimes[scene_path]
+			_loaded_mtimes.erase(scene_path)
 	
 	# Rename file
 	var err = DirAccess.rename_absolute(scene_path, new_path)
@@ -1206,6 +1365,9 @@ func _pre_save_resource_fix(node: Node):
 			var value = node.get(prop_name)
 			if value and value is Resource:
 				var res = value as Resource
+				# 🐛 FIX BUG #1: NO tocar Scripts — deben quedar como ExtResource
+				if res is Script:
+					continue
 				# FIX: Marcar como local_to_scene para forzar incrustacion
 				if not res.resource_local_to_scene:
 					res.resource_local_to_scene = true

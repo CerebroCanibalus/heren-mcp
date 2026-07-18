@@ -29,6 +29,10 @@ var _project_path: String = ""
 var _is_ready: bool = false
 var _window_check_timer: float = 0.0
 
+# 🐛 FIX BUG #2: Estado de escena runtime + cache desenganchada
+var _scene_running: bool = false
+var _detached_cache: Dictionary = {}
+
 # ============================================================
 # MÓDULOS
 # ============================================================
@@ -196,7 +200,10 @@ func _register_handlers():
 	_handlers["list_signals"] = _scene_ops.handle_list_signals
 	
 	# Batch
-	_handlers["batch"] = _scene_ops.handle_batch
+ _handlers["batch"] = _scene_ops.handle_batch
+ 	
+ 	# Orchestrate (multi-scene plan)
+ 	_handlers["orchestrate"] = _scene_ops.handle_orchestrate
 	
 	# Save All (auto-save & shutdown)
 	_handlers["save_all_dirty"] = _scene_ops.handle_save_all_dirty
@@ -273,6 +280,9 @@ func _register_handlers():
 	_handlers["apply_terrain"] = _project_ops.handle_apply_terrain
 	_handlers["create_tile_pattern"] = _project_ops.handle_create_tile_pattern
 	
+	# Input Map
+	_handlers["input_map"] = _project_ops.handle_input_map
+	
 	print("[HEREN] ", _handlers.size(), " handlers registrados")
 
 # ============================================================
@@ -292,7 +302,10 @@ func _process(delta):
 		if dirty.size() > 0:
 			print("[HEREN] Auto-save: ", dirty.size(), " escenas sucias")
 			_scene_ops.handle_save_all_dirty({})
-	
+
+	# FIX BUG #2: Detectar fin de escena runtime y re-enganchar cache
+	_check_scene_stopped()
+
 	# Re-aplicar protección anti-mouse-lock cada 0.5 segundos
 	_window_check_timer += delta
 	if _window_check_timer >= 0.5:
@@ -455,3 +468,47 @@ func ensure_mouse_free():
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_NO_FOCUS, true)
 	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_MOUSE_PASSTHROUGH, true)
+
+# ============================================================
+# FIX BUG #2: Detach/Reattach cache durante escena runtime
+# ============================================================
+func _detach_cached_scenes() -> void:
+	"""Saca todas las escenas cacheadas del SceneTree para que el runtime no las mute."""
+	_detached_cache.clear()
+	for path in _scene_cache.keys():
+		var node = _scene_cache[path]
+		if is_instance_valid(node) and node.get_parent():
+			_detached_cache[path] = {
+				"node": node,
+				"parent": node.get_parent()
+			}
+			node.get_parent().remove_child(node)
+	print("[HEREN] Cache desenganchada: ", _detached_cache.size(), " escenas")
+
+func _reattach_cached_scenes() -> void:
+	"""Devuelve las escenas cacheadas al SceneTree tras terminar runtime."""
+	for path in _detached_cache.keys():
+		var entry = _detached_cache[path]
+		if is_instance_valid(entry.node) and is_instance_valid(entry.parent):
+			if not entry.node.get_parent():
+				entry.parent.add_child(entry.node)
+	print("[HEREN] Cache re-enganchada: ", _detached_cache.size(), " escenas")
+	_detached_cache.clear()
+
+func _check_scene_stopped() -> void:
+	"""Poll: si la escena runtime termino, re-engancha la cache."""
+	if not _scene_running:
+		return
+	if Engine.is_editor_hint():
+		var ed = call("get_editor_interface")
+		if ed and not ed.is_playing_scene():
+			_reattach_cached_scenes()
+			_scene_running = false
+			print("[HEREN] Runtime stopped, cache reattached")
+
+func save_all_dirty() -> void:
+	"""Conveniencia: guarda todas las escenas sucias."""
+	var dirty = _scene_ops.get_dirty_scenes()
+	if dirty.size() > 0:
+		print("[HEREN] Guardando ", dirty.size(), " escenas dirty...")
+		_scene_ops.handle_save_all_dirty({})

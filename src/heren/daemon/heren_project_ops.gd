@@ -366,3 +366,104 @@ func handle_create_tile_pattern(params: Dictionary) -> Dictionary:
 		}
 	
 	return {"success": false, "error": "pattern_creation_failed"}
+
+
+# ============================================================
+# INPUT MAP HANDLERS
+# ============================================================
+
+func handle_input_map(params: Dictionary) -> Dictionary:
+	"""Gestiona el input map del proyecto via ProjectSettings API.
+	type: add|remove|list|set_event
+	"""
+	var action_type = params.get("type", "list")
+	var action_name = params.get("action_name", "")
+	var event_data = params.get("event", {})
+	
+	match action_type:
+		"add":
+			if not action_name:
+				return {"success": false, "error": "action_name es requerido"}
+			if InputMap.has_action(action_name):
+				return {"success": true, "warning": "La accion ya existe", "action": action_name}
+			InputMap.add_action(action_name)
+			ProjectSettings.save()
+			return {"success": true, "action": action_name, "op": "added"}
+		
+		"remove":
+			if not action_name:
+				return {"success": false, "error": "action_name es requerido"}
+			if not InputMap.has_action(action_name):
+				return {"success": false, "error": "Accion no encontrada", "action": action_name}
+			InputMap.erase_action(action_name)
+			ProjectSettings.save()
+			return {"success": true, "action": action_name, "op": "removed"}
+		
+		"list":
+			var actions = []
+			for action in InputMap.get_actions():
+				if action.begins_with("ui_"):
+					continue  # Saltar built-ins del editor
+				var events = InputMap.action_get_events(action)
+				var event_list = []
+				for ev in events:
+					event_list.append({
+						"type": ev.get_class(),
+						"device": ev.device if ev.has_method("get_device") else 0,
+						"as_text": ev.as_text() if ev.has_method("as_text") else str(ev)
+					})
+				actions.append({
+					"name": action,
+					"event_count": events.size(),
+					"events": event_list
+				})
+			return {"success": true, "actions": actions, "count": actions.size()}
+		
+		"set_event":
+			if not action_name:
+				return {"success": false, "error": "action_name es requerido"}
+			if not InputMap.has_action(action_name):
+				InputMap.add_action(action_name)
+			# Crear InputEvent desde data
+			var ev = _create_input_event_from_data(event_data)
+			if ev is Dictionary:
+				return ev  # Error
+			InputMap.action_clear_events(action_name)
+			InputMap.action_add_event(action_name, ev)
+			ProjectSettings.save()
+			return {"success": true, "action": action_name, "event": ev.as_text() if ev.has_method("as_text") else str(ev)}
+	
+	return {"success": false, "error": "Tipo desconocido: " + action_type}
+
+
+func _create_input_event_from_data(data: Dictionary) -> Variant:
+	"""Crea un InputEvent a partir de un dict Python/JSON.
+	Soporta InputEventKey, InputEventMouseButton, InputEventJoypadButton.
+	"""
+	var type_name = data.get("type", "InputEventKey")
+	var new_event = null
+	
+	match type_name:
+		"InputEventKey":
+			new_event = InputEventKey.new()
+			new_event.keycode = data.get("keycode", 0)
+			new_event.physical_keycode = data.get("physical_keycode", 0)
+			new_event.ctrl_pressed = data.get("ctrl", false)
+			new_event.shift_pressed = data.get("shift", false)
+			new_event.alt_pressed = data.get("alt", false)
+			new_event.meta_pressed = data.get("meta", false)
+		
+		"InputEventMouseButton":
+			new_event = InputEventMouseButton.new()
+			new_event.button_index = data.get("button_index", MOUSE_BUTTON_LEFT)
+			new_event.ctrl_pressed = data.get("ctrl", false)
+			new_event.shift_pressed = data.get("shift", false)
+		
+		"InputEventJoypadButton":
+			new_event = InputEventJoypadButton.new()
+			new_event.button_index = data.get("button_index", 0)
+			new_event.device = data.get("device", 0)
+	
+	if not new_event:
+		return {"success": false, "error": "Tipo de InputEvent no soportado: " + type_name}
+	return new_event

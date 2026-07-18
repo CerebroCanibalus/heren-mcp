@@ -1,12 +1,16 @@
 """
-Project Tool - Gestión centralizada de configuración del proyecto.
+Project Tool - Gesti├│n centralizada de configuraci├│n del proyecto.
 
 Actions:
 - create: Crear nuevo proyecto Godot
 - setting: Leer/escribir project setting
-- autoload: Añadir/quitar autoload
-- group: Gestión de grupos globales
+- autoload: A├▒adir/quitar autoload
+- group: Gesti├│n de grupos globales
 - shader_global: Setear shader global
+- input_map: Gestionar input map (type: add|remove|list|set_event)
+
+NOTA: Los cambios de proyecto (setting, autoload, input_map, shader_global)
+requieren REINICIAR el Editor Godot para aplicar los cambios completamente.
 """
 
 import logging
@@ -36,6 +40,7 @@ def project(action: str, session_id: str = None, **kwargs) -> dict:
         "autoload": _action_autoload,
         "remove_autoload": _action_remove_autoload,
         "shader_global": _action_shader_global,
+        "input_map": _action_input_map,
     }
     
     if action not in actions_map:
@@ -282,6 +287,23 @@ def _action_remove_autoload(session_manager, session, autoload_name: str, **kwar
     if daemon:
         return daemon.call("remove_autoload", {"autoload_name": autoload_name})
     return {"success": False, "error": "Daemon no disponible"}
+
+
+def _action_input_map(session_manager, session, **kwargs) -> dict:
+    """Gestiona el input map del proyecto (type: add|remove|list|set_event)."""
+    if not session:
+        return {"success": False, "error": "No hay sesion activa"}
+    daemon = session_manager.get_godot_daemon(session.id)
+    if not daemon:
+        return {"success": False, "error": "Daemon no disponible"}
+    action_type = kwargs.get("type", "list")
+    action_name = kwargs.get("action_name", "")
+    event = kwargs.get("event", {})
+    return daemon.call("input_map", {
+        "type": action_type,
+        "action_name": action_name,
+        "event": event
+    })
 
 
 def _action_shader_global(session_manager, session, global_name: str, value, **kwargs) -> dict:

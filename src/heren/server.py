@@ -42,7 +42,7 @@ from heren.core.session_manager import get_session_manager
 from heren.tools.session_tool import session_tool
 from heren.tools.scene_tool import scene_tool
 from heren.tools.node_tool import node_tool
-from heren.tools.batch_tools import heren_batch
+from heren.tools.orchestrate_tool import orchestrate
 from heren.tools.resource_tool import resource
 from heren.tools.animation_tool import animation
 from heren.tools.skeleton_tool import skeleton
@@ -138,15 +138,17 @@ def node(
 # ============================================================
 
 @mcp.tool()
-def batch(
+def orchestrate(
     session_id: str,
-    operations: list[dict],
-    stop_on_error: bool = False,
+    plan: dict,
+    on_error: str = "stop",
+    auto_save: bool = True,
 ) -> dict:
     """
-    Multi-operación en 1 llamada. operations: [{action, params}]. stop_on_error: True para abortar en error.
+    Plan multi-escena. plan: {scene_path: {ops: [{action:params}], create?, save?}}.
+    auto_save=true guarda dirty al final. on_error="stop"|"continue".
     """
-    return heren_batch(session_id, operations, stop_on_error)
+    return orchestrate(session_id, plan, on_error, auto_save)
 
 
 # ============================================================
