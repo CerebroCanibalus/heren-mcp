@@ -189,6 +189,7 @@ func _register_handlers():
 	_handlers["rename_node"] = _scene_ops.handle_rename_node
 	_handlers["move_node"] = _scene_ops.handle_move_node
 	_handlers["set_property"] = _scene_ops.handle_set_property
+	_handlers["set_properties"] = _scene_ops.handle_set_properties
 	_handlers["get_node_properties"] = _scene_ops.handle_get_node_properties
 	_handlers["array_append"] = _scene_ops.handle_array_append
 	_handlers["array_remove"] = _scene_ops.handle_array_remove

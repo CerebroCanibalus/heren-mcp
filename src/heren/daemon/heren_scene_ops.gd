@@ -1,4 +1,4 @@
-﻿class_name HerenSceneOps
+class_name HerenSceneOps
 
 var _daemon: SceneTree = null
 
@@ -273,6 +273,7 @@ func handle_add_node(params: Dictionary) -> Dictionary:
 	var node_type = params.get("node_type", "Node")
 	var node_name = params.get("node_name", "")
 	var properties = params.get("properties", {})
+	var children = params.get("children", [])
 	
 	# Compatibilidad: si no hay parent_path pero sí node_path, usar node_path como parent_path
 	if not parent_path and params.has("node_path"):
@@ -337,6 +338,11 @@ func handle_add_node(params: Dictionary) -> Dictionary:
 	parent.add_child(new_node)
 	new_node.owner = root
 	
+	# B15: Crear hijos recursivos si se especificaron
+	if children.size() > 0:
+		for child_data in children:
+			_add_single_child(new_node, root, child_data)
+	
 	# Verificar que el nodo fue añadido correctamente usando el nombre real
 	var verify_node = parent.get_node_or_null(actual_name)
 	if not verify_node:
@@ -361,6 +367,34 @@ func handle_add_node(params: Dictionary) -> Dictionary:
 		"name_sanitized": name_was_sanitized,
 		"original_name": node_name if name_was_sanitized else null
 	}
+
+
+# B15: Helper para crear un hijo individual (usado por add_node recursivo)
+func _add_single_child(parent: Node, scene_root: Node, data: Dictionary) -> void:
+	"""Crea un nodo hijo con sus propiedades y sub-hijos recursivamente."""
+	var node_type = data.get("type", "Node")
+	var node_name = data.get("name", "Node")
+	var props = data.get("properties", {})
+	var grandchildren = data.get("children", [])
+	
+	var child = ClassDB.instantiate(node_type)
+	if not child:
+		return
+	child.name = node_name
+	
+	# Aplicar propiedades
+	for prop_name in props.keys():
+		var val = _deserialize_value_callback.call(props[prop_name]) if _deserialize_value_callback else props[prop_name]
+		if prop_name in child or prop_name in ["position", "rotation", "scale", "size", "text", "visible", "modulate"]:
+			child.set(prop_name, val)
+	
+	parent.add_child(child)
+	child.owner = scene_root
+	
+	# Recursion: crear hijos del hijo
+	if grandchildren.size() > 0:
+		for gd in grandchildren:
+			_add_single_child(child, scene_root, gd)
 
 
 func handle_remove_node(params: Dictionary) -> Dictionary:
@@ -445,6 +479,52 @@ func handle_set_property(params: Dictionary) -> Dictionary:
 		"property": property,
 		"old_value": str(old_value),
 		"new_value": str(deserialized)
+	}
+
+
+# ============================================================
+# SET PROPS (multi-propiedad en 1 call)
+# ============================================================
+
+func handle_set_properties(params: Dictionary) -> Dictionary:
+	"""Set multiple properties on a node in one call.
+	params: scene_path, node_path, properties: {prop_name: value, ...}
+	"""
+	var scene_path = params.get("scene_path", "")
+	var node_path = params.get("node_path", "")
+	var properties = params.get("properties", {})
+	
+	if not scene_path or not node_path or properties.is_empty():
+		return {"success": false, "error": "missing_params", "message": "scene_path, node_path y properties (dict) son requeridos"}
+	
+	if not _scene_cache.has(scene_path):
+		return {"success": false, "error": "scene_not_loaded"}
+	
+	var root = _scene_cache[scene_path]
+	var normalized_path = _normalize_node_path(node_path, root)
+	var node = root.get_node_or_null(normalized_path)
+	
+	if not node:
+		return {"success": false, "error": "node_not_found", "node_path": node_path}
+	
+	var results = {}
+	for prop_name in properties.keys():
+		var val = properties[prop_name]
+		var deserialized = _deserialize_value_callback.call(val) if _deserialize_value_callback else val
+		if prop_name in node:
+			node.set(prop_name, deserialized)
+			results[prop_name] = "ok"
+		else:
+			results[prop_name] = "property_not_found"
+	
+	_mark_dirty(scene_path)
+	
+	return {
+		"success": true,
+		"scene_path": scene_path,
+		"node_path": node_path,
+		"properties_count": properties.size(),
+		"results": results
 	}
 
 
@@ -762,6 +842,7 @@ func handle_batch(params: Dictionary) -> Dictionary:
 const _OP_MAP = {
 	"add": "add_node",
 	"set_prop": "set_property",
+	"set_props": "set_properties",
 	"remove": "remove_node",
 	"duplicate": "duplicate_node",
 	"rename": "rename_node",

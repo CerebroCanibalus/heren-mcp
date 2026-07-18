@@ -50,6 +50,8 @@ def node_tool(
 
     elif action == "set_prop":
         return _action_set_prop(manager, session_id, scene_path, node_path, property_name, value)
+    elif action == "set_props":
+        return _action_set_props(manager, session_id, scene_path, node_path, properties)
 
     elif action == "get_prop":
         return _action_get_prop(manager, session_id, scene_path, node_path, property_name)
@@ -72,7 +74,7 @@ def node_tool(
     else:
         return {
             "success": False,
-            "error": f"Action no soportada: '{action}'. Use: add, remove, set_prop, get_prop, duplicate, rename, move, array_append, array_remove"
+            "error": f"Action no soportada: '{action}'. Use: add, remove, set_prop, set_props, get_prop, duplicate, rename, move, array_append, array_remove"
         }
 
 
@@ -116,6 +118,20 @@ def _action_set_prop(manager, session_id: str, scene_path: str, node_path: str,
         "node_path": node_path,
         "property": prop_name,
         "value": value
+    })
+
+
+def _action_set_props(manager, session_id: str, scene_path: str, node_path: str,
+                      properties: dict) -> dict:
+    if not all([scene_path, node_path, properties]):
+        return {
+            "success": False,
+            "error": "scene_path, node_path y properties (dict) requeridos para action='set_props'"
+        }
+    return _execute_daemon(manager, session_id, "set_properties", {
+        "scene_path": scene_path,
+        "node_path": node_path,
+        "properties": properties
     })
 
 
