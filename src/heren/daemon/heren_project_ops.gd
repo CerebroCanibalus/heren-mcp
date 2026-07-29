@@ -6,6 +6,37 @@ func init(daemon: SceneTree) -> void:
 	_daemon = daemon
 
 
+func _value_to_godot_config(value) -> String:
+	"""Convierte un valor GDScript a su representación en project.godot."""
+	if value == null:
+		return "null"
+	if value is bool:
+		return "true" if value else "false"
+	if value is int:
+		return str(value)
+	if value is float:
+		return str(value)
+	if value is String or value is StringName:
+		return '"' + str(value).replace('"', '\\"') + '"'
+	if value is Vector2:
+		return "Vector2(" + str(value.x) + ", " + str(value.y) + ")"
+	if value is Vector2i:
+		return "Vector2i(" + str(value.x) + ", " + str(value.y) + ")"
+	if value is Vector3:
+		return "Vector3(" + str(value.x) + ", " + str(value.y) + ", " + str(value.z) + ")"
+	if value is Vector3i:
+		return "Vector3i(" + str(value.x) + ", " + str(value.y) + ", " + str(value.z) + ")"
+	if value is Color:
+		return "Color(" + str(value.r) + ", " + str(value.g) + ", " + str(value.b) + ", " + str(value.a) + ")"
+	if value is Array or value is PackedStringArray:
+		var items = []
+		for item in value:
+			items.append(_value_to_godot_config(item))
+		return "PackedStringArray(" + ", ".join(items) + ")" if value is PackedStringArray else "[" + ", ".join(items) + "]"
+	# Fallback
+	return '"' + str(value).replace('"', '\\"') + '"'
+
+
 # ============================================================
 # PROJECT HANDLERS
 # Extracted from heren_daemon.gd
@@ -39,7 +70,7 @@ func handle_set_project_setting(params: Dictionary) -> Dictionary:
 	var section = parts[0]
 	var key = parts[1]
 	var deserialized = _daemon._core_utils.deserialize_value(value)
-	var value_str = _daemon._value_to_godot_config(deserialized)
+	var value_str = _value_to_godot_config(deserialized)
 	
 	# Verificar si la sección existe
 	var section_pattern = "[" + section + "]"
@@ -428,7 +459,7 @@ func handle_input_map(params: Dictionary) -> Dictionary:
 			var ev = _create_input_event_from_data(event_data)
 			if ev is Dictionary:
 				return ev  # Error
-			InputMap.action_clear_events(action_name)
+			InputMap.action_erase_events(action_name)
 			InputMap.action_add_event(action_name, ev)
 			ProjectSettings.save()
 			return {"success": true, "action": action_name, "event": ev.as_text() if ev.has_method("as_text") else str(ev)}

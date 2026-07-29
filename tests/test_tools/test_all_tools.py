@@ -6,38 +6,53 @@ Cubre operaciones básicas de cada tool.
 
 import os
 import pytest
+import tempfile
+
+
+LAIKA_PROJECT = r"D:\Mis Juegos\LAIKA\LAIKA-Solarpunk-GJ\laika-gd"
+
+
+def _unique_name(prefix: str, ext: str = ".tscn") -> str:
+    return f"{prefix}_{tempfile.gettempprefix()}{os.urandom(4).hex()}{ext}"
 
 
 @pytest.mark.tool
 @pytest.mark.integration
 class TestBatchTool:
-    """Test batch tool operations."""
-    
+    """Test orchestrate tool operations."""
+
     @pytest.mark.daemon
     def test_batch_multiple_operations(self, daemon_session):
-        """Test batch with multiple node operations."""
-        from heren.tools.batch_tools import heren_batch
+        """Test orchestrate with multiple node operations."""
+        from heren.tools.orchestrate_tool import orchestrate
         from heren.tools.scene_tool import scene_tool
-        
-        scene_path = "res://batch_test_scene.tscn"
-        
-        # Create and load scene
+
+        scene_name = _unique_name("batch")
+        scene_path = f"res://{scene_name}"
+        full_path = os.path.join(LAIKA_PROJECT, scene_name)
+        if os.path.exists(full_path):
+            os.remove(full_path)
+
         scene_tool(action="create", session_id=daemon_session, scene_path=scene_path)
         scene_tool(action="load", session_id=daemon_session, scene_path=scene_path)
-        
-        # Batch operations
-        operations = [
-            {"action": "add", "params": {"scene_path": scene_path, "parent_path": ".", "node_type": "Node2D", "node_name": "Node1"}},
-            {"action": "add", "params": {"scene_path": scene_path, "parent_path": ".", "node_type": "Node2D", "node_name": "Node2"}},
-            {"action": "add", "params": {"scene_path": scene_path, "parent_path": ".", "node_type": "Node2D", "node_name": "Node3"}},
-            {"action": "save", "params": {"scene_path": scene_path}}
-        ]
-        
-        result = heren_batch(session_id=daemon_session, operations=operations)
-        
+
+        plan = {
+            scene_path: {
+                "ops": [
+                    {"action": "add", "params": {"parent_path": ".", "node_type": "Node2D", "node_name": "Node1"}},
+                    {"action": "add", "params": {"parent_path": ".", "node_type": "Node2D", "node_name": "Node2"}},
+                    {"action": "add", "params": {"parent_path": ".", "node_type": "Node2D", "node_name": "Node3"}},
+                ],
+                "save": True
+            }
+        }
+
+        result = orchestrate(session_id=daemon_session, plan=plan)
+
         assert result["success"] is True
-        assert result["success_count"] == 4
-        assert result["error_count"] == 0
+
+        if os.path.exists(full_path):
+            os.remove(full_path)
     
 
 @pytest.mark.tool
@@ -49,17 +64,26 @@ class TestResourceTool:
     def test_resource_create(self, daemon_session):
         """Test creating a resource."""
         from heren.tools.resource_tool import resource
-        
+
+        resource_name = _unique_name("material", ".tres")
+        resource_path = f"res://{resource_name}"
+        full_path = os.path.join(LAIKA_PROJECT, resource_name)
+        if os.path.exists(full_path):
+            os.remove(full_path)
+
         result = resource(
             action="create",
             session_id=daemon_session,
-            resource_path="res://test_material.tres",
+            resource_path=resource_path,
             resource_type="ShaderMaterial",
             properties={}
         )
-        
+
         assert result["success"] is True
         assert "resource_path" in result
+
+        if os.path.exists(full_path):
+            os.remove(full_path)
     
     @pytest.mark.daemon
     def test_resource_list(self, daemon_session):
@@ -197,16 +221,25 @@ class TestShaderTool:
     def test_shader_create(self, daemon_session):
         """Test creating shader."""
         from heren.tools.shader_tool import shader
-        
+
+        shader_name = _unique_name("shader", ".gdshader")
+        shader_path = f"res://{shader_name}"
+        full_path = os.path.join(LAIKA_PROJECT, shader_name)
+        if os.path.exists(full_path):
+            os.remove(full_path)
+
         result = shader(
             action="create",
             session_id=daemon_session,
-            shader_path="res://test_shader.gdshader",
+            shader_path=shader_path,
             shader_type="canvas_item",
             code="shader_type canvas_item; void fragment() { COLOR = vec4(1.0, 0.0, 0.0, 1.0); }"
         )
-        
+
         assert result["success"] is True
+
+        if os.path.exists(full_path):
+            os.remove(full_path)
 
 
 @pytest.mark.tool

@@ -73,7 +73,7 @@ def _get_daemon_source_dir() -> str:
     return ""
 
 
-def _action_setup_daemon(session_manager, project_path: str, **kwargs) -> dict:
+def _action_setup_daemon(session_manager, session, project_path: str, **kwargs) -> dict:
     """
     Configura el daemon Heren en un proyecto Godot existente.
     
@@ -89,6 +89,19 @@ def _action_setup_daemon(session_manager, project_path: str, **kwargs) -> dict:
     project_file = os.path.join(project_path, "project.godot")
     if not os.path.exists(project_file):
         return {"success": False, "error": f"No es un proyecto Godot válido: {project_path}"}
+    
+    # MATAR cualquier daemon existente para este proyecto (para recargar código nuevo)
+    with session_manager._sessions_lock:
+        for existing_session in list(session_manager._sessions.values()):
+            if existing_session.project_path == project_path:
+                if existing_session.godot_daemon:
+                    logger.info(f"[SetupDaemon] Matando daemon existente para proyecto: {project_path}")
+                    try:
+                        existing_session.godot_daemon.kill()
+                    except Exception as e:
+                        logger.warning(f"[SetupDaemon] Error matando daemon: {e}")
+                session_manager._cleanup_dead_session(existing_session)
+                break
     
     # Encontrar el directorio fuente del daemon
     daemon_source_dir = _get_daemon_source_dir()

@@ -9,6 +9,27 @@ var _watch_list: Dictionary = {}
 func init(daemon: SceneTree) -> void:
 	_daemon = daemon
 
+
+func _normalize_node_path(node_path: String, root: Node) -> String:
+	"""Normaliza un path de nodo para get_node_or_null."""
+	if node_path.is_empty():
+		return ""
+	if node_path == ".":
+		return "."
+	var root_name = root.name
+	if node_path == root_name:
+		return "."
+	if not node_path.contains("/"):
+		return node_path
+	var normalized = node_path
+	if normalized.begins_with("/root/"):
+		normalized = normalized.substr(6)
+	if normalized.begins_with(root_name + "/"):
+		normalized = normalized.substr(root_name.length() + 1)
+	elif normalized == root_name:
+		normalized = "."
+	return normalized
+
 # ============================================================
 # DEBUG HANDLERS
 # Extracted from heren_daemon.gd
@@ -56,9 +77,10 @@ func handle_screenshot(params: Dictionary) -> Dictionary:
 	var instance = scene.duplicate()
 	viewport.add_child(instance)
 	
-	# Esperar frames
+	# Esperar frames (sincrono: forzar render)
 	for i in range(wait_frames):
-		await _daemon.create_timer(0.0).timeout
+		RenderingServer.force_sync()
+		RenderingServer.force_draw(true)
 	
 	# Capturar
 	var texture = viewport.get_texture()
@@ -198,38 +220,38 @@ func handle_execute_editor_script(params: Dictionary) -> Dictionary:
 		"result_type": typeof(result),
 		"script_code": script_code,
 		"context_keys": input_names
- func handle_run_scene(params: Dictionary) -> Dictionary:
- 	var scene_path = params.get("scene_path", "")
- 	
- 	var editor_interface = _get_editor_interface_or_fail()
- 	if editor_interface is Dictionary:
- 		return editor_interface
- 	
- 	# FIX BUG #2: Salvar dirty y desenganchar cache antes de runtime
- 	# para prevenir mutacion de transforms/estado durante gameplay
- 	_daemon.save_all_dirty()
- 	_daemon._detach_cached_scenes()
- 	_daemon._scene_running = true
- 	
- 	if scene_path.is_empty():
- 		# Ejecutar escena actual
- 		editor_interface.play_current_scene()
- 		return {
- 			"success": true,
- 			"mode": "current_scene",
- 			"note": "Ejecutando escena actual del editor"
- 		}
- 	else:
- 		# Ejecutar escena especifica
- 		editor_interface.play_custom_scene(scene_path)
- 		return {
- 			"success": true,
- 			"scene_path": scene_path,
- 			"mode": "custom_scene",
- 			"note": "Ejecutando escena especifica"
- 		}
+	}
+
+
+func handle_run_scene(params: Dictionary) -> Dictionary:
+	var scene_path = params.get("scene_path", "")
+	
+	var editor_interface = _get_editor_interface_or_fail()
+	if editor_interface is Dictionary:
+		return editor_interface
+	
+	# FIX BUG #2: Salvar dirty y desenganchar cache antes de runtime
+	# para prevenir mutacion de transforms/estado durante gameplay
+	_daemon.save_all_dirty()
+	_daemon._detach_cached_scenes()
+	_daemon._scene_running = true
+	
+	if scene_path.is_empty():
+		# Ejecutar escena actual
+		editor_interface.play_current_scene()
+		return {
+			"success": true,
+			"mode": "current_scene",
+			"note": "Ejecutando escena actual del editor"
+		}
+	else:
+		# Ejecutar escena especifica
+		editor_interface.play_custom_scene(scene_path)
+		return {
+			"success": true,
+			"scene_path": scene_path,
 			"mode": "custom_scene",
-			"note": "Ejecutando escena específica"
+			"note": "Ejecutando escena especifica"
 		}
 
 
@@ -378,10 +400,11 @@ func handle_validate_node(params: Dictionary) -> Dictionary:
 		return {"success": false, "error": "scene_not_loaded"}
 	
 	var root = _daemon._scene_cache[scene_path]
-	var node = root.get_node_or_null(node_path)
+	var normalized_path = _normalize_node_path(node_path, root)
+	var node = root.get_node_or_null(NodePath(normalized_path))
 	
 	if not node:
-		return {"success": false, "error": "node_not_found"}
+		return {"success": false, "error": "node_not_found", "node_path": node_path, "normalized": normalized_path}
 	
 	var errors = []
 	var warnings = []
@@ -509,9 +532,10 @@ func handle_inspect_visual(params: Dictionary) -> Dictionary:
 		var axes = _create_axes_indicator()
 		overlay.add_child(axes)
 	
-	# Wait frames
+	# Wait frames (sincrono: forzar render)
 	for i in range(3):
-		await _daemon.create_timer(0.0).timeout
+		RenderingServer.force_sync()
+		RenderingServer.force_draw(true)
 	
 	# Capture
 	var texture = viewport.get_texture()

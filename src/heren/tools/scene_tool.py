@@ -6,7 +6,6 @@ Modo UNICO: GodotDaemon. Todas las operaciones via WebSocket ~20ms.
 """
 
 import logging
-from typing import Optional
 
 from heren.core.session_manager import get_session_manager
 
@@ -16,12 +15,15 @@ logger = logging.getLogger(__name__)
 def scene_tool(
     action: str,
     session_id: str,
-    scene_path: str = None,
-    output_path: str = None,
+    scene_path: str | None = None,
+    output_path: str | None = None,
     resolution: tuple = (1920, 1080),
     wait_frames: int = 3,
     format: str = "png",
     quality: float = 0.9,
+    instance_path: str | None = None,
+    parent_path: str | None = None,
+    node_name: str | None = None,
     **kwargs,
 ) -> dict:
     manager = get_session_manager()
@@ -90,6 +92,20 @@ def scene_tool(
             "new_path": kwargs.get("new_path", "")
         })
 
+    elif action == "instantiate":
+        if not instance_path:
+            return {
+                "success": False,
+                "error": "missing_instance_path",
+                "message": "action='instantiate' requiere instance_path"
+            }
+        return _execute_daemon(manager, session_id, "instantiate_scene", {
+            "scene_path": scene_path,
+            "instance_path": instance_path,
+            "parent_path": parent_path or ".",
+            "node_name": node_name or ""
+        })
+
     elif action == "add_ext_resource":
         if not kwargs.get("resource_path"):
             return {
@@ -122,7 +138,7 @@ def scene_tool(
     else:
         return {
             "success": False,
-            "error": f"Action no soportada: '{action}'. Use: get_tree, save, load, unload, list_loaded, screenshot, create, delete, rename, add_ext_resource, set_editable_paths"
+            "error": f"Action no soportada: '{action}'. Use: get_tree, save, load, unload, list_loaded, screenshot, create, delete, rename, instantiate, add_ext_resource, set_editable_paths"
         }
 
 

@@ -122,14 +122,14 @@ func _init_modules():
 	print("[HEREN] Inicializando módulos...")
 	
 	# Core Utils (estático, no necesita instancia)
-	_core_utils = preload("heren_core_utils.gd")
+	_core_utils = load("res://addons/heren/daemon/heren_core_utils.gd")
 	
 	# Window Manager
-	_window_mgr = preload("heren_window_manager.gd").new()
+	_window_mgr = load("res://addons/heren/daemon/heren_window_manager.gd").new()
 	_window_mgr.init(self)
 	
 	# Scene Operations
-	_scene_ops = preload("heren_scene_ops.gd").new()
+	_scene_ops = load("res://addons/heren/daemon/heren_scene_ops.gd").new()
 	_scene_ops.init(self)
 	_scene_ops._scene_cache = _scene_cache
 	_scene_ops._scene_container = _scene_container
@@ -138,26 +138,26 @@ func _init_modules():
 	_scene_ops._dispatch_callback = _dispatch
 	
 	# Resource Operations
-	_resource_ops = preload("heren_resource_ops.gd").new()
+	_resource_ops = load("res://addons/heren/daemon/heren_resource_ops.gd").new()
 	_resource_ops.init(self)
 	_resource_ops._scene_cache = _scene_cache
 	_resource_ops._deserialize_value_callback = _core_utils.deserialize_value
 	_resource_ops._serialize_value_tscn_callback = _core_utils.serialize_value
 	
 	# Animation Operations
-	_animation_ops = preload("heren_animation_ops.gd").new()
+	_animation_ops = load("res://addons/heren/daemon/heren_animation_ops.gd").new()
 	_animation_ops.init(self)
 	
 	# Shader Operations
-	_shader_ops = preload("heren_shader_ops.gd").new()
+	_shader_ops = load("res://addons/heren/daemon/heren_shader_ops.gd").new()
 	_shader_ops.init(self)
 	
 	# Debug Operations
-	_debug_ops = preload("heren_debug_ops.gd").new()
+	_debug_ops = load("res://addons/heren/daemon/heren_debug_ops.gd").new()
 	_debug_ops.init(self)
 	
 	# Project Operations
-	_project_ops = preload("heren_project_ops.gd").new()
+	_project_ops = load("res://addons/heren/daemon/heren_project_ops.gd").new()
 	_project_ops.init(self)
 	
 	print("[HEREN] 7 módulos inicializados")
@@ -194,17 +194,25 @@ func _register_handlers():
 	_handlers["array_append"] = _scene_ops.handle_array_append
 	_handlers["array_remove"] = _scene_ops.handle_array_remove
 	
+	# Nuevos handlers - Opción A (Evolutiva)
+	_handlers["get_node_info"] = _scene_ops.handle_get_node_info
+	_handlers["get_children"] = _scene_ops.handle_get_children
+	_handlers["find_nodes"] = _scene_ops.handle_find_nodes
+	_handlers["instantiate_scene"] = _scene_ops.handle_instantiate_scene
+	_handlers["set_owner"] = _scene_ops.handle_set_owner
+	_handlers["reorder_child"] = _scene_ops.handle_reorder_child
+	
 	# Signal handlers
 	_handlers["set_script"] = _scene_ops.handle_set_script
 	_handlers["connect_signal"] = _scene_ops.handle_connect_signal
 	_handlers["disconnect_signal"] = _scene_ops.handle_disconnect_signal
 	_handlers["list_signals"] = _scene_ops.handle_list_signals
 	
-	# Batch
- _handlers["batch"] = _scene_ops.handle_batch
- 	
- 	# Orchestrate (multi-scene plan)
- 	_handlers["orchestrate"] = _scene_ops.handle_orchestrate
+# Batch
+	_handlers["batch"] = _scene_ops.handle_batch
+	
+	# Orchestrate (multi-scene plan)
+	_handlers["orchestrate"] = _scene_ops.handle_orchestrate
 	
 	# Save All (auto-save & shutdown)
 	_handlers["save_all_dirty"] = _scene_ops.handle_save_all_dirty

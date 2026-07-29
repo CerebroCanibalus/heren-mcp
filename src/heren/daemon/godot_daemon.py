@@ -101,6 +101,9 @@ class GodotDaemon:
             return False
         
         # Preparar argumentos
+        # El daemon debe ejecutarse desde el directorio del addon para que preload() funcione
+        addon_dir = os.path.dirname(self.daemon_path)
+        
         args = [
             self.godot_path,
             "--path", self.project_path,
@@ -110,6 +113,7 @@ class GodotDaemon:
         ]
         
         logger.debug(f"[Daemon] Comando: {' '.join(args)}")
+        logger.debug(f"[Daemon] Working directory: {addon_dir}")
         
         try:
             # Iniciar proceso
@@ -119,7 +123,7 @@ class GodotDaemon:
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,  # Line-buffered
-                cwd=self.project_path
+                cwd=addon_dir  # Ejecutar desde el directorio del addon para preload()
             )
             
             # Esperar a que el daemon esté listo

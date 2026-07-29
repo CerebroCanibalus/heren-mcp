@@ -344,7 +344,7 @@ func handle_add_node(params: Dictionary) -> Dictionary:
 			_add_single_child(new_node, root, child_data)
 	
 	# Verificar que el nodo fue añadido correctamente usando el nombre real
-	var verify_node = parent.get_node_or_null(actual_name)
+	var verify_node = parent.get_node_or_null(NodePath(actual_name))
 	if not verify_node:
 		return {
 			"success": false,
@@ -551,6 +551,268 @@ func handle_get_node_properties(params: Dictionary) -> Dictionary:
 		"node_path": node_path,
 		"node_type": node.get_class(),
 		"properties": get_node_properties_dict(node)
+	}
+
+
+# ============================================================
+# NUEVOS HANDLERS - Opción A (Evolutiva)
+# ============================================================
+
+func handle_get_node_info(params: Dictionary) -> Dictionary:
+	"""Info completa de un nodo: tipo, propiedades, hijos, señales conectadas."""
+	var scene_path = params.get("scene_path", "")
+	var node_path = params.get("node_path", "")
+	
+	if not scene_path or not node_path:
+		return {"success": false, "error": "missing_params"}
+	
+	if not _scene_cache.has(scene_path):
+		return {"success": false, "error": "scene_not_loaded"}
+	
+	var root = _scene_cache[scene_path]
+	var normalized_path = _normalize_node_path(node_path, root)
+	var node = root.get_node_or_null(normalized_path)
+	
+	if not node:
+		return {"success": false, "error": "node_not_found", "node_path": node_path}
+	
+	# Hijos
+	var children = []
+	for child in node.get_children():
+		children.append({
+			"name": child.name,
+			"type": child.get_class(),
+			"path": child.get_path()
+		})
+	
+	# Senales conectadas
+	var signals = []
+	for sig in node.get_signal_list():
+		var connections = node.get_signal_connection_list(sig.name)
+		for conn in connections:
+			signals.append({
+				"signal": sig.name,
+				"callable": conn.callable,
+				"flags": conn.flags
+			})
+	
+	return {
+		"success": true,
+		"scene_path": scene_path,
+		"node_path": node_path,
+		"node_type": node.get_class(),
+		"properties": get_node_properties_dict(node),
+		"children": children,
+		"signals": signals,
+		"owner": node.get_owner().get_path() if node.get_owner() else "",
+		"groups": node.get_groups()
+	}
+
+
+func handle_get_children(params: Dictionary) -> Dictionary:
+	"""Lista los hijos directos de un nodo."""
+	var scene_path = params.get("scene_path", "")
+	var node_path = params.get("node_path", "")
+	
+	if not scene_path or not node_path:
+		return {"success": false, "error": "missing_params"}
+	
+	if not _scene_cache.has(scene_path):
+		return {"success": false, "error": "scene_not_loaded"}
+	
+	var root = _scene_cache[scene_path]
+	var normalized_path = _normalize_node_path(node_path, root)
+	var node = root.get_node_or_null(normalized_path)
+	
+	if not node:
+		return {"success": false, "error": "node_not_found", "node_path": node_path}
+	
+	var children = []
+	for child in node.get_children():
+		children.append({
+			"name": child.name,
+			"type": child.get_class(),
+			"path": child.get_path(),
+			"owner": child.get_owner().get_path() if child.get_owner() else ""
+		})
+	
+	return {
+		"success": true,
+		"scene_path": scene_path,
+		"node_path": node_path,
+		"children": children,
+		"count": children.size()
+	}
+
+
+func handle_find_nodes(params: Dictionary) -> Dictionary:
+	"""Busca nodos por nombre, tipo o propiedad."""
+	var scene_path = params.get("scene_path", "")
+	var query = params.get("query", "")
+	var by = params.get("by", "name")  # name, type, property
+	var property_name = params.get("property_name", "")
+	var property_value = params.get("property_value", null)
+	
+	if not scene_path or not query:
+		return {"success": false, "error": "missing_params"}
+	
+	if not _scene_cache.has(scene_path):
+		return {"success": false, "error": "scene_not_loaded"}
+	
+	var root = _scene_cache[scene_path]
+	var results = []
+	
+	# Búsqueda recursiva usando pila (evita lambdas recursivas)
+	var stack = [root]
+	while stack.size() > 0:
+		var node = stack.pop_back()
+		var is_match = false
+		if by == "name" and query in node.name:
+			is_match = true
+		elif by == "type" and query in node.get_class():
+			is_match = true
+		elif by == "property" and property_name in node and node.get(property_name) == property_value:
+			is_match = true
+		
+		if is_match:
+			results.append({
+				"name": node.name,
+				"type": node.get_class(),
+				"path": node.get_path(),
+				"owner": node.get_owner().get_path() if node.get_owner() else ""
+			})
+		
+		for child in node.get_children():
+			stack.append(child)
+	
+	return {
+		"success": true,
+		"scene_path": scene_path,
+		"query": query,
+		"by": by,
+		"results": results,
+		"count": results.size()
+	}
+
+
+func handle_instantiate_scene(params: Dictionary) -> Dictionary:
+	"""Instancia una escena (PackedScene) como hijo de un nodo."""
+	var scene_path = params.get("scene_path", "")
+	var instance_path = params.get("instance_path", "")  # res://Enemy.tscn
+	var parent_path = params.get("parent_path", ".")
+	var node_name = params.get("node_name", "")
+	
+	if not scene_path or not instance_path:
+		return {"success": false, "error": "missing_params", "message": "scene_path e instance_path son requeridos"}
+	
+	if not _scene_cache.has(scene_path):
+		return {"success": false, "error": "scene_not_loaded"}
+	
+	var root = _scene_cache[scene_path]
+	var normalized_parent = _normalize_node_path(parent_path, root)
+	var parent = root.get_node_or_null(normalized_parent)
+	
+	if not parent:
+		return {"success": false, "error": "parent_not_found", "parent_path": parent_path}
+	
+	# Cargar la escena a instanciar
+	var packed_scene = ResourceLoader.load(instance_path)
+	if not packed_scene:
+		return {"success": false, "error": "instance_not_found", "instance_path": instance_path}
+	
+	if not packed_scene is PackedScene:
+		return {"success": false, "error": "not_packed_scene", "instance_path": instance_path}
+	
+	var instance = packed_scene.instantiate()
+	if not instance:
+		return {"success": false, "error": "instantiate_failed"}
+	
+	if node_name != "":
+		instance.name = node_name
+	
+	parent.add_child(instance)
+	
+	# IMPORTANTE: Setear owner para que los cambios persistan en la escena padre
+	instance.owner = root
+	
+	_mark_dirty(scene_path)
+	
+	return {
+		"success": true,
+		"scene_path": scene_path,
+		"instance_path": instance_path,
+		"node_name": instance.name,
+		"node_path": instance.get_path(),
+		"node_type": instance.get_class()
+	}
+
+
+func handle_set_owner(params: Dictionary) -> Dictionary:
+	"""Setea el owner de un nodo (crítico para escenas instanciadas)."""
+	var scene_path = params.get("scene_path", "")
+	var node_path = params.get("node_path", "")
+	var owner_path = params.get("owner_path", ".")
+	
+	if not scene_path or not node_path:
+		return {"success": false, "error": "missing_params"}
+	
+	if not _scene_cache.has(scene_path):
+		return {"success": false, "error": "scene_not_loaded"}
+	
+	var root = _scene_cache[scene_path]
+	var normalized_node = _normalize_node_path(node_path, root)
+	var normalized_owner = _normalize_node_path(owner_path, root)
+	
+	var node = root.get_node_or_null(normalized_node)
+	var owner = root.get_node_or_null(normalized_owner)
+	
+	if not node:
+		return {"success": false, "error": "node_not_found", "node_path": node_path}
+	if not owner:
+		return {"success": false, "error": "owner_not_found", "owner_path": owner_path}
+	
+	node.owner = owner
+	_mark_dirty(scene_path)
+	
+	return {
+		"success": true,
+		"scene_path": scene_path,
+		"node_path": node_path,
+		"owner_path": owner_path
+	}
+
+
+func handle_reorder_child(params: Dictionary) -> Dictionary:
+	"""Cambia el orden de un hijo (importante para render order en 2D)."""
+	var scene_path = params.get("scene_path", "")
+	var node_path = params.get("node_path", "")
+	var new_index = params.get("new_index", 0)
+	
+	if not scene_path or not node_path:
+		return {"success": false, "error": "missing_params"}
+	
+	if not _scene_cache.has(scene_path):
+		return {"success": false, "error": "scene_not_loaded"}
+	
+	var root = _scene_cache[scene_path]
+	var normalized_path = _normalize_node_path(node_path, root)
+	var node = root.get_node_or_null(normalized_path)
+	
+	if not node:
+		return {"success": false, "error": "node_not_found", "node_path": node_path}
+	
+	var parent = node.get_parent()
+	if not parent:
+		return {"success": false, "error": "no_parent"}
+	
+	parent.move_child(node, new_index)
+	_mark_dirty(scene_path)
+	
+	return {
+		"success": true,
+		"scene_path": scene_path,
+		"node_path": node_path,
+		"new_index": new_index
 	}
 
 
@@ -913,12 +1175,8 @@ func handle_orchestrate(params: Dictionary) -> Dictionary:
 		# Execute all ops for this scene
 		for i in range(ops.size()):
 			var op = ops[i]
-			var action = ""
-			var op_params = {}
-			for key in op.keys():
-				action = key
-				op_params = op[key]
-				break
+			var action = op.get("action", "")
+			var op_params = op.get("params", {})
 			
 			if not action:
 				continue
@@ -1162,11 +1420,12 @@ func handle_save_scene(params: Dictionary) -> Dictionary:
 	if _loaded_mtimes.has(scene_path):
 		var file = FileAccess.open(scene_path, FileAccess.READ)
 		if file:
-			var disk_mtime = file.get_modified_time()
+			var disk_mtime = FileAccess.get_modified_time(scene_path)
 			var cached_mtime = _loaded_mtimes[scene_path]
 			if disk_mtime != cached_mtime:
 				push_warning("[Save] El archivo fue modificado externamente desde la ultima carga! " + scene_path)
 				print("[Save] Disk mtime: ", disk_mtime, " | Cached mtime: ", cached_mtime)
+			file.close()
 	
 	var root = _scene_cache[scene_path]
 	

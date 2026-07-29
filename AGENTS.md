@@ -427,6 +427,15 @@ session("open", project_path="D:/MiProyectoExistente")
 | 2026-05-15 | **Shader type deduplicación** | `handle_create_shader` detecta si el código ya incluye `shader_type` y no lo duplica. |
 | 2026-05-15 | **Mesh inline con __type** | `set_property` acepta `{"__type":"Resource","resource_type":"SphereMesh",...}` para crear meshes primitivos inline. |
 | 2026-07-17 | **Eliminado fallback sin daemon (v3.0)** | GodotInterface, TemplateEngine, execute_gdscript, y todo el código de scripts CLI eliminados. GodotDaemon es el ÚNICO modo. ~412 + 1277 líneas de basura eliminadas. |
+| 2026-07-28 | **Fix parse error: palabras reservadas GDScript** | `signal` y `match` usados como nombres de variable causaban parse errors. Renombrados a `sig`/`is_match`. |
+| 2026-07-28 | **Fix parse error: funciones anidadas** | `func _search(node: Node)` dentro de `handle_find_nodes` no es válido en GDScript. Reemplazado por búsqueda iterativa con pila. |
+| 2026-07-28 | **Fix heren_debug_ops.gd corrupto** | Bloque entre `execute_editor_script` y `handle_run_scene` tenía `}` faltante + indentación rota. Reconstruido. |
+| 2026-07-28 | **Fix project setting write** | `handle_set_project_setting` llamaba a `_daemon._value_to_godot_config()` inexistente. Añadido helper local `_value_to_godot_config()`. |
+| 2026-07-28 | **Fix screenshot sincrónico** | `await _daemon.create_timer(0.0).timeout` en handlers requería soporte async en `_dispatch`. Reemplazado por `RenderingServer.force_sync/draw` para mantener dispatch síncrono. |
+| 2026-07-28 | **Fix validate_node root path** | `handle_validate_node` no normalizaba `node_path="Root"`. Añadido `_normalize_node_path()` para soportar paths absolutos y nombre del root. |
+| 2026-07-28 | **Fix orchestrate action/params** | `handle_orchestrate` esperaba ops como `{"add": {...}}`. Actualizado a formato cliente `{"action": "add", "params": {...}}`. |
+| 2026-07-28 | **Nuevos handlers expuestos** | `node_tool` ahora expone: get_info, get_children, find, set_owner, reorder, add+script/signals. `scene_tool` ahora expone instantiate. |
+| 2026-07-28 | **Tests únicos y limpieza** | Tests que crean archivos ahora usan nombres únicos + cleanup, evitando falsos negativos por archivos residuales. |
 
 ---
 
@@ -468,6 +477,14 @@ session("open", project_path="D:/MiProyectoExistente")
 | **ExtResource faltante** | `_serialize_resource_properties` detecta recursos externos y genera `[ext_resource]` + `ExtResource()` | 2026-05-15 |
 | **Sub-resource ID corrupcion en save** | `_inject_into_tscn` creaba IDs duplicados (`_heren_N`) que rompian las referencias de nodos. Fix: eliminar sub-resource injection — `pack()`+`FLAG_BUNDLE_RESOURCES` ya los maneja. Solo connections se inyectan. | 2026-07-17 |
 | **Pipeline de guardado refactorizado (v3.0)** | Eliminadas 462 líneas de inyección de texto que corrompían .tscn. El pipeline ahora es: `_pre_save_resource_fix → pack() → save(FLAG_BUNDLE_RESOURCES) → verify`. `handle_connect_signal` usa `CONNECT_PERSIST` para que `pack()` serialice señales nativamente. Funciones eliminadas: `_collect_sub_resources`, `_collect_connections`, `_inject_into_tscn`, `_serialize_resource_properties`, `_update_node_subresource_ref`, `_serialize_value_tscn`. | 2026-07-17 |
+| **Parse error: palabras reservadas** | `signal` → `sig`, `match` → `is_match` en variables GDScript | 2026-07-28 |
+| **Parse error: función anidada** | `func _search()` en `handle_find_nodes` reemplazada por búsqueda iterativa con pila | 2026-07-28 |
+| **heren_debug_ops.gd corrupto** | Reconstruido bloque entre `execute_editor_script` y `handle_run_scene` (`}` faltante + indentación) | 2026-07-28 |
+| **project setting write roto** | Añadido helper `_value_to_godot_config()` en `heren_project_ops.gd` | 2026-07-28 |
+| **Screenshot async roto** | Reemplazado `await create_timer()` por `RenderingServer.force_sync/draw` para mantener handlers síncronos | 2026-07-28 |
+| **validate_node no acepta "Root"** | Añadido `_normalize_node_path()` en `heren_debug_ops.gd` | 2026-07-28 |
+| **orchestrate formato ops** | Actualizado a `{"action": "...", "params": {...}}` | 2026-07-28 |
+| **Tests con nombres fijos** | Tests ahora usan nombres únicos + cleanup para evitar falsos negativos por archivos residuales | 2026-07-28 |
 
  ### Nuevas Features (v3.0)
 
