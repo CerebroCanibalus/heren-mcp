@@ -63,7 +63,20 @@ func handle_setting(args: Dictionary) -> Dictionary:
 		return {"ok": false, "error": "setting_name required"}
 
 	if args.has("value"):
-		var value: Variant = HerenCoordsScript.deserialize_value(args.get("value"))
+		var raw: Variant = args.get("value")
+		# IMPORTANT: path strings (res://...) stay as PLAIN strings.
+		# deserialize_value() would load() them into a Resource, and
+		# ProjectSettings.save() serializes a Resource as
+		# Resource("uid://X", "res://...") using a synthetic uid that may
+		# NOT exist in uid_cache (files created by MCP have no .uid yet) ->
+		# Godot rejects the whole project.godot and the project won't open.
+		var value: Variant = raw
+		if raw is String:
+			var str_value := raw as String
+			if not str_value.begins_with("res://") and not str_value.begins_with("user://"):
+				value = HerenCoordsScript.deserialize_value(raw)
+		else:
+			value = HerenCoordsScript.deserialize_value(raw)
 		ProjectSettings.set_setting(setting_name, value)
 		var err := ProjectSettings.save()
 		if err != OK:
