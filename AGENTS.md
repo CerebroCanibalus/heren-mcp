@@ -505,6 +505,11 @@ session("open", project_path="D:/MiProyectoExistente")
 | **resource_handlers sin undo/redo** | Los recursos son archivos externos (no la escena viva) → las mutaciones (create/update/delete/edit_script) NO pasan por EditorUndoRedoManager. Usan `EditorFileSystem.update_file()` para que el editor reimporte/olvide el archivo. | 2026-08-03 |
 | **delete usa DirAccess, no ResourceLoader** | `ResourceLoader` no tiene API de borrado. `handle_delete` abre `DirAccess.open(base_dir)` + `remove(file)`. `EditorFileSystem.update_file` tras borrar para que el editor olvide el archivo. | 2026-08-03 |
 | **E2E recursos: 10/10 ops** | create (PhysicsMaterial con props), read, update (bounce/rough), delete, list (tipos via EditorFileSystem.get_file_type), create_script, read_script, edit_script (append). Validado contra proyecto temporal + ws_test_server. | 2026-08-03 |
+| **Fase 2 migrada al completo** | project (setting/autoload/input_map/shader_global), shader (create/edit/validate/material/uniform), animation+skeleton (player/library/tracks/keys/state_machine + Skeleton2D/3D), signal (connect/disconnect/list/set_script), validate (scene/script/node/resource), debug (play/stop/is_playing), tilemap (inspect/set_cell/terrain/pattern). Editor real + undo/redo para mutaciones de escena; EditorFileSystem.update_file para recursos/scripts/shader. | 2026-08-03 |
+| **skeleton fusionado en animation_handlers.gd** | Como en v3 (animation_ops.gd), skeleton vive en el mismo archivo que animación. El dispatcher registra el prefijo `skeleton` al MISMO nodo handler: `skeleton/skeleton_create` → `handle_skeleton_create`. | 2026-08-03 |
+| **project/autoload list via property_list** | `ProjectSettings.get_autoload_list()` falla en parse del editor (GDScriptNativeClass no lo expone en 4.x). Fix: iterar `get_property_list()` filtrando prefijo `autoload/`. | 2026-08-03 |
+| **Harness: separador de secuencia** | ws_test_server unía líneas con `;` y re-spliteaba — el JSON de args con `;` (código shader/GDScript) rompía la secuencia a mitad. Fix: `--sequence-file` lee líneas DIRECTAS (sin join/split). | 2026-08-03 |
+| **debug sin breakpoint/stack_trace/watch** | Esas acciones de v3 dependían del debugger subprocess. Con editor real: play/stop/is_playing nativos; los errores se ven en el panel Output (sin API pública estable para leerlos desde plugin). | 2026-08-03 |
 
  ### Nuevas Features (v3.0)
 
@@ -1061,9 +1066,15 @@ guardar/leer `last_project` (1 clave), no para cachear estado de trabajo.
 - [x] `coords.gd` (serialización unificada ADR-005: heredada + Vector2i/3i, Transform2D/3D, Quaternion, StringName, Plane/AABB) — `handlers/coords.gd`
 - [x] `node_handlers.gd` (CRUD nodos + coordenadas expandidas) — validado E2E real 14/14 ops (add, remove, set_prop(s), get_prop, get_info, get_children, find, duplicate, rename, move, set_owner, reorder, array_append/remove)
 - [x] `resource_handlers.gd` (EditorFileSystem, imports) — validado E2E real 10/10 ops (create, read, update, delete, list, create_script, read_script, edit_script)
-- [ ] `animation_handlers.gd`, `skeleton_handlers.gd`, `shader_handlers.gd`
-- [ ] `tilemap_handlers.gd` (sistema completo §13.7)
-- [ ] `project_handlers.gd`, `debug_handlers.gd`, `validation_handlers.gd`
+- [x] `animation_handlers.gd` — animaciones (player + AnimationLibrary + tracks + keys) y esqueletos 2D/3D (bones, rest, skin, attachment) en un solo archivo (como v3 daemon animation_ops). Validado E2E real 12/12 ops.
+- [x] `shader_handlers.gd` — shaders .gdshader (create/edit/validate) + ShaderMaterial (material/uniform). Validado E2E real 4/4 ops.
+- [x] `project_handlers.gd` — ProjectSettings (setting get/set), autoloads, input_map, shader_global. Validado E2E real.
+- [x] `signal_handlers.gd` — connect/disconnect/list/set_script con CONNECT_PERSIST. Validado E2E real.
+- [x] `validate_handlers.gd` — scene/script/node/resource contra escena viva. Validado E2E real.
+- [x] `debug_handlers.gd` — play_main_scene/play_custom_scene/stop/is_playing (editor real, no subprocess). Validado E2E real.
+- [x] `tilemap_handlers.gd` — inspect_set/inspect_map/set_cell/terrain/pattern. Sintaxis OK; requiere TileSet real para E2E completo.
+- [ ] `skeleton_handlers.gd` — ✅ fusionado en animation_handlers.gd (mismo prefijo `skeleton` registrado al handler de animación)
+- [ ] `visual_handlers.gd` (Fase 3)
 - **Criterio**: cada módulo con tests GUT en editor.
 
 **Fase 3 — Sistema de Visión (2-3 sem).** Objetivo: §13.6 completo.

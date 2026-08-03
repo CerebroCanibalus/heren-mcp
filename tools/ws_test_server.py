@@ -133,15 +133,19 @@ async def main() -> None:
     args = parser.parse_args()
 
     if args.sequence_file and not args.sequence:
-        with open(args.sequence_file, "r", encoding="utf-8") as f:
-            args.sequence = ";".join(
-                line.strip() for line in f if line.strip()
-            )
+        # Read lines directly (no ";" join/split — JSON args may contain ";"
+        # e.g. shader code, GDScript statements).
+        args.sequence_lines = [
+            line.strip() for line in open(args.sequence_file, "r", encoding="utf-8")
+            if line.strip() and not line.strip().startswith("#")
+        ]
 
     print(f"[SERVER] listening on ws://127.0.0.1:{args.port}", flush=True)
 
     async def server_handler(ws):
-        if args.sequence:
+        if getattr(args, "sequence_lines", None):
+            await run_sequence(ws, args.sequence_lines)
+        elif args.sequence:
             commands = [c.strip() for c in args.sequence.split(";") if c.strip()]
             await run_sequence(ws, commands)
         elif args.command:
