@@ -532,6 +532,9 @@ session("open", project_path="D:/MiProyectoExistente")
 | **Harness: separador de secuencia** | ws_test_server unía líneas con `;` y re-spliteaba — el JSON de args con `;` (código shader/GDScript) rompía la secuencia a mitad. Fix: `--sequence-file` lee líneas DIRECTAS (sin join/split). | 2026-08-03 |
 | **debug sin breakpoint/stack_trace/watch** | Esas acciones de v3 dependían del debugger subprocess. Con editor real: play/stop/is_playing nativos; los errores se ven en el panel Output (sin API pública estable para leerlos desde plugin). | 2026-08-03 |
 | **LAIKA SOLO pruebas, fuente en addons/heren** | Corrección de flujo: el plugin v4 se versiona ÚNICAMENTE en `heren-mcp/addons/heren/`. LAIKA es banco de pruebas — se copia el addon para validar, NUNCA se commitea ahí. Eliminado daemon v3 legacy de LAIKA (ruido; el plugin v4 no lo usa) → sintaxis del plugin 100% limpia. | 2026-08-03 |
+| **Bridge Python v4 (temporal)** | Mientras HerenServer.exe (Rust) no existe, `src/heren/v4/bridge.py` hace usable el MCP HOY: FastMCP (14 tools v3) → ws_server.py → EditorPlugin v4. `run.bat` ahora lanza el bridge. Auto-launch del editor en `session/open`. | 2026-08-03 |
+| **Fix: id JSON-RPC float→string** | El plugin GDScript devuelve `str(id)` del request → `"1.0"` si el server envió int. El match exacto `"1"` ≠ `"1.0"` daba timeout en TODAS las tools. Fix: `_pop_pending()` tolera `1`, `"1"`, `"1.0"` (normalización float). El harness no correlaciona ids por eso no fallaba. | 2026-08-03 |
+| **Harness en primer plano** | `ws_test_server.py` como Start-Job de PowerShell pierde timing/output (falsos negativos). Debe correr en primer plano; el editor Godot sí puede ir en job. | 2026-08-03 |
 
  ### Nuevas Features (v3.0)
 
@@ -908,7 +911,6 @@ HerenEditorPlugin  (EditorPlugin GDScript → EditorInterface)
 **Módulos ELIMINADOS de v3**: `godot_daemon.py`, `session_manager.py` (Python), `heren_daemon.gd` orquestador, `heren_window_manager.gd`, `heren_server_manager.gd`, `heren_tscn_serializer.gd` (la serialización de .tscn la hace Godot nativamente al guardar).
 
 ### 13.4 Features Genéricas a Aportar a FlojoMCP
-
 > Regla de hierro: **nada específico de Godot**. Todo es infraestructura MCP reutilizable. El plugin Godot es el primer consumidor, no el dueño.
 
 | Feature | Crate/Feature | Descripción | Beneficiarios |
@@ -1145,6 +1147,31 @@ guardar/leer `last_project` (1 clave), no para cachear estado de trabajo.
 | Eventos push saturan tokens | Media | Medio | Rate-limit + presupuesto + pull-first |
 | Plugin depende de editor abierto | Alta | Bajo | Documentar; modo headless para CI futuro |
 
+### 13.12 Bridge Temporal Python (2026-08-03) — MCP v4 usable HOY
+
+> **Mientras HerenServer.exe (Rust/Fase 4) no existe**, el MCP vuelve a ser usable
+> con un **bridge Python** (`src/heren/v4/`). OpenCode ya habla con el plugin v4.
+
+```
+OpenCode (stdio MCP) <-> bridge.py (FastMCP) <-> ws_server.py (WS) <-> EditorPlugin v4
+```
+
+**Componentes** (todos en `src/heren/v4/`):
+- `bridge.py` — FastMCP con las 14 tools v3 (mismas firmas, sin session_id: el editor conectado ES la sesión). `python -m heren.v4.bridge`.
+- `ws_server.py` — server WS local; registra `ConnectedEditors[project_path]`; correlaciona `tools/call` por id JSON-RPC. **Gotcha: el plugin devuelve el id como `"1.0"` (float→string); el match de ids tolera `"1"`, `1`, `"1.0"` → `_pop_pending()`**.
+- `godot_launcher.py` — auto-launch del editor: `GODOT_EXE` env → lista fija 4.7.1/4.6.1 → PATH; `ensure_plugin_installed()` copia `addons/heren/`; `enable_plugin_in_project()`; `read/write_last_project` (.heren/session.json, 1 clave ADR-004).
+- `tools/install_plugin.py` — CLI setup: `--project X [--source] [--remove]`. Copia addon + habilita `[editor_plugins]` en project.godot sin BOM.
+- `run.bat` — ahora lanza `python -m heren.v4.bridge` (fallback a v3 legacy si falla).
+- `setup_plugin.bat` — setup rápido: instala el plugin en un proyecto (default LAIKA).
+
+**Flujo validado E2E real** (2026-08-03, Godot 4.6.1 + plugin v4):
+`session/open` (auto-launch Godot con plugin) → `godot_ready` → `scene/get_open_scenes` → `scene/open` → `node/add Player` (undoable) → `project/setting` (persiste) → `validate/scene` → `debug/is_playing`. ✅
+
+**Gotchas de validación:**
+1. El harness `ws_test_server.py` funciona en PRIMER PLANO; como Start-Job de PowerShell pierde timing/output (tests falsos negativos).
+2. `install_plugin.py` elimina `.uid` sidecars (Godot los regenera) — correcto.
+3. Si el editor del usuario (p.ej. project_rat) tiene el plugin v4, roba la conexión al puerto del bridge real. El bridge enruta por `project_path`.
+
 ### 13.12 Checklist v4 (para agentes)
 
 - [ ] ¿El handler usa `EditorUndoRedoManager` para mutaciones?
@@ -1154,6 +1181,8 @@ guardar/leer `last_project` (1 clave), no para cachear estado de trabajo.
 - [ ] ¿Hay tests en FlojoTester (Rust) y GUT (GDScript)?
 - [ ] ¿El evento push tiene rate-limit?
 - [ ] ¿Se documentó en AGENTS.md v4?
+- [ ] ¿El bridge v4 sigue operativo? (`python -m heren.v4.bridge`)
+- [ ] ¿Los cambios al plugin se versionan SOLO en `addons/heren/`? (nunca en LAIKA)
 
 ---
 
