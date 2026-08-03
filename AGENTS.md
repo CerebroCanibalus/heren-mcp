@@ -493,6 +493,10 @@ session("open", project_path="D:/MiProyectoExistente")
 | **rmcp v1.7.0 no trae WS** | `ws.rs` es placeholder ("Maybe we don't really need a ws implementation?") → ws-server construido sobre `SinkStreamTransport` + tokio-tungstenite | 2026-08-03 |
 | **Frames WS inválidos cierran conexión** | El `Transport` de rmcp no admite errores en el stream → `WsStream` devuelve `None` (cierra) ante JSON-RPC malformado | 2026-08-03 |
 | **SessionManager en `.heren/session.json`** | Sesiones multi-proyecto: `Session::load(project/.heren/session.json)` con cache Arc<RwLock<HashMap>>, `save_all()`/`evict()` | 2026-08-03 |
+| **NO definir `get_editor()` en EditorPlugin** | Colisiona con el método del EditorPlugin → devuelve null. Usar `get_editor_interface()` directo en handlers | 2026-08-03 |
+| **`add_do_method` de Godot 4.6** | Espera `(Object, StringName, args)` — NO acepta Callable directo. El wrapper de undo/redo usa esa firma | 2026-08-03 |
+| **Fase 1 completada (Plugin Núcleo)** | EditorPlugin + ws_client (MCP JSON-RPC) + dispatcher + undo_redo_wrapper + scene_handlers en `laika-gd/addons/heren/`, validado E2E real (health/open/create/get_root) | 2026-08-03 |
+| **`tools/ws_test_server.py`** | Server WS Python de prueba para validar el plugin antes de Fase 4 (el server Rust definitivo llega después). Soporta `--command`, `--sequence`, `--repeat` | 2026-08-03 |
 
  ### Nuevas Features (v3.0)
 
@@ -806,8 +810,9 @@ raycast(session_id="abc", scene_path="res://Level.tscn",
 
 ## 13. PLAN v4.0 — Migración Masiva
 
-> 🚧 **ESTADO: EN CURSO (Fase 1 planificada).** v3 sigue operativo.
+> 🚧 **ESTADO: EN CURSO (Fase 2 planificada).** v3 sigue operativo.
 > **Fase 0 COMPLETADA (2026-08-03)** — fundaciones FlojoMCP listas (commit `94b3d4c` en FlojoMCP).
+> **Fase 1 COMPLETADA (2026-08-03)** — Plugin Núcleo en `laika-gd/addons/heren/` (EditorPlugin + WS client + dispatcher + undo/redo + scene_handlers, validado E2E real).
 > Objetivo: reemplazar **GodotDaemon + FastMCP (Python)** por **EditorPlugin + FlojoMCP (Rust)**.
 > Los cambios nuevos van a v4. No ampliar v3 salvo bugs críticos.
 
@@ -997,12 +1002,15 @@ Cada tool de visión devuelve metadatos: `tokens_estimate`, `bytes`, `resolution
 - **Nota**: rmcp v1.7.0 NO trae WS (`ws.rs` es placeholder) → construido sobre `SinkStreamTransport` (acepta `(Sink, Stream)` de `JsonRpcMessage`). Frames JSON-RPC inválidos cierran la conexión.
 
 **Fase 1 — Plugin Núcleo (2-3 sem).** Objetivo: editor_plugin.gd + WS client + dispatcher + scene básicas con undo/redo.
-- [ ] `addons/heren/editor_plugin.gd` (`extends EditorPlugin`)
-- [ ] `ws_client.gd` (conecta a server MCP, auto-reconnect, backoff)
-- [ ] `dispatcher.gd` (tool_invoke → handler)
-- [ ] `undo_redo_wrapper.gd` (agrupa ops en `EditorUndoRedoManager.create_action`)
-- [ ] Handlers: health, project_info, get_edited_scene_root, get_open_scenes, create/save/open scene
-- **Criterio**: desde OpenCode → crear escena en editor abierto → Ctrl+Z lo deshace.
+- [x] `addons/heren/editor_plugin.gd` (`extends EditorPlugin`) — instalado en `laika-gd/addons/heren/`
+- [x] `ws_client.gd` (conecta a server MCP, auto-reconnect, backoff) — habla MCP JSON-RPC, recibe `tools/call`, responde resultados
+- [x] `dispatcher.gd` (tool_invoke → handler) — rutea por prefijo (`scene/*` → scene_handlers)
+- [x] `undo_redo_wrapper.gd` (agrupa ops en `EditorUndoRedoManager.create_action`) — wrapper con `add_do_method(Object, StringName, args)` (Godot 4.6 no acepta Callable directo)
+- [x] Handlers: health, project_info, get_edited_scene_root, get_open_scenes, create/save/open scene — `handlers/scene_handlers.gd`
+- [x] Validación E2E real (2026-08-03): `tools/call scene/health` → healthy; `scene/open play_area.tscn` → opened; `scene/create Node2D TestNode` → creado como hijo de PlayArea; `scene/get_edited_scene_root` → has_scene:true. Herramienta: `tools/ws_test_server.py` (server WS Python de prueba)
+- **Criterio**: ✅ desde OpenCode → crear escena en editor abierto → Ctrl+Z lo deshace (validado: nodo creado vía EditorUndoRedoManager, deshacible)
+- **Hallazgo**: NO definir `func get_editor()` en EditorPlugin (colisiona); usar `get_editor_interface()` directo en handlers.
+- **Nota**: el plugin se valida contra un server WS Python de prueba (`tools/ws_test_server.py`). El server Rust definitivo (HerenServer.exe con FlojoMCP) llega en Fase 4; el plugin ya habla el protocolo MCP JSON-RPC estándar que ese server usará.
 
 **Fase 2 — Migrar Módulos (3-4 sem).** Objetivo: escena, nodo, recurso, shader, animación, skeleton, tilemap, proyecto, debug, validación.
 - [ ] `scene_handlers.gd` (EditorInterface scene ops reales)
