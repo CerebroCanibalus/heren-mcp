@@ -1,91 +1,56 @@
-# Changelog
+# Changelog — Heren MCP
 
-All notable changes to this project will be documented in this file.
+## [4.0.0] — 2026-08-03 — 🐉 MIGRACIÓN COMPLETADA
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+### 🏗️ Cambio de arquitectura: GodotDaemon (v3) → EditorPlugin (v4)
 
-## [1.0.0] - 2026-05-14
+La migración masiva que convierte Heren MCP de un daemon standalone (que nunca
+podía tocar el editor real) a un **EditorPlugin Godot real** con undo/redo,
+editor vivo, y arquitectura cliente/servidor WS.
 
-### Added
+| | v3 (legacy) | v4 (operativo) |
+|---|---|---|
+| Acceso a editor | ❌ Daemon standalone (EditorInterface inaccesible) | ✅ EditorPlugin real (`extends EditorPlugin`) |
+| Undo/Redo | ❌ Irreversible | ✅ `EditorUndoRedoManager` |
+| MCP server | Python FastMCP (~60MB) | Python bridge temporal → Rust FlojoMCP (7MB) |
+| Transporte | WS (daemon=server, frágil) | WS (plugin=cliente, auto-reconnect, patrón gopeak) |
+| Sesiones | SessionManager Python (LRU, daemon cache) | `ConnectedEditors` (editor vivo en RAM) + `last_project` en disco |
+| Coordenadas | serialize/deserialize (éxito) | Heredado + expansión (Transform2D/3D, snaps, relativas) |
 
-#### Core Infrastructure
-- **13 Centralized Tools** - Single-tool architecture replacing fragmented multi-tool approaches
-  - `session` - Session management (open/close/list/info/health)
-  - `scene` - Scene operations (load/save/get_tree/screenshot)
-  - `node` - Node manipulation (add/remove/set_prop/get_prop/duplicate/rename/move)
-  - `animation` - Animation system (create_player/create/add_track/add_key/state_machine)
-  - `shader` - Shader and material tools (create/edit/validate/material/uniform)
-  - `skeleton` - 2D/3D rigging (create/add_bone/set_rest/skin/attachment)
-  - `tilemap` - TileMap/TileSet operations (inspect/set_cell/terrain/pattern)
-  - `resource` - Resource management (create/read/update/delete/list)
-  - `project` - Project configuration (settings/autoloads/shader_globals)
-  - `batch` - Batch operations for complex multi-step workflows
-  - `debug` - Debugging tools (breakpoint/stack_trace/watch/console)
-  - `validate` - Validation (scene/script/node/resource)
-  - `annotation` - Annotate nodes for tool callbacks
+### ✨ Features nuevas
 
-#### WebSocket Daemon
-- **Persistent Godot Daemon** via WebSocket (~20ms per operation)
-- **Automatic Fallback** to script-based execution when daemon unavailable (~370ms)
-- **Zero Setup** - No plugins, no npm, no external dependencies beyond Godot
-- **Session Management** with automatic cleanup
-- **Headless Godot** execution support
+- **EditorPlugin núcleo**: `editor_plugin.gd` + `ws_client.gd` (auto-reconnect) + `dispatcher.gd` + `undo_redo_wrapper.gd`
+- **10 handlers** en `addons/heren/handlers/`: scene, node, resource, animation+skeleton, shader, tilemap, project, signal, validate, debug
+- **Bridge Python v4** (`src/heren/v4/`): FastMCP → WS → EditorPlugin. MCP usable HOY
+- **Auto-launch del editor**: `session/open` lanza Godot con el plugin (o reusa uno ya abierto del proyecto)
+- **Ciclo de vida de sesión corregido**: `_require_editor` NUNCA lanza; el editor no se duplica por tool call
+- **Normalización de paths**: clave canónica (forward slashes, sin trailing) — el plugin y el agente hablan el mismo idioma
+- **`scene/create` desde cero**: sin escena abierta crea `.tscn` nuevo; con escena abierta añade nodo
+- **`setup_plugin.bat` + `install_plugin.py`**: instalación del plugin en un proyecto en 1 comando
 
-#### Batch Operations
-- High-performance batch execution for complex workflows
-- Single WebSocket call for multiple operations
-- Automatic rollback on errors (optional)
-- Perfect for: scene creation, refactoring, imports
+### ✅ Validado E2E (2026-08-03)
 
-#### Testing & Benchmarking
-- Real benchmarks vs competitors (Coding-Solo, GoPeak)
-- 18x faster than Coding-Solo (20ms vs 367ms)
-- 1.75x faster than GoPeak (20ms vs 35ms)
-- 6x less memory than GoPeak (~75MB vs ~450MB)
-- Zero setup time vs 60s+ for GoPeak
+- **Escena épica de 39 nodos** creada desde cero: Player (física/script/cámara/luz/trail) + plataformas + monedas + enemigos + luces + estrellas + HUD + shader neón + AnimationPlayer con 2 tracks (6 keys). Guardada, validada y ejecutada.
+- `session/open` (auto-launch) → `godot_ready` → tools scene/node/project/validate/debug OK
+- Reuso de editor ya abierto: open→tool→close(false)→open = **mismo PID**
+- project.godot válido, Godot abre el proyecto sin errores
 
-#### Language & Community
-- Full Spanish and Portuguese documentation
-- Iberophone-first design (Spain, Mexico, Argentina, Colombia, Brazil, Portugal)
-- No language barrier for game development
+### 🐛 Bugs críticos arreglados
 
-#### Tools Features
-- Scene tree inspection with full node hierarchy
-- Screenshot capture with GPU rendering
-- Animation state machine support
-- ShaderMaterial uniform management
-- Skeleton2D and Skeleton3D support
-- Terrain painting for TileMaps
-- Translation extraction and import
-- Format painter for spreadsheets
-- Cache management (LRU + TTL)
+- **`project/setting` corrompía project.godot con UID sintético**: `deserialize_value()` cargaba strings `res://` → Resource → `ProjectSettings.save()` escribía `Resource("uid://X", ...)` con UID inexistente → Godot descartaba TODO el project.godot → proyecto no abría. Fix: paths en settings se guardan como **string plano**.
+- **El plugin devolvía id JSON-RPC como `"1.0"`**: `_pop_pending()` normaliza por float (tolera `1`/`"1"`/`"1.0"`).
+- **FastMCP `mcp.run()` y WS no comparten event loop**: WS server en thread daemon con loop propio + `asyncio.run_coroutine_threadsafe`.
+- **`scene/create` exigía escena abierta**: sin escena crea `PackedScene` + `pack()` + `ResourceSaver.save()` + `open_scene_from_path()`.
 
-### Technical Details
+### ⚠️ Bugs conocidos
 
-#### Dependencies
-- Python 3.10+
-- `websocket-client` >= 1.6.0
-- `fastmcp` >= 1.0.0
-- `jinja2` >= 3.1.0 (for templates)
-- `watchdog` >= 3.0.0 (for file monitoring)
+- `animation/create` con `loop=true` borra tracks existentes (recrea animación vacía). Workaround: crear sin loop, setear loop_mode post-hoc.
+- `godot_orchestrate` rompe con dicts anidados (sub-recursos, colores). Workaround: llamadas individuales.
+- Godot headless compite por el `.godot` lock con editor vivo — usar headless solo con editor cerrado.
 
-#### Supported Godot Versions
-- Godot 4.2+
-- Godot 4.6+ (recommended)
+---
 
-#### Platforms
-- Windows 10/11
-- Linux (Ubuntu 22.04+)
-- macOS (Intel & Apple Silicon)
+## [3.x] — Legacy (GodotDaemon + FastMCP)
 
-### Documentation
-- [README.md](README.md) - Overview and quick start
-- [AGENTS.md](AGENTS.md) - Guide for AI agents
-- [CONTRIBUTING.md](CONTRIBUTING.md) - How to contribute
-- [docs/INSTALL.md](docs/INSTALL.md) - Detailed installation
-- [docs/API.md](docs/API.md) - Complete API reference
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - Technical architecture
-- [benchmarks/BENCHMARKS.md](benchmarks/BENCHMARKS.md) - Performance comparisons
-
-[1.0.0]: https://github.com/CerebroCanibalus/heren-mcp/releases/tag/v1.0.0
+Versiones previas basadas en daemon standalone con WebSocket. Historia completa
+en AGENTS.md §8 (Decisiones Registry) y §9 (Testing/Benchmarking).

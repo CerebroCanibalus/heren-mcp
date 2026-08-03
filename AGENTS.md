@@ -5,9 +5,10 @@
 
 Este documento es la biblia para agentes que operan Heren MCP. Lee esto antes de tocar una línea de código.
 
-> 🚧 **ESTADO: v3 operativo (GodotDaemon + FastMCP).**
-> **PLAN v4.0 en curso → ver sección `## 13. PLAN v4.0 — Migración Masiva`**.
-> **Fase 0 COMPLETADA (2026-08-03): fundaciones FlojoMCP (ws-server, image_content, pagination, SessionManager, hooks).**
+> 🚧 **ESTADO: v4.0.0 OPERATIVO (EditorPlugin + Bridge Python).**
+> **Migración completada 2026-08-03**: GodotDaemon (v3) → EditorPlugin (v4).
+> El MCP es usable HOY con el bridge Python (`python -m heren.v4.bridge`).
+> HerenServer.exe (Rust/FlojoMCP) llega en Fase 4 — el bridge es temporal.
 > Los cambios nuevos van a v4. No ampliar v3 salvo bugs críticos.
 
 ---
@@ -858,10 +859,12 @@ raycast(session_id="abc", scene_path="res://Level.tscn",
 
 ## 13. PLAN v4.0 — Migración Masiva
 
-> 🚧 **ESTADO: EN CURSO (Fase 2 planificada).** v3 sigue operativo.
-> **Fase 0 COMPLETADA (2026-08-03)** — fundaciones FlojoMCP listas (commit `94b3d4c` en FlojoMCP).
-> **Fase 1 COMPLETADA (2026-08-03)** — Plugin Núcleo en `laika-gd/addons/heren/` (EditorPlugin + WS client + dispatcher + undo/redo + scene_handlers, validado E2E real).
-> Objetivo: reemplazar **GodotDaemon + FastMCP (Python)** por **EditorPlugin + FlojoMCP (Rust)**.
+> 🚧 **ESTADO: v4.0.0 OPERATIVO (EditorPlugin + Bridge Python).**
+> **Migración completada 2026-08-03**: GodotDaemon (v3) → EditorPlugin (v4).
+> **Fase 0 COMPLETADA** (2026-08-03, commit `94b3d4c` en FlojoMCP) — fundaciones FlojoMCP.
+> **Fase 1 COMPLETADA** (2026-08-03) — Plugin Núcleo en `laika-gd/addons/heren/` (EditorPlugin + WS client + dispatcher + undo/redo + scene_handlers, validado E2E real).
+> **Fase 2 COMPLETADA** (2026-08-03) — migración de TODOS los módulos (node, resource, animation+skeleton, shader, project, signal, validate, debug, tilemap).
+> Objetivo final: reemplazar **Bridge Python (temporal) + FastMCP (v3)** por **HerenServer.exe (Rust/FlojoMCP)**.
 > Los cambios nuevos van a v4. No ampliar v3 salvo bugs críticos.
 
 ### 13.1 Resumen

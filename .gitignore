@@ -58,3 +58,6 @@ check_*.py
 run_daemon*.bat
 test_daemon*.bat
 
+check_syntax.bat
+test_daemon_output.py
+
