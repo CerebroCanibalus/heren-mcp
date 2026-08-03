@@ -102,6 +102,7 @@ func _attempt_connection() -> void:
 	if socket.get_ready_state() != WebSocketPeer.STATE_CLOSED:
 		socket.close()
 	var err := socket.connect_to_url(server_url)
+	print("[HEREN] ws connect attempt -> url=%s err=%d" % [server_url, err])
 	if err != OK:
 		error_reported.emit("ws connect failed: %d" % err)
 		_schedule_reconnect()

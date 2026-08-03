@@ -50,3 +50,11 @@ Thumbs.db
 # Backup files
 *.backup
 *.bak
+
+# Temp/testing
+.temp/
+*.check.py
+check_*.py
+run_daemon*.bat
+test_daemon*.bat
+

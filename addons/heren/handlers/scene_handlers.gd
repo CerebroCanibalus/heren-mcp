@@ -59,34 +59,55 @@ func handle_create(args: Dictionary) -> Dictionary:
 	var ei := _editor_interface()
 	if ei == null:
 		return {"ok": false, "error": "editor interface unavailable"}
-	var scene_root := ei.get_edited_scene_root()
-	if scene_root == null:
-		return {"ok": false, "error": "no scene open in editor"}
 
 	var root_type: String = str(args.get("root_type", "Node2D"))
 	var root_name: String = str(args.get("root_name", "NewNode"))
+	var scene_path: String = str(args.get("scene_path", ""))
 
-	# Instantiate the new node and register undo/redo.
+	# Instantiate the root node.
 	var new_node: Node = ClassDB.instantiate(root_type)
 	if new_node == null:
 		return {"ok": false, "error": "unknown root_type: " + root_type}
 	new_node.name = root_name
 
-	var parent_path: NodePath = NodePath(str(args.get("parent_path", "")))
-	var parent: Node = scene_root
-	if parent_path != NodePath("") and scene_root.has_node(parent_path):
-		parent = scene_root.get_node(parent_path)
+	# If there's an existing edited scene, add the node to it (v3 behavior).
+	var scene_root := ei.get_edited_scene_root()
+	if scene_root != null:
+		_undo_redo.begin_action("Heren Create Node: %s" % root_name)
+		_undo_redo.add_do_method(scene_root, &"add_child", [new_node])
+		_undo_redo.add_undo_method(scene_root, &"remove_child", [new_node])
+		_undo_redo.commit_action()
+		return {
+			"ok": true,
+			"node_name": root_name,
+			"node_type": root_type,
+			"parent_path": ".",
+		}
 
-	_undo_redo.begin_action("Heren Create Node: %s" % root_name)
-	_undo_redo.add_do_method(parent, "add_child", [new_node])
-	_undo_redo.add_undo_method(parent, "remove_child", [new_node])
-	_undo_redo.commit_action()
+	# No scene open: create a brand-new scene file and open it in the editor.
+	var packed := PackedScene.new()
+	new_node.owner = new_node
+	packed.pack(new_node)
+	if scene_path == "":
+		scene_path = "res://%s.tscn" % root_name
+	if ResourceLoader.exists(scene_path):
+		new_node.free()
+		return {"ok": false, "error": "scene_exists: " + scene_path}
+	var err := ResourceSaver.save(packed, scene_path)
+	new_node.free()
+	if err != OK:
+		return {"ok": false, "error": "save_failed: " + error_string(err)}
+
+	var efs: EditorFileSystem = ei.get_resource_filesystem()
+	if efs:
+		efs.update_file(scene_path)
+	ei.open_scene_from_path(scene_path)
 
 	return {
 		"ok": true,
-		"node_name": root_name,
-		"node_type": root_type,
-		"parent_path": str(parent.get_path()),
+		"created": scene_path,
+		"root_name": root_name,
+		"root_type": root_type,
 	}
 
 
