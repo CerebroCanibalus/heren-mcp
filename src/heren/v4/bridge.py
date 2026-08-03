@@ -12,6 +12,7 @@ Run: python -m heren.v4.bridge
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import os
 import sys
@@ -587,6 +588,94 @@ async def orchestrate(
         if on_error == "stop" and not results[str(i)].get("ok", True):
             break
     return {"ok": True, "results": results, "count": len(results)}
+
+
+# ============================================================
+# VISUAL TOOLS (Fase 3 — "Ojos con Control", §13.6)
+# ============================================================
+
+from fastmcp.utilities.types import Image as MCPImage  # noqa: E402
+
+
+def _tool_visual(tool_name: str, args: dict[str, Any] | None = None,
+                 project_path: str | None = None) -> MCPImage | dict[str, Any]:
+    """Call a visual tool; if the result carries __image_base64, return the
+    image DIRECTLY as MCP image_content (agnostic — the agent SEES it).
+
+    Otherwise return the plain dict (coords/summary/ascii are text).
+    """
+    resp = _tool(tool_name, args, project_path)
+    if isinstance(resp, dict):
+        b64 = resp.pop("__image_base64", None)
+        if b64:
+            try:
+                img = MCPImage(data=base64.b64decode(b64), format="png")
+                # Keep metadata alongside; annotations carry it to the agent.
+                meta = {k: v for k, v in resp.items() if k != "ok"}
+                img.annotations = None
+                if meta:
+                    # Best effort: attach as text in annotations is not
+                    # portable — append metadata as a sibling dict when no
+                    # image; with image, log it (OpenCode shows image+text
+                    # content blocks together).
+                    resp["_metadata"] = meta
+                return img
+            except Exception:  # noqa: BLE001
+                return {"ok": False, "error": "image decode failed"}
+    return resp
+
+
+@mcp.tool()
+async def scene_coords(
+    project_path: str | None = None,
+    max_depth: int = -1,
+) -> dict:
+    """NIVEL 0: mapa textual de coordenadas de la escena viva.
+    Devuelve {nodo: {pos, bbox, parent, type}} — barato y suficiente para la
+    mayoría de operaciones (saber DÓNDE está algo, moverlo, comprobar que existe).
+    Consulta SIEMPRE antes de pedir una imagen.
+    """
+    return await _tool("visual/scene_coords", {"max_depth": max_depth}, project_path)
+
+
+@mcp.tool()
+async def visual_scene_summary(project_path: str | None = None) -> dict:
+    """NIVEL 1: resumen textual de la escena — conteo por tipo de nodo."""
+    return await _tool("visual/scene_summary", {}, project_path)
+
+
+@mcp.tool()
+async def visual_ascii_scene(project_path: str | None = None, max_depth: int = -1) -> dict:
+    """NIVEL 1: árbol ASCII de la escena (colapsado/expandido), sin imagen."""
+    return await _tool("visual/scene_ascii", {"max_depth": max_depth}, project_path)
+
+
+@mcp.tool()
+async def visual_capture(
+    project_path: str | None = None,
+    viewport: str = "2d",
+    max_side: int = 0,
+) -> MCPImage | dict:
+    """NIVEL 2/3: captura el viewport REAL del editor (2d|3d) — la imagen llega
+    DIRECTA al agente como image_content MCP estándar (no un path). max_side
+    limita la resolución para controlar tokens (0 = full). Incluye metadatos
+    en _metadata (resolution, scene, node_count).
+    """
+    return _tool_visual("visual/capture",
+                        {"viewport": viewport, "max_side": max_side}, project_path)
+
+
+@mcp.tool()
+async def visual_node(
+    project_path: str | None = None,
+    node_path: str = "",
+    viewport: str = "2d",
+    max_side: int = 0,
+) -> MCPImage | dict:
+    """NIVEL 3: captura enfocada en un nodo (framing + bbox en metadatos)."""
+    return _tool_visual("visual/capture_node",
+                        {"node_path": node_path, "viewport": viewport, "max_side": max_side},
+                        project_path)
 
 
 # ============================================================

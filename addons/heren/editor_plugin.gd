@@ -19,6 +19,7 @@ const DebugHandlersScript := preload("handlers/debug_handlers.gd")
 const ShaderHandlersScript := preload("handlers/shader_handlers.gd")
 const AnimationHandlersScript := preload("handlers/animation_handlers.gd")
 const TileMapHandlersScript := preload("handlers/tilemap_handlers.gd")
+const VisualHandlersScript := preload("handlers/visual_handlers.gd")
 
 var _ws_client: Node
 var _dispatcher: Node
@@ -33,6 +34,7 @@ var _debug_handlers: Node
 var _shader_handlers: Node
 var _animation_handlers: Node
 var _tilemap_handlers: Node
+var _visual_handlers: Node
 
 var _status_label: Label
 
@@ -104,6 +106,12 @@ func _enter_tree() -> void:
 	_tilemap_handlers.set_editor_plugin(self)
 	add_child(_tilemap_handlers)
 
+	# Visual handlers (Fase 3 - visión).
+	_visual_handlers = VisualHandlersScript.new()
+	_visual_handlers.name = "HerenVisualHandlers"
+	_visual_handlers.set_editor_plugin(self)
+	add_child(_visual_handlers)
+
 	# Dispatcher routes tool_invoke -> handler.
 	_dispatcher = DispatcherScript.new()
 	_dispatcher.name = "HerenDispatcher"
@@ -119,6 +127,7 @@ func _enter_tree() -> void:
 	_dispatcher.register_handler("animation", _animation_handlers)
 	_dispatcher.register_handler("skeleton", _animation_handlers)
 	_dispatcher.register_handler("tilemap", _tilemap_handlers)
+	_dispatcher.register_handler("visual", _visual_handlers)
 
 	# WS client connects to the FlojoMCP server.
 	_ws_client = WsClientScript.new()
@@ -151,6 +160,9 @@ func _exit_tree() -> void:
 	if _dispatcher:
 		_dispatcher.queue_free()
 		_dispatcher = null
+	if _visual_handlers:
+		_visual_handlers.queue_free()
+		_visual_handlers = null
 	if _tilemap_handlers:
 		_tilemap_handlers.queue_free()
 		_tilemap_handlers = null

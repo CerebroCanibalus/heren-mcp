@@ -968,21 +968,72 @@ Auto-detección: `x`+`y` → Vector2; `x`+`y`+`z` → Vector3; `r`+`g`+`b` → C
 
 > **Problema que resuelve**: el modelo era ciego. La solución no es darle TODO, es darle **lo que pida, cuando lo pida, al costo que elija**.
 
-**Principios:** (1) Pull, no push — el agente pide ver, nada se inyecta solo. (2) Jerarquía de costo — texto → ASCII → low-res → full-res. (3) Presupuesto de tokens por sesión — el server trackea, el agente consulta. (4) Cache de visión — si la escena no cambió, reusa. (5) Regiones/foco — ver solo un nodo/área.
+**Principios:** (1) Pull, no push — el agente pide ver, nada se inyecta solo. (2) Jerarquía de costo — coords textuales → texto → ASCII → low-res → full-res. (3) Presupuesto de tokens por sesión — el server trackea, el agente consulta. (4) Cache de visión — si la escena no cambió, reusa. (5) Regiones/foco — ver solo un nodo/área. (6) **Output directo al agente, agnóstico** — la imagen viaja como `image_content` MCP estándar (base64), NO como path a archivo. Cualquier cliente MCP la interpreta.
+
+**La innovación vs competidores:**
+| | Competidores (gopeak, coding-solo) | **Heren v4.1+** |
+|---|---|---|
+| Output | Path a archivo (el agente NO lo ve) | **`image_content` base64 MCP estándar — la imagen llega DIRECTA al contexto del agente** |
+| Viewport | Capturas sintéticas / SubViewport | **Viewports REALES del editor 2D/3D** (`EditorInterface.get_editor_viewport_2d/3d`) — gizmos, selección, lo que el usuario ve |
+| 2D/3D | Solo screenshot plano | **Dual: `viewport=2d\|3d` + overlay de coordenadas** |
+| Tokens | Imagen completa siempre | **Jerarquía: coords → ascii → low → med → full + presupuesto por sesión** |
+| Contexto | Sin metadatos | **Metadatos ricos: `tokens_estimate`, `resolution`, `bbox`, `node_count`, `scene_hash`** |
+
+**Jerarquía de costo (la clave — 4 niveles):**
+
+```
+NIVEL 0: Coords textuales (siempre, proactivo en mutaciones)   ~20-100 tok
+   ├─ Consulta: scene_coords(tree, root) → {nodo: {pos, bbox, parent, type}}
+   └─ Mutaciones: node/add, remove, set_prop, scene/create, etc.
+      → devuelven coords del nodo afectado en el resultado (pos + bbox + parent)
+NIVEL 1: visual_summary + visual_ascii (sin imagen)             ~50-150 tok
+NIVEL 2: visual_capture low-res (viewports reales 2D/3D)         ~200-400 tok
+NIVEL 3: visual_capture full + visual_node (framing)             ~800+ tok
+```
+
+**Regla de oro:** el agente consulta NIVEL 0 primero. Las coords textuales son
+suficientes para la mayoría de operaciones (saber DÓNDE está algo, moverlo,
+comprobar que existe). La imagen (NIVEL 2-3) es el zoom cuando el texto no
+basta: layout visual, shaders, colisiones, calidad estética.
+
+**Coords proactivas en mutaciones (decisión 2026-08-03):** cada tool que
+crea/elimina/edita nodos devuelve en el resultado las coordenadas del nodo
+afectado (`position`, `global_position`, `bbox` si aplica, `parent_path`).
+El agente sabe DÓNDE quedó el nodo sin una llamada extra.
 
 **Tools de visión:**
 | Tool | Costo est. | Qué devuelve |
 |------|-----------|--------------|
+| `scene_coords` | ~20-100 tok | Mapa de coordenadas de la escena (textual): `{nodo: {pos, bbox, parent, type}}` |
 | `visual_scene_summary` | ~50 tok | Contador por tipo de nodo, bbox total, dirty flags |
 | `visual_ascii_scene` | ~150 tok | Árbol ASCII colapsado/expandido (no imagen) |
-| `visual_inspect_scene` | alto | Captura viewport 2D/3D **real del editor** (cámaras + gizmos) + metadatos |
-| `visual_inspect_node` | alto | Captura enfocada en un nodo (framing) |
+| `visual_inspect_scene` | alto | **`Image` base64 MCP** — captura viewport 2D/3D real del editor (cámaras + gizmos) + metadatos |
+| `visual_inspect_node` | alto | `Image` enfocada en un nodo (framing) |
 | `visual_preview_resource` | bajo | Thumbnail vía `EditorResourcePreview` / `make_mesh_previews` |
 | `visual_diff` | bajo | Diff textual antes/después (ver cambio sin 2 imágenes) |
 | `vision_budget` | ~30 tok | Consultar/establecer presupuesto de la sesión |
 | `vision_cache` | ~30 tok | Ver/limpiar cache de visión |
 
-Cada tool de visión devuelve metadatos: `tokens_estimate`, `bytes`, `resolution`, `cached: bool`. El agente decide conscientemente.
+**Formato del resultado de captura (output directo al agente):**
+```json
+{
+  "image": <base64 PNG — enviado como image_content MCP, NO como path>,
+  "metadata": {
+    "tokens_estimate": 800,
+    "resolution": {"w": 1280, "h": 720},
+    "viewport": "3d",
+    "scene_hash": "abc123",
+    "cached": false,
+    "node_count": 39,
+    "selected": ["Player"]
+  }
+}
+```
+
+**Implementación técnica (plugin → bridge):**
+1. `visual_handlers.gd`: `EditorInterface.get_editor_viewport_2d()/get_editor_viewport_3d()` → `.get_texture().get_image()` → `Image.save_png_to_buffer()` → `Marshalls.raw_to_base64()`
+2. `ws_client.gd`: pasa el resultado con `"__image_base64"` + `"__image_format"` (el bridge lo detecta)
+3. `bridge.py`: si el resultado trae `__image_base64`, lo decodifica y devuelve `fastmcp.utilities.types.Image(data=..., format="png")` → FastMCP lo empaqueta como `image_content` MCP estándar → el agente ve la imagen directo
 
 **Eventos visuales (push controlado):** `selection_changed` → notifica al agente (opcional, con rate-limit): "el usuario seleccionó Player/Sprite". NO se envía imagen, solo el path del nodo (barato).
 
@@ -1115,12 +1166,16 @@ guardar/leer `last_project` (1 clave), no para cachear estado de trabajo.
 - [ ] `visual_handlers.gd` (Fase 3)
 - **Criterio**: cada módulo con tests GUT en editor.
 
-**Fase 3 — Sistema de Visión (2-3 sem).** Objetivo: §13.6 completo.
-- [ ] Captura viewports 2D/3D reales
+**Fase 3 — Sistema de Visión (EN CURSO, iniciada 2026-08-03).** Objetivo: §13.6 completo.
+> **Decisión del General (2026-08-03)**: innovar sobre los competidores — output directo al agente (image_content MCP), viewports REALES 2D/3D del editor, coords textuales como NIVEL 0 (suficientes la mayoría de veces), y coords proactivas en cada mutación.
+- [ ] `visual_handlers.gd` — captura viewports 2D/3D reales (`get_editor_viewport_2d/3d` → PNG base64) + coords map + summary + ascii
+- [ ] `ws_client.gd` — soporte payload binario (`__image_base64` + `__image_format`)
+- [ ] `bridge.py` — `visual_capture` devuelve `fastmcp.utilities.types.Image` → `image_content` MCP (imagen DIRECTA al agente)
+- [ ] `node_handlers.gd` — coords proactivas en mutaciones (add/remove/set_prop devuelven pos + bbox + parent del nodo afectado)
 - [ ] 8 tools de visión + presupuesto + cache
 - [ ] Previews de recursos
 - [ ] Eventos push (selection_changed, scene_changed) con rate-limit
-- **Criterio**: `visual_*` funcionales, presupuesto respetado, cache funciona.
+- **Criterio**: `visual_*` funcionales, presupuesto respetado, cache funciona, coords en mutaciones.
 
 **Fase 4 — Tools FlojoMCP + Sesiones (3-4 sem).** Objetivo: portar 14 tools Python → Rust, sesiones persistentes.
 - [ ] Definir tools Rust con macros `#[tool]` + schemas

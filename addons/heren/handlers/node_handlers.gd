@@ -147,7 +147,46 @@ func handle_add(args: Dictionary) -> Dictionary:
 		"parent_path": _node_path_relative(parent, root),
 		"node_path": _node_path_relative(node, root),
 		"count": _count_scene_nodes(root),
+		"coords": _node_coords(node, root),
 	}
+
+
+# ------------------------------------------------------------- coords proactivas
+# §13.6 NIVEL 0: cada mutación devuelve las coordenadas del nodo afectado
+# (pos + bbox + parent) para que el agente sepa DÓNDE quedó sin llamada extra.
+
+func _node_coords(node: Node, root: Node) -> Dictionary:
+	var out := {
+		"parent_path": _node_path_relative(node.get_parent(), root) if node.get_parent() else "",
+	}
+	if node is CanvasItem:
+		var ci := node as CanvasItem
+		out["pos"] = HerenCoordsScript.serialize_value(ci.global_position)
+	elif node is Node3D:
+		var n3 := node as Node3D
+		out["pos"] = HerenCoordsScript.serialize_value(n3.global_position)
+	# Bounding box when derivable.
+	var bbox := {}
+	if node is Sprite2D:
+		var s := node as Sprite2D
+		if s.texture != null:
+			bbox = {"x": s.global_position.x - s.texture.get_width() * s.scale.x * 0.5,
+					"y": s.global_position.y - s.texture.get_height() * s.scale.y * 0.5,
+					"w": s.texture.get_width() * s.scale.x, "h": s.texture.get_height() * s.scale.y}
+	elif node is CollisionShape2D:
+		var cs := node as CollisionShape2D
+		var shape: Shape2D = cs.shape
+		if shape is RectangleShape2D:
+			var size: Vector2 = (shape as RectangleShape2D).size
+			bbox = {"x": cs.global_position.x - size.x * 0.5, "y": cs.global_position.y - size.y * 0.5,
+					"w": size.x, "h": size.y}
+		elif shape is CircleShape2D:
+			var radius: float = (shape as CircleShape2D).radius
+			bbox = {"x": cs.global_position.x - radius, "y": cs.global_position.y - radius,
+					"w": radius * 2.0, "h": radius * 2.0}
+	if not bbox.is_empty():
+		out["bbox"] = bbox
+	return out
 
 
 func _count_scene_nodes(node: Node) -> int:
@@ -189,6 +228,7 @@ func handle_remove(args: Dictionary) -> Dictionary:
 		"removed": node_path_str,
 		"had_children": had_children,
 		"parent_path": _node_path_relative(parent, root),
+		"coords": _node_coords(node, root),
 	}
 
 
@@ -221,6 +261,7 @@ func handle_set_prop(args: Dictionary) -> Dictionary:
 		"property": property,
 		"old_value": HerenCoordsScript.serialize_value(old_value),
 		"new_value": HerenCoordsScript.serialize_value(new_value),
+		"coords": _node_coords(node, root),
 	}
 
 
