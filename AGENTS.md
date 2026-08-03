@@ -535,6 +535,10 @@ session("open", project_path="D:/MiProyectoExistente")
 | **Bridge Python v4 (temporal)** | Mientras HerenServer.exe (Rust) no existe, `src/heren/v4/bridge.py` hace usable el MCP HOY: FastMCP (14 tools v3) → ws_server.py → EditorPlugin v4. `run.bat` ahora lanza el bridge. Auto-launch del editor en `session/open`. | 2026-08-03 |
 | **Fix: id JSON-RPC float→string** | El plugin GDScript devuelve `str(id)` del request → `"1.0"` si el server envió int. El match exacto `"1"` ≠ `"1.0"` daba timeout en TODAS las tools. Fix: `_pop_pending()` tolera `1`, `"1"`, `"1.0"` (normalización float). El harness no correlaciona ids por eso no fallaba. | 2026-08-03 |
 | **Harness en primer plano** | `ws_test_server.py` como Start-Job de PowerShell pierde timing/output (falsos negativos). Debe correr en primer plano; el editor Godot sí puede ir en job. | 2026-08-03 |
+| **Ciclo de vida sesión: SOLO session/open-close** | Fix crítico: `_require_editor` NUNCA lanza el editor (antes relanzaba por cada tool por mismatch de paths). El lanzamiento es SOLO `session/open`; las tools consultan `has_editor` con paths normalizados. Si no hay editor → error 'use session/open first'. | 2026-08-03 |
+| **Normalización de paths (clave canónica)** | El plugin reporta `D:/proj/` (forward, trailing) y el agente pasa `D:\proj` (backslashes) → mismatch rompía `has_editor` → relanzaba editor por cada tool. Fix: `normalize_project_path()` = resolve + forward slashes + sin trailing; ConnectedEditors usa la clave canónica. | 2026-08-03 |
+| **Reuso de editor ya abierto (Q3)** | `session/open` detecta proceso Godot del proyecto vía WMI CommandLine (`is_editor_running`). Si existe → espera a que conecte SIN duplicar. `launch_editor` también evita duplicado. Validado: open→tool→close(false)→open reusa el MISMO PID. | 2026-08-03 |
+| **close(close_editor) dos modos** | `close_editor=false` (default): deja el editor vivo — el plugin queda reconectando, listo para la próxima sesión. `close_editor=true`: mata el proceso Godot del proyecto (taskkill). Decisión del General: el editor debe quedar visible y reutilizable. | 2026-08-03 |
 
  ### Nuevas Features (v3.0)
 
