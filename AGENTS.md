@@ -1,9 +1,14 @@
 # 🐉 Heren MCP - AGENTS.md
 
-> **Filosofía Global: Poder. Eficiencia. Rapidez.**
+> **Filosofía Global: Poder. Eficiencia. Rapidez. Sostenibilidad. Visibilidad. Control.**
 > **Filosofía de Tools: Centralizadas. Modulares. Potentes.**
 
 Este documento es la biblia para agentes que operan Heren MCP. Lee esto antes de tocar una línea de código.
+
+> 🚧 **ESTADO: v3 operativo (GodotDaemon + FastMCP).**
+> **PLAN v4.0 en curso → ver sección `## 13. PLAN v4.0 — Migración Masiva`**.
+> **Fase 0 COMPLETADA (2026-08-03): fundaciones FlojoMCP (ws-server, image_content, pagination, SessionManager, hooks).**
+> Los cambios nuevos van a v4. No ampliar v3 salvo bugs críticos.
 
 ---
 
@@ -245,9 +250,8 @@ scene = heren_get_scene_tree("res://Player.tscn")  # ~0ms
 
 ```
 D:\Mis Juegos\GodotMCP\heren-mcp\
-├── AGENTS.md                 # Este archivo - Biblia para agentes
+├── AGENTS.md                 # Este archivo - Biblia para agentes (incluye PLAN v4.0 §13)
 ├── README.md                 # Para usuarios finales
-├── PLAN_TOOLS.md             # Plan detallado de tools
 ├── requirements.txt          # Dependencias Python
 ├── run.bat                   # Launcher para OpenCode
 ├── src/
@@ -485,6 +489,10 @@ session("open", project_path="D:/MiProyectoExistente")
 | **validate_node no acepta "Root"** | Añadido `_normalize_node_path()` en `heren_debug_ops.gd` | 2026-07-28 |
 | **orchestrate formato ops** | Actualizado a `{"action": "...", "params": {...}}` | 2026-07-28 |
 | **Tests con nombres fijos** | Tests ahora usan nombres únicos + cleanup para evitar falsos negativos por archivos residuales | 2026-07-28 |
+| **Fase 0 completada (FlojoMCP)** | ws-server, image_content, pagination, SessionManager, hooks/tokens listos en FlojoMCP (commit `94b3d4c`) | 2026-08-03 |
+| **rmcp v1.7.0 no trae WS** | `ws.rs` es placeholder ("Maybe we don't really need a ws implementation?") → ws-server construido sobre `SinkStreamTransport` + tokio-tungstenite | 2026-08-03 |
+| **Frames WS inválidos cierran conexión** | El `Transport` de rmcp no admite errores en el stream → `WsStream` devuelve `None` (cierra) ante JSON-RPC malformado | 2026-08-03 |
+| **SessionManager en `.heren/session.json`** | Sesiones multi-proyecto: `Session::load(project/.heren/session.json)` con cache Arc<RwLock<HashMap>>, `save_all()`/`evict()` | 2026-08-03 |
 
  ### Nuevas Features (v3.0)
 
@@ -794,7 +802,276 @@ raycast(session_id="abc", scene_path="res://Level.tscn",
 
 ---
 
-**Recuerda: Poder. Eficiencia. Rapidez.**
+---
+
+## 13. PLAN v4.0 — Migración Masiva
+
+> 🚧 **ESTADO: EN CURSO (Fase 1 planificada).** v3 sigue operativo.
+> **Fase 0 COMPLETADA (2026-08-03)** — fundaciones FlojoMCP listas (commit `94b3d4c` en FlojoMCP).
+> Objetivo: reemplazar **GodotDaemon + FastMCP (Python)** por **EditorPlugin + FlojoMCP (Rust)**.
+> Los cambios nuevos van a v4. No ampliar v3 salvo bugs críticos.
+
+### 13.1 Resumen
+
+| | v3 (actual) | v4 (objetivo) |
+|---|---|---|
+| **Acceso a editor** | ❌ Daemon standalone (EditorInterface inaccesible) | ✅ EditorPlugin real (`extends EditorPlugin`) |
+| **Undo/Redo** | ❌ Irreversible | ✅ `EditorUndoRedoManager` |
+| **MCP server** | Python FastMCP (~60MB, schemas rotos con decoradores) | Rust FlojoMCP (7MB, schemas en compile-time) |
+| **Transporte** | WebSocket (daemon=server, frágil) | WebSocket (plugin=cliente, auto-reconnect, patrón gopeak) |
+| **Visibilidad** | SubViewport sin cámara | Viewports 2D/3D reales + sistema de visión con presupuesto de tokens |
+| **Sesiones** | SessionManager Python (LRU, temp files) | `flojo-session` persistente por proyecto |
+| **Coordenadas** | `serialize_value`/`deserialize_value` (éxito) | Heredado + expansión (Transform2D/3D, snaps, relativas) |
+
+### 13.2 Decisiones Arquitectónicas (ADR)
+
+**ADR-001: FlojoMCP sobre FastMCP.** FastMCP genera schemas por introspection runtime → los decoradores (`@require_session`) rompen la firma → schemas vacíos. FlojoMCP genera schemas en compile-time (macro `syn` + `schemars`) → imposible de romper. Prueba real: PulseWire ya lo usa en producción. Regla: todo lo que construyamos en FlojoMCP debe ser **feature genérica** reutilizable, no específico de Godot.
+
+**ADR-002: EditorPlugin sobre GodotDaemon.** El daemon corre `Engine.is_editor_hint() = false` → `_get_editor_interface_or_fail()` siempre falla. Nunca podrá tocar el editor real. Con EditorPlugin ganamos: `EditorUndoRedoManager`, viewports 2D/3D reales, `EditorFileSystem` (import pipeline), play con breakpoints, selection sync, popup selectors, toaster.
+
+**ADR-003: WebSocket con plugin=cliente (patrón gopeak).** Transporte WebSocket local, pero **el plugin es el CLIENTE** y el server MCP es el **SERVER**. gopeak (competencia real) valida el patrón: el MCP server abre server HTTP+WS unificado; el EditorPlugin se conecta con auto-reconnect y backoff exponencial. El editor NO depende de que el server exista. Permite push de eventos (`scene_changed`, `selection_changed`). Invertimos el rol de v3 (daemon=server) que causaba puerto ocupado y daemon muerto sin aviso. Descartadas: HTTP JSON-RPC (sin push), plugin hace MCP completo en GDScript (pierde FlojoMCP).
+
+**ADR-004: Sesiones guardadas por proyecto.** `flojo-session` persistente en `.heren/session.json` dentro del proyecto Godot. Mantiene la arquitectura de sesiones exitosa sin SessionManager Python.
+
+**ADR-005: Coordenadas unificadas heredadas + expansión.** Conservar `serialize_value`/`deserialize_value` con auto-detección por keys y expandir tipos. Fue un gran éxito (posiciones aplican correctamente). Expansión backward-compatible.
+
+### 13.3 Arquitectura Objetivo
+
+```
+OpenCode (cliente MCP)
+    │  STDIO (MCP protocol)
+    ▼
+HerenServer.exe  (FlojoMCP — Rust, 7MB, sin runtime)
+    │  WebSocket server local (127.0.0.1:PUERTO)  ← patrón gopeak
+    ▼
+HerenEditorPlugin  (EditorPlugin GDScript → EditorInterface)
+    ├── editor_plugin.gd         # extends EditorPlugin, lifecycle
+    ├── ws_client.gd             # cliente WS con auto-reconnect
+    ├── dispatcher.gd            # recibe tool_invoke → ejecuta handler
+    ├── undo_redo_wrapper.gd     # envuelve ops en EditorUndoRedoManager
+    ├── handlers/
+    │   ├── scene_handlers.gd    # EditorInterface scene ops
+    │   ├── node_handlers.gd     # nodos, transforms, coordenadas
+    │   ├── resource_handlers.gd # EditorFileSystem, imports
+    │   ├── animation_handlers.gd# AnimationPlayer, AnimationTree, state machines
+    │   ├── skeleton_handlers.gd # Skeleton2D/3D
+    │   ├── shader_handlers.gd   # shaders, materiales
+    │   ├── tilemap_handlers.gd  # TileMap, TileSet, terrain, patterns
+    │   ├── project_handlers.gd  # ProjectSettings, autoloads, input map
+    │   ├── debug_handlers.gd    # run/stop, breakpoints (editor real)
+    │   ├── visual_handlers.gd   # viewports, previews, screenshots
+    │   └── validation_handlers.gd
+    └── events/
+        └── event_pusher.gd      # scene_changed, selection_changed → WS
+```
+
+**Módulos ELIMINADOS de v3**: `godot_daemon.py`, `session_manager.py` (Python), `heren_daemon.gd` orquestador, `heren_window_manager.gd`, `heren_server_manager.gd`, `heren_tscn_serializer.gd` (la serialización de .tscn la hace Godot nativamente al guardar).
+
+### 13.4 Features Genéricas a Aportar a FlojoMCP
+
+> Regla de hierro: **nada específico de Godot**. Todo es infraestructura MCP reutilizable. El plugin Godot es el primer consumidor, no el dueño.
+
+| Feature | Crate/Feature | Descripción | Beneficiarios |
+|---------|---------------|-------------|---------------|
+| **`ws-server`** | `flojo-transport` o feature en `flojo-mcp` | Exponer server WebSocket local al que se conectan plugins/agentes externos | Godot, Unity, Blender, browsers, daemons |
+| **`image_content` / `image_resource`** | `flojo-mcp` | Contenido imagen base64 en tool results y resources (`Content::image` del spec MCP) | Cualquier server con screenshots/thumbnails/gráficos |
+| **Truncación/paginación** | `flojo-mcp` (helpers) | `truncate_json()`, `PageableResult`, `summarize_tree()` | Resultados grandes: escenas, logs, DB |
+| **Session multi-proyecto** | `flojo-session` | Sesión path-based: `Session::load(path)` por workspace/proyecto | Editores, IDEs, repos |
+| **Hooks/middleware de tool call** | `flojo-mcp` | pre/post hooks: logging, métricas, presupuesto de tokens | Observabilidad universal |
+| **`ctx.tokens_estimate`** | `flojo-mcp` | Estimación de tokens del payload de respuesta | Control de costo universal |
+
+### 13.5 Sistema de Coordenadas (Heredado + Expansión)
+
+**Heredado (v3 — funcionando):**
+```gdscript
+{"x": 100, "y": 200, "__type": "Vector2"}     # auto-detección por keys
+{"x": 1, "y": 0, "z": 0, "__type": "Vector3"}
+{"r": 1, "g": 0, "b": 0, "a": 1, "__type": "Color"}
+{"x": 0, "y": 0, "w": 64, "h": 64, "__type": "Rect2"}
+{"path": "Player/Sprite", "__type": "NodePath"}
+```
+Auto-detección: `x`+`y` → Vector2; `x`+`y`+`z` → Vector3; `r`+`g`+`b` → Color. `deserialize_resource`: `{"type": "RectangleShape2D", "size": {...}}` → instancia por `ClassDB`.
+
+**Expansión v4:**
+| Tipo | Formato JSON | Notas |
+|------|--------------|-------|
+| `Vector2i/3i` | `{x, y, __type}` | Para tilemaps, celdas, enteros |
+| `Transform2D` | `{origin: {x,y}, x_axis: {x,y}, y_axis: {x,y}}` | Posición + rotación + scale completo |
+| `Transform3D` | `{origin: {x,y,z}, basis: {x: {...}, y: {...}, z: {...}}}` | Basado en basis 3x3 |
+| `Quaternion` | `{x, y, z, w, __type}` | Rotación 3D |
+| `Plane` / `AABB` | `{normal, d}` / `{position, size}` | Para raycasts, bounding boxes |
+| `StringName` | `{name, __type: "StringName"}` | Nombres de nodos/signals |
+
+**Sistema de Grid/Snap (nuevo):**
+- `visual_snap_grid`: consultar/configurar snapping del editor (`EditorInterface.get_node_3d_*_snap()`, `is_node_3d_snap_enabled()`).
+- `coord_to_tile` / `tile_to_coord`: convertir píxeles ↔ celdas de tilemap (`TileMap.local_to_map()` / `map_to_local()`).
+- `coord_relative`: mover nodo relativo a otro: `{parent: "Player", offset: {x, y}}` → calcula posición absoluta.
+
+**Dónde vive**: la serialización de coordenadas vive en FlojoMCP como feature genérica (crate `flojo-godot-types` o dentro del contract de `ws-server`) — NO en el plugin. Unity/Blender la reutilizan. El plugin implementa la conversión exacta Godot ↔ JSON.
+
+### 13.6 Sistema de Visibilidad — "Ojos con Control"
+
+> **Problema que resuelve**: el modelo era ciego. La solución no es darle TODO, es darle **lo que pida, cuando lo pida, al costo que elija**.
+
+**Principios:** (1) Pull, no push — el agente pide ver, nada se inyecta solo. (2) Jerarquía de costo — texto → ASCII → low-res → full-res. (3) Presupuesto de tokens por sesión — el server trackea, el agente consulta. (4) Cache de visión — si la escena no cambió, reusa. (5) Regiones/foco — ver solo un nodo/área.
+
+**Tools de visión:**
+| Tool | Costo est. | Qué devuelve |
+|------|-----------|--------------|
+| `visual_scene_summary` | ~50 tok | Contador por tipo de nodo, bbox total, dirty flags |
+| `visual_ascii_scene` | ~150 tok | Árbol ASCII colapsado/expandido (no imagen) |
+| `visual_inspect_scene` | alto | Captura viewport 2D/3D **real del editor** (cámaras + gizmos) + metadatos |
+| `visual_inspect_node` | alto | Captura enfocada en un nodo (framing) |
+| `visual_preview_resource` | bajo | Thumbnail vía `EditorResourcePreview` / `make_mesh_previews` |
+| `visual_diff` | bajo | Diff textual antes/después (ver cambio sin 2 imágenes) |
+| `vision_budget` | ~30 tok | Consultar/establecer presupuesto de la sesión |
+| `vision_cache` | ~30 tok | Ver/limpiar cache de visión |
+
+Cada tool de visión devuelve metadatos: `tokens_estimate`, `bytes`, `resolution`, `cached: bool`. El agente decide conscientemente.
+
+**Eventos visuales (push controlado):** `selection_changed` → notifica al agente (opcional, con rate-limit): "el usuario seleccionó Player/Sprite". NO se envía imagen, solo el path del nodo (barato).
+
+### 13.7 TileMaps, AnimationPlayers y Recursos Complejos
+
+**TileMap/TileSet (expansión):**
+| Capacidad | Detalle |
+|-----------|---------|
+| **Inspección completa** | `inspect_set` / `inspect_map`: atlas sources, terrains, patterns, layers |
+| **Coordenadas tiles vs píxeles** | `local_to_map` / `map_to_local` / `coord_to_tile` / `tile_to_coord` |
+| **Pintado por región** | `set_cells` en región rect (batch), con preview opcional |
+| **Terrain autoconnect** | `set_cell` + `apply_terrain` con reglas de peering |
+| **Patrones reutilizables** | Crear `TileMapPattern` desde selección de celdas |
+| **Custom data layers** | `set_custom_data` en celdas |
+| **Y-sort / physics layers** | Configuración de capas físicas y ordenamiento |
+
+**Patrón de uso (workflow):** `coord_to_tile` para saber dónde pintar → `visual_preview_resource` para ver el tileset → `set_cells` en lote → `visual_inspect_scene` para verificar.
+
+**AnimationPlayer / AnimationTree / State Machines:**
+| Capacidad | Detalle |
+|-----------|---------|
+| **Libraries** | Crear/listar `AnimationLibrary` por player |
+| **Tracks** | value / position / rotation / scale / method / audio / animation |
+| **Keys con easing** | Insertar keys con `Tween` curves (Linear, Cubic, Elastic...) |
+| **Blend spaces** | Crear `AnimationNodeBlendSpace2D/3D` |
+| **State machines** | `AnimationNodeStateMachine` con nodos, transitions, auto-advance |
+| **Edición visual** | `visual_inspect_node` sobre el `AnimationTree` para ver resultado |
+| **One-shot batch** | Crear animación completa en una llamada: tracks + keys + loop |
+
+**Recursos complejos (ShaderMaterial, SpriteFrames, Gradient...):**
+| Tipo | Estrategia |
+|------|-----------|
+| **ShaderMaterial** | Crear `.gdshader` + material con uniforms tipados |
+| **SpriteFrames** | Añadir frames desde texturas, set anims |
+| **Gradient/GradientTexture2D** | `{points: [{offset, color}], fill: "linear"}` |
+| **Curves** | `Curve` con `{points: [{pos, left_tangent, right_tangent}]}` |
+| **PhysicsMaterial** | friction, bounce, roughness |
+| **Environment (3D)** | ambient, fog, tonemap |
+| **NavigationMesh** | geometría, agent radius |
+
+**Regla**: cualquier recurso complejo debe tener (1) inspección → (2) edición → (3) preview → (4) persistencia verificada.
+
+### 13.8 Sesiones Guardadas (arquitectura)
+
+```
+.heren/session.json  (dentro del proyecto Godot)
+├── project_path              # proyecto activo (reportado por plugin)
+├── vision: { budget_tokens, spent_tokens, default_resolution, cache }
+├── preferences: { show_grid, ascii_depth, snap_enabled }
+├── last_edited_scene: "res://src/scenes/level1.tscn"
+└── workspace_state: { open_scenes, selected_nodes }
+```
+- Usa `flojo-session` (KV persistente) + patrón *path-based por proyecto* (feature a aportar).
+- El `Context` de FlojoMCP la inyecta a todos los tools automáticamente.
+- El plugin reporta el proyecto activo → FlojoMCP carga la sesión correcta.
+
+### 13.9 Plan por Fases
+
+**Fase 0 — Fundaciones FlojoMCP (1-2 sem).** Objetivo: FlojoMCP tiene las features genéricas.
+- [x] `ws-server` feature (WebSocket server local + handshake + reconnect) — commit `94b3d4c` (flojo-mcp)
+- [x] `image_content` / `image_resource` (base64) — `image_content`/`text_content`/`content_result` en `tool.rs`
+- [x] Helpers de truncación/paginación — `pagination.rs`: `truncate_json`, `PageableResult`/`PageInfo`, `summarize_tree`
+- [x] Session path-based multi-proyecto — `session_manager.rs`: `SessionManager` + `.heren/session.json`
+- [x] Hooks/middleware + `tokens_estimate` — `hooks.rs`: `ToolHooks` pre/post + `estimate_tokens`
+- [x] Tests + benchmarks + CI — 46 unit + 2 E2E ws + 3 session, fmt/clippy limpios, CI existente cubre all-features
+- **Criterio**: ✅ ejemplo `echo_ws` + `image_content` funcionales, tests verdes (validado con cliente WebSocket real)
+- **Nota**: rmcp v1.7.0 NO trae WS (`ws.rs` es placeholder) → construido sobre `SinkStreamTransport` (acepta `(Sink, Stream)` de `JsonRpcMessage`). Frames JSON-RPC inválidos cierran la conexión.
+
+**Fase 1 — Plugin Núcleo (2-3 sem).** Objetivo: editor_plugin.gd + WS client + dispatcher + scene básicas con undo/redo.
+- [ ] `addons/heren/editor_plugin.gd` (`extends EditorPlugin`)
+- [ ] `ws_client.gd` (conecta a server MCP, auto-reconnect, backoff)
+- [ ] `dispatcher.gd` (tool_invoke → handler)
+- [ ] `undo_redo_wrapper.gd` (agrupa ops en `EditorUndoRedoManager.create_action`)
+- [ ] Handlers: health, project_info, get_edited_scene_root, get_open_scenes, create/save/open scene
+- **Criterio**: desde OpenCode → crear escena en editor abierto → Ctrl+Z lo deshace.
+
+**Fase 2 — Migrar Módulos (3-4 sem).** Objetivo: escena, nodo, recurso, shader, animación, skeleton, tilemap, proyecto, debug, validación.
+- [ ] `scene_handlers.gd` (EditorInterface scene ops reales)
+- [ ] `node_handlers.gd` (CRUD nodos + coordenadas expandidas)
+- [ ] `resource_handlers.gd` (EditorFileSystem, imports)
+- [ ] `animation_handlers.gd`, `skeleton_handlers.gd`, `shader_handlers.gd`
+- [ ] `tilemap_handlers.gd` (sistema completo §13.7)
+- [ ] `project_handlers.gd`, `debug_handlers.gd`, `validation_handlers.gd`
+- **Criterio**: cada módulo con tests GUT en editor.
+
+**Fase 3 — Sistema de Visión (2-3 sem).** Objetivo: §13.6 completo.
+- [ ] Captura viewports 2D/3D reales
+- [ ] 8 tools de visión + presupuesto + cache
+- [ ] Previews de recursos
+- [ ] Eventos push (selection_changed, scene_changed) con rate-limit
+- **Criterio**: `visual_*` funcionales, presupuesto respetado, cache funciona.
+
+**Fase 4 — Tools FlojoMCP + Sesiones (3-4 sem).** Objetivo: portar 14 tools Python → Rust, sesiones persistentes.
+- [ ] Definir tools Rust con macros `#[tool]` + schemas
+- [ ] FlojoTester para cada tool
+- [ ] Sesiones path-based por proyecto
+- [ ] `visual_*` tools en Rust
+- **Criterio**: todos los tests en FlojoTester, sesiones sobreviven reinicio.
+
+**Fase 5 — Hardening + Release (2 sem).**
+- [ ] CI: `cargo test`, `flojo check`, GUT, benchmarks
+- [ ] Packaging: addon `.zip` + `HerenServer.exe`
+- [ ] Docs (README, TROUBLESHOOTING)
+- [ ] Comparativa vs gopeak/coding-solo en `benchmark_vs_competitors.py`
+- **Criterio**: Release v4.0.0, benchmark documentado.
+
+**Total: ~14-16 semanas.**
+
+### 13.10 Comparación Competencia (referencia)
+
+| | gopeak | coding-solo | Heren v3 | Heren v4 |
+|---|--------|-------------|----------|----------|
+| Transporte | WS (plugin=cliente) | STDIO + subprocess | WS (daemon=server) | **WS (plugin=cliente)** |
+| Editor real | ✅ | ❌ | ❌ | ✅ |
+| Undo/Redo | ❌ | ❌ | ❌ | ✅ |
+| Sesiones | ❌ | ❌ | ✅ (Python) | ✅ (flojo-session) |
+| Visibilidad | ❌ | ❌ | SubViewport | **Viewports reales + presupuesto** |
+| Coordenadas | manual por tool | manual | unificado (éxito) | **unificado + expansión** |
+| Validación | ❌ | ❌ | ❌ | ✅ JSON schema automático |
+| Tests | ❌ | ❌ | pytest frágil | **FlojoTester** |
+
+### 13.11 Riesgos y Mitigaciones
+
+| Riesgo | Prob. | Impacto | Mitigación |
+|--------|-------|---------|------------|
+| FlojoMCP v0.1.0 inmaduro | Media | Alto | PulseWire ya lo usa; piloto en Fase 1 |
+| Migración de 80 handlers es larga | Alta | Medio | Por fases, cada una con criterio |
+| Coordenadas nuevas rompen compat | Baja | Alto | Backward-compatible + tests de regresión |
+| Eventos push saturan tokens | Media | Medio | Rate-limit + presupuesto + pull-first |
+| Plugin depende de editor abierto | Alta | Bajo | Documentar; modo headless para CI futuro |
+
+### 13.12 Checklist v4 (para agentes)
+
+- [ ] ¿El handler usa `EditorUndoRedoManager` para mutaciones?
+- [ ] ¿La serialización de coordenadas usa el sistema unificado?
+- [ ] ¿La tool devuelve `tokens_estimate` si es visual?
+- [ ] ¿Respeta el presupuesto de visión de la sesión?
+- [ ] ¿Hay tests en FlojoTester (Rust) y GUT (GDScript)?
+- [ ] ¿El evento push tiene rate-limit?
+- [ ] ¿Se documentó en AGENTS.md v4?
+
+---
+
+**Recuerda: Poder. Eficiencia. Rapidez. Sostenibilidad. Visibilidad. Control.**
 **Recuerda: Centralizadas. Modulares. Potentes.**
 
 *Herensuge vigila tu código.*
