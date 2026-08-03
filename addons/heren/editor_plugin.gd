@@ -1,0 +1,238 @@
+@tool
+extends EditorPlugin
+
+# Heren MCP v4 - EditorPlugin core.
+# Lifecycle: creates the WS client + dispatcher, wires signals, exposes the
+# editor interface to handlers. The plugin is the WS CLIENT (ADR-003); the
+# FlojoMCP server connects back to Godot operations.
+
+const WsClientScript := preload("ws_client.gd")
+const DispatcherScript := preload("dispatcher.gd")
+const UndoRedoWrapperScript := preload("undo_redo_wrapper.gd")
+const SceneHandlersScript := preload("handlers/scene_handlers.gd")
+const NodeHandlersScript := preload("handlers/node_handlers.gd")
+const ResourceHandlersScript := preload("handlers/resource_handlers.gd")
+const ProjectHandlersScript := preload("handlers/project_handlers.gd")
+const SignalHandlersScript := preload("handlers/signal_handlers.gd")
+const ValidateHandlersScript := preload("handlers/validate_handlers.gd")
+const DebugHandlersScript := preload("handlers/debug_handlers.gd")
+const ShaderHandlersScript := preload("handlers/shader_handlers.gd")
+const AnimationHandlersScript := preload("handlers/animation_handlers.gd")
+const TileMapHandlersScript := preload("handlers/tilemap_handlers.gd")
+
+var _ws_client: Node
+var _dispatcher: Node
+var _undo_redo: Node
+var _scene_handlers: Node
+var _node_handlers: Node
+var _resource_handlers: Node
+var _project_handlers: Node
+var _signal_handlers: Node
+var _validate_handlers: Node
+var _debug_handlers: Node
+var _shader_handlers: Node
+var _animation_handlers: Node
+var _tilemap_handlers: Node
+
+var _status_label: Label
+
+
+func _enter_tree() -> void:
+	# Undo/redo wrapper first - handlers depend on it.
+	_undo_redo = UndoRedoWrapperScript.new()
+	_undo_redo.name = "HerenUndoRedo"
+	_undo_redo.set_editor_plugin(self)
+	add_child(_undo_redo)
+
+	# Scene handlers (register with dispatcher).
+	_scene_handlers = SceneHandlersScript.new()
+	_scene_handlers.name = "HerenSceneHandlers"
+	_scene_handlers.set_editor_plugin(self)
+	add_child(_scene_handlers)
+
+	# Node handlers (register with dispatcher).
+	_node_handlers = NodeHandlersScript.new()
+	_node_handlers.name = "HerenNodeHandlers"
+	_node_handlers.set_editor_plugin(self)
+	add_child(_node_handlers)
+
+	# Resource handlers (register with dispatcher).
+	_resource_handlers = ResourceHandlersScript.new()
+	_resource_handlers.name = "HerenResourceHandlers"
+	_resource_handlers.set_editor_plugin(self)
+	add_child(_resource_handlers)
+
+	# Project handlers.
+	_project_handlers = ProjectHandlersScript.new()
+	_project_handlers.name = "HerenProjectHandlers"
+	_project_handlers.set_editor_plugin(self)
+	add_child(_project_handlers)
+
+	# Signal handlers.
+	_signal_handlers = SignalHandlersScript.new()
+	_signal_handlers.name = "HerenSignalHandlers"
+	_signal_handlers.set_editor_plugin(self)
+	add_child(_signal_handlers)
+
+	# Validate handlers.
+	_validate_handlers = ValidateHandlersScript.new()
+	_validate_handlers.name = "HerenValidateHandlers"
+	_validate_handlers.set_editor_plugin(self)
+	add_child(_validate_handlers)
+
+	# Debug handlers.
+	_debug_handlers = DebugHandlersScript.new()
+	_debug_handlers.name = "HerenDebugHandlers"
+	_debug_handlers.set_editor_plugin(self)
+	add_child(_debug_handlers)
+
+	# Shader handlers.
+	_shader_handlers = ShaderHandlersScript.new()
+	_shader_handlers.name = "HerenShaderHandlers"
+	_shader_handlers.set_editor_plugin(self)
+	add_child(_shader_handlers)
+
+	# Animation + skeleton handlers (skeleton lives here, as in v3 daemon).
+	_animation_handlers = AnimationHandlersScript.new()
+	_animation_handlers.name = "HerenAnimationHandlers"
+	_animation_handlers.set_editor_plugin(self)
+	add_child(_animation_handlers)
+
+	# TileMap handlers.
+	_tilemap_handlers = TileMapHandlersScript.new()
+	_tilemap_handlers.name = "HerenTileMapHandlers"
+	_tilemap_handlers.set_editor_plugin(self)
+	add_child(_tilemap_handlers)
+
+	# Dispatcher routes tool_invoke -> handler.
+	_dispatcher = DispatcherScript.new()
+	_dispatcher.name = "HerenDispatcher"
+	add_child(_dispatcher)
+	_dispatcher.register_handler("scene", _scene_handlers)
+	_dispatcher.register_handler("node", _node_handlers)
+	_dispatcher.register_handler("resource", _resource_handlers)
+	_dispatcher.register_handler("project", _project_handlers)
+	_dispatcher.register_handler("signal", _signal_handlers)
+	_dispatcher.register_handler("validate", _validate_handlers)
+	_dispatcher.register_handler("debug", _debug_handlers)
+	_dispatcher.register_handler("shader", _shader_handlers)
+	_dispatcher.register_handler("animation", _animation_handlers)
+	_dispatcher.register_handler("skeleton", _animation_handlers)
+	_dispatcher.register_handler("tilemap", _tilemap_handlers)
+
+	# WS client connects to the FlojoMCP server.
+	_ws_client = WsClientScript.new()
+	_ws_client.name = "HerenWsClient"
+	add_child(_ws_client)
+	_ws_client.connected.connect(_on_connected)
+	_ws_client.disconnected.connect(_on_disconnected)
+	_ws_client.tool_invoke_received.connect(_on_tool_invoke)
+	_ws_client.error_reported.connect(_on_error)
+
+	_setup_status_indicator()
+	_ws_client.connect_to_server()
+	print("[HEREN] plugin entered tree, ws client connecting...")
+
+
+func _exit_tree() -> void:
+	if _ws_client:
+		if _ws_client.connected.is_connected(_on_connected):
+			_ws_client.connected.disconnect(_on_connected)
+		if _ws_client.disconnected.is_connected(_on_disconnected):
+			_ws_client.disconnected.disconnect(_on_disconnected)
+		if _ws_client.tool_invoke_received.is_connected(_on_tool_invoke):
+			_ws_client.tool_invoke_received.disconnect(_on_tool_invoke)
+		if _ws_client.error_reported.is_connected(_on_error):
+			_ws_client.error_reported.disconnect(_on_error)
+		_ws_client.disconnect_from_server()
+		_ws_client.queue_free()
+		_ws_client = null
+
+	if _dispatcher:
+		_dispatcher.queue_free()
+		_dispatcher = null
+	if _tilemap_handlers:
+		_tilemap_handlers.queue_free()
+		_tilemap_handlers = null
+	if _animation_handlers:
+		_animation_handlers.queue_free()
+		_animation_handlers = null
+	if _shader_handlers:
+		_shader_handlers.queue_free()
+		_shader_handlers = null
+	if _debug_handlers:
+		_debug_handlers.queue_free()
+		_debug_handlers = null
+	if _validate_handlers:
+		_validate_handlers.queue_free()
+		_validate_handlers = null
+	if _signal_handlers:
+		_signal_handlers.queue_free()
+		_signal_handlers = null
+	if _project_handlers:
+		_project_handlers.queue_free()
+		_project_handlers = null
+	if _resource_handlers:
+		_resource_handlers.queue_free()
+		_resource_handlers = null
+	if _node_handlers:
+		_node_handlers.queue_free()
+		_node_handlers = null
+	if _scene_handlers:
+		_scene_handlers.queue_free()
+		_scene_handlers = null
+	if _undo_redo:
+		_undo_redo.queue_free()
+		_undo_redo = null
+	if _status_label:
+		remove_control_from_container(CONTAINER_TOOLBAR, _status_label)
+		_status_label.queue_free()
+		_status_label = null
+
+
+func get_editor_interface_wrapper() -> EditorInterface:
+	return get_editor_interface()
+
+
+func get_undo_redo_wrapper() -> Node:
+	return _undo_redo
+
+
+func _setup_status_indicator() -> void:
+	_status_label = Label.new()
+	_status_label.text = "Heren: Connecting..."
+	_status_label.add_theme_color_override("font_color", Color.YELLOW)
+	_status_label.add_theme_font_size_override("font_size", 12)
+	add_control_to_container(CONTAINER_TOOLBAR, _status_label)
+
+
+func _on_connected() -> void:
+	if _status_label:
+		_status_label.text = "Heren: Connected"
+		_status_label.add_theme_color_override("font_color", Color.GREEN)
+
+
+func _on_disconnected() -> void:
+	if _status_label:
+		_status_label.text = "Heren: Disconnected"
+		_status_label.add_theme_color_override("font_color", Color.RED)
+
+
+func _on_error(message: String) -> void:
+	if _status_label:
+		_status_label.text = "Heren: Error"
+		_status_label.add_theme_color_override("font_color", Color.ORANGE)
+		_status_label.tooltip_text = message
+
+
+func _on_tool_invoke(request_id: String, tool_name: String, args: Dictionary) -> void:
+	if _dispatcher == null or _ws_client == null:
+		return
+	var result: Dictionary = _dispatcher.execute(tool_name, args)
+	var success: bool = result.get("ok", false)
+	if success:
+		var payload: Dictionary = result.duplicate(true)
+		payload.erase("ok")
+		_ws_client.send_tool_result(request_id, true, payload, "")
+	else:
+		_ws_client.send_tool_result(request_id, false, {}, str(result.get("error", "Unknown error")))

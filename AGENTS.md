@@ -244,6 +244,18 @@ scene = heren_get_scene_tree("res://Player.tscn")  # ~0ms
 # NUNCA silenciar errores. NUNCA retornar None sin explicación.
 ```
 
+### Regla 8: LAIKA es SOLO PRUEBAS — el MCP es lo importante
+```python
+# LAIKA (D:\Mis Juegos\LAIKA\...) es el BANCO DE PRUEBAS, NO la fuente de verdad.
+# El plugin v4 FUENTE vive en D:\Mis Juegos\GodotMCP\heren-mcp\addons\heren\.
+#
+# Reglas:
+# - NUNCA commitear a LAIKA (es proyecto de prueba; no versionar ahí).
+# - Desarrollar/editar SIEMPRE en addons/heren/ (fuente).
+# - Para validar: copiar addons/heren/ → LAIKA (o proyecto temporal) y probar.
+# - Cualquier cambio en el plugin v4 → commit SOLO en heren-mcp.
+```
+
 ---
 
 ## 4. Estructura de Directorios (Actual - v2.0 Modular)
@@ -254,6 +266,15 @@ D:\Mis Juegos\GodotMCP\heren-mcp\
 ├── README.md                 # Para usuarios finales
 ├── requirements.txt          # Dependencias Python
 ├── run.bat                   # Launcher para OpenCode
+├── addons/
+│   └── heren/                # 🆕 FUENTE del plugin v4 (GDScript, copiable a cualquier proyecto)
+│       ├── plugin.cfg        # Config del addon Godot
+│       ├── editor_plugin.gd  # EditorPlugin core (WS client + dispatcher + registro)
+│       ├── ws_client.gd      # Cliente WS MCP JSON-RPC (auto-reconnect)
+│       ├── dispatcher.gd     # Rutea tools/call → handlers por prefijo
+│       ├── undo_redo_wrapper.gd
+│       └── handlers/         # 10 handlers: scene, node, resource, project, signal,
+│                             #   validate, debug, shader, animation(+skeleton), tilemap
 ├── src/
 │   └── heren/
 │       ├── __init__.py
@@ -510,6 +531,7 @@ session("open", project_path="D:/MiProyectoExistente")
 | **project/autoload list via property_list** | `ProjectSettings.get_autoload_list()` falla en parse del editor (GDScriptNativeClass no lo expone en 4.x). Fix: iterar `get_property_list()` filtrando prefijo `autoload/`. | 2026-08-03 |
 | **Harness: separador de secuencia** | ws_test_server unía líneas con `;` y re-spliteaba — el JSON de args con `;` (código shader/GDScript) rompía la secuencia a mitad. Fix: `--sequence-file` lee líneas DIRECTAS (sin join/split). | 2026-08-03 |
 | **debug sin breakpoint/stack_trace/watch** | Esas acciones de v3 dependían del debugger subprocess. Con editor real: play/stop/is_playing nativos; los errores se ven en el panel Output (sin API pública estable para leerlos desde plugin). | 2026-08-03 |
+| **LAIKA SOLO pruebas, fuente en addons/heren** | Corrección de flujo: el plugin v4 se versiona ÚNICAMENTE en `heren-mcp/addons/heren/`. LAIKA es banco de pruebas — se copia el addon para validar, NUNCA se commitea ahí. Eliminado daemon v3 legacy de LAIKA (ruido; el plugin v4 no lo usa) → sintaxis del plugin 100% limpia. | 2026-08-03 |
 
  ### Nuevas Features (v3.0)
 
