@@ -502,6 +502,9 @@ session("open", project_path="D:/MiProyectoExistente")
 | **Fix: project.godot corrupto en proyecto E2E** | `Set-Content -Encoding UTF8` en PowerShell 5.1 escribe BOM + ruido de encoding → Godot parseaba `"����config_version"=5` y el editor no arrancaba. Fix: `[System.IO.File]::WriteAllText(path, content, New-Object System.Text.UTF8Encoding($false))` para .gd/.tscn/.godot. | 2026-08-03 |
 | **Harness: `--sequence-file`** | `ws_test_server.py` añade `--sequence-file`: lee comandos de un archivo (1 por línea) evitando escapes de comillas en PowerShell/JSON. También soporta `SLEEP N` para esperar frames del editor entre llamadas. | 2026-08-03 |
 | **E2E nodos: proyecto temporal mínimo** | Probar node_handlers contra el proyecto LAIKA entero (103 nodos + daemon v3 roto con parse errors en heren_server_manager.gd) daba resultados no deterministas. Fix: proyecto E2E mínimo en `.temp/e2e_proj/` con SOLO el plugin v4 + escena simple. Resultado: 14/14 ops OK. | 2026-08-03 |
+| **resource_handlers sin undo/redo** | Los recursos son archivos externos (no la escena viva) → las mutaciones (create/update/delete/edit_script) NO pasan por EditorUndoRedoManager. Usan `EditorFileSystem.update_file()` para que el editor reimporte/olvide el archivo. | 2026-08-03 |
+| **delete usa DirAccess, no ResourceLoader** | `ResourceLoader` no tiene API de borrado. `handle_delete` abre `DirAccess.open(base_dir)` + `remove(file)`. `EditorFileSystem.update_file` tras borrar para que el editor olvide el archivo. | 2026-08-03 |
+| **E2E recursos: 10/10 ops** | create (PhysicsMaterial con props), read, update (bounce/rough), delete, list (tipos via EditorFileSystem.get_file_type), create_script, read_script, edit_script (append). Validado contra proyecto temporal + ws_test_server. | 2026-08-03 |
 
  ### Nuevas Features (v3.0)
 
@@ -1057,7 +1060,7 @@ guardar/leer `last_project` (1 clave), no para cachear estado de trabajo.
 - [ ] `scene_handlers.gd` (EditorInterface scene ops reales)
 - [x] `coords.gd` (serialización unificada ADR-005: heredada + Vector2i/3i, Transform2D/3D, Quaternion, StringName, Plane/AABB) — `handlers/coords.gd`
 - [x] `node_handlers.gd` (CRUD nodos + coordenadas expandidas) — validado E2E real 14/14 ops (add, remove, set_prop(s), get_prop, get_info, get_children, find, duplicate, rename, move, set_owner, reorder, array_append/remove)
-- [ ] `resource_handlers.gd` (EditorFileSystem, imports)
+- [x] `resource_handlers.gd` (EditorFileSystem, imports) — validado E2E real 10/10 ops (create, read, update, delete, list, create_script, read_script, edit_script)
 - [ ] `animation_handlers.gd`, `skeleton_handlers.gd`, `shader_handlers.gd`
 - [ ] `tilemap_handlers.gd` (sistema completo §13.7)
 - [ ] `project_handlers.gd`, `debug_handlers.gd`, `validation_handlers.gd`
