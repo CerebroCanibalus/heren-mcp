@@ -498,6 +498,10 @@ session("open", project_path="D:/MiProyectoExistente")
 | **Fase 1 completada (Plugin Núcleo)** | EditorPlugin + ws_client (MCP JSON-RPC) + dispatcher + undo_redo_wrapper + scene_handlers en `laika-gd/addons/heren/`, validado E2E real (health/open/create/get_root) | 2026-08-03 |
 | **`tools/ws_test_server.py`** | Server WS Python de prueba para validar el plugin antes de Fase 4 (el server Rust definitivo llega después). Soporta `--command`, `--sequence`, `--repeat` | 2026-08-03 |
 | **Sesión corregida: editor vivo, no estado persistente** | El propósito real de sesión es mantener el proceso Godot vivo (como v3 cacheaba el daemon). `ConnectedEditors` en RAM + `last_project` en disco. Se descartó el esquema vision/preferences/workspace_state de session.json (era especulación; eso es State efímero en RAM) | 2026-08-03 |
+| **Fix: undo_redo_wrapper add_do_method con callv** | `EditorUndoRedoManager.add_do_method` es varargs. Pasar el Array directo (`add_do_method(obj, method, args)`) hace que `add_child([node])` reciba UN Array, no el nodo → mutaciones no aplicaban. Fix: `urm.callv(&"add_do_method", [obj, method] + args)` expande el Array. Sin esto, node/add devolvía `node_path: ""` sin añadir nada. | 2026-08-03 |
+| **Fix: project.godot corrupto en proyecto E2E** | `Set-Content -Encoding UTF8` en PowerShell 5.1 escribe BOM + ruido de encoding → Godot parseaba `"����config_version"=5` y el editor no arrancaba. Fix: `[System.IO.File]::WriteAllText(path, content, New-Object System.Text.UTF8Encoding($false))` para .gd/.tscn/.godot. | 2026-08-03 |
+| **Harness: `--sequence-file`** | `ws_test_server.py` añade `--sequence-file`: lee comandos de un archivo (1 por línea) evitando escapes de comillas en PowerShell/JSON. También soporta `SLEEP N` para esperar frames del editor entre llamadas. | 2026-08-03 |
+| **E2E nodos: proyecto temporal mínimo** | Probar node_handlers contra el proyecto LAIKA entero (103 nodos + daemon v3 roto con parse errors en heren_server_manager.gd) daba resultados no deterministas. Fix: proyecto E2E mínimo en `.temp/e2e_proj/` con SOLO el plugin v4 + escena simple. Resultado: 14/14 ops OK. | 2026-08-03 |
 
  ### Nuevas Features (v3.0)
 
@@ -1051,7 +1055,8 @@ guardar/leer `last_project` (1 clave), no para cachear estado de trabajo.
 
 **Fase 2 — Migrar Módulos (3-4 sem).** Objetivo: escena, nodo, recurso, shader, animación, skeleton, tilemap, proyecto, debug, validación.
 - [ ] `scene_handlers.gd` (EditorInterface scene ops reales)
-- [ ] `node_handlers.gd` (CRUD nodos + coordenadas expandidas)
+- [x] `coords.gd` (serialización unificada ADR-005: heredada + Vector2i/3i, Transform2D/3D, Quaternion, StringName, Plane/AABB) — `handlers/coords.gd`
+- [x] `node_handlers.gd` (CRUD nodos + coordenadas expandidas) — validado E2E real 14/14 ops (add, remove, set_prop(s), get_prop, get_info, get_children, find, duplicate, rename, move, set_owner, reorder, array_append/remove)
 - [ ] `resource_handlers.gd` (EditorFileSystem, imports)
 - [ ] `animation_handlers.gd`, `skeleton_handlers.gd`, `shader_handlers.gd`
 - [ ] `tilemap_handlers.gd` (sistema completo §13.7)

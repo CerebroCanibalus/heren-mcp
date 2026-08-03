@@ -81,6 +81,11 @@ async def run_sequence(ws, commands: list[str]) -> None:
         sys.exit(2)
 
     for i, command in enumerate(commands):
+        if command.upper().startswith("SLEEP "):
+            delay = float(command.split(" ", 1)[1])
+            print(f"[SERVER] sleeping {delay}s", flush=True)
+            await asyncio.sleep(delay)
+            continue
         tool_name, _, arg_str = command.partition(" ")
         args = _parse_args(arg_str)
         if args is None:
@@ -123,7 +128,15 @@ async def main() -> None:
                         help="send the command N times (test undo)")
     parser.add_argument("--sequence", type=str, default=None,
                         help="semicolon-separated commands to run in order")
+    parser.add_argument("--sequence-file", type=str, default=None,
+                        help="file with one command per line (avoid shell escaping)")
     args = parser.parse_args()
+
+    if args.sequence_file and not args.sequence:
+        with open(args.sequence_file, "r", encoding="utf-8") as f:
+            args.sequence = ";".join(
+                line.strip() for line in f if line.strip()
+            )
 
     print(f"[SERVER] listening on ws://127.0.0.1:{args.port}", flush=True)
 
