@@ -15,6 +15,8 @@ import asyncio
 import logging
 import os
 import sys
+import threading
+import time
 from typing import Any
 
 from fastmcp import FastMCP
@@ -30,6 +32,8 @@ mcp = FastMCP("heren-godot-v4")
 # ---- shared state --------------------------------------------------------
 
 _ws: WsServer | None = None
+_ws_loop: asyncio.AbstractEventLoop | None = None
+_ws_thread: threading.Thread | None = None
 
 
 def _ws_server() -> WsServer:
@@ -40,32 +44,83 @@ def _ws_server() -> WsServer:
     return _ws
 
 
+def _ensure_ws_running() -> WsServer:
+    """Start the WS server in a dedicated thread + event loop if not running.
+
+    FastMCP's mcp.run() owns the main event loop, so the WS server must live
+    on its own loop in a background thread. Otherwise the WS socket accepts
+    TCP but never completes the WebSocket handshake (the handshake handler
+    never runs) -> the editor connects but never registers.
+    """
+    global _ws_loop, _ws_thread
+    ws = _ws_server()
+    if _ws_loop is not None and _ws_thread is not None and _ws_thread.is_alive():
+        return ws
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    def _run() -> None:
+        loop.run_until_complete(ws.start())
+        loop.run_forever()
+
+    _ws_loop = loop
+    _ws_thread = threading.Thread(target=_run, daemon=True, name="heren-ws")
+    _ws_thread.start()
+    logger.info("WS server thread started on %s", ws.port)
+    return ws
+
+
+def _call_ws(coro_factory):
+    """Run a coroutine on the WS server's loop from the MCP (async) context."""
+    ws_loop = _ws_loop
+    if ws_loop is None:
+        return asyncio.run(coro_factory())
+    fut = asyncio.run_coroutine_threadsafe(coro_factory(), ws_loop)
+    return fut.result(timeout=35)
+
+
 async def _tool(tool_name: str, args: dict[str, Any] | None = None,
           project_path: str | None = None) -> dict[str, Any]:
     """Send a tool call to the editor and return the result dict."""
     try:
-        coro = _ws_server().call_tool(tool_name, args, project_path)
-        resp = await coro
+        _ensure_ws_running()
+        resp = await asyncio.to_thread(
+            _call_ws, lambda: _ws_server().call_tool(tool_name, args, project_path)
+        )
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": f"bridge call failed: {e}"}
     return unwrap_result(resp)
 
 
 def _require_editor(project_path: str | None = None) -> tuple[bool, str]:
-    """Ensure an editor is connected; auto-launch if possible."""
-    if _ws_server().has_editor(project_path):
+    """Ensure an editor is CONNECTED for routing. Never launches.
+
+    The editor lifecycle is managed ONLY by session/open and session/close.
+    If no editor is connected, the agent must open a session first — tools
+    never auto-launch (Q3: launch is the MCP's job, via session).
+    """
+    ws = _ensure_ws_running()
+    if ws.has_editor(project_path):
         return True, ""
     if not project_path:
-        # Any connected editor works.
-        if _ws_server().has_editor():
+        if ws.has_editor():
             return True, ""
-        project_path = godot_launcher.read_last_project(project_path or "")
-    if not project_path or not os.path.isdir(project_path):
-        return False, "no editor connected and no project_path given"
-    ok, msg = godot_launcher.launch_editor(project_path, _ws_server().port)
-    if not ok:
-        return False, msg
-    return True, f"launched editor ({msg})"
+        return False, "no editor connected. Call session/open with project_path first."
+    return False, (
+        f"no editor connected for project: {project_path}. "
+        "Call session/open with project_path first."
+    )
+
+
+async def _wait_for_editor(project_path: str, timeout: float = 45.0) -> bool:
+    """Wait until an editor connects for the project (polling, async)."""
+    ws = _ensure_ws_running()
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < timeout:
+        if ws.has_editor(project_path):
+            return True
+        await asyncio.sleep(0.5)
+    return ws.has_editor(project_path)
 
 
 # ============================================================
@@ -78,32 +133,65 @@ async def session(
     action: str,
     project_path: str | None = None,
     godot_path: str | None = None,
+    close_editor: bool = False,
 ) -> dict:
     """
-    Gestión de sesiones v4. Actions: open(project_path, godot_path) | list | info(project_path) | health
-    open: lanza el editor Godot con el plugin en el proyecto dado (auto-launch).
+    Gestión de sesiones v4. Actions: open(project_path, godot_path) | close(close_editor) | list | info(project_path) | health
+    open: lanza el editor Godot con el plugin (o reusa uno ya abierto del proyecto). Espera a que conecte.
+    close: cierra la sesión del MCP. close_editor=true mata el proceso Godot; false (default) deja el editor abierto para reuso.
     list: proyectos con editor vivo conectado. info/health: estado.
     """
+    ws = _ensure_ws_running()
     if action == "open":
         if not project_path:
             return {"ok": False, "error": "project_path required"}
-        ok, msg = godot_launcher.launch_editor(project_path, _ws_server().port, godot_path or "")
-        return {"ok": ok, "message": msg, "project_path": project_path,
-                "daemon_active": _ws_server().has_editor(project_path),
-                "session_id": project_path}
+        # Already connected? reuse immediately.
+        if ws.has_editor(project_path):
+            return {"ok": True, "message": "already connected", "project_path": project_path,
+                    "daemon_active": True, "session_id": project_path}
+        # Editor process already running? wait for it to connect (no duplicate).
+        if godot_launcher.is_editor_running(project_path):
+            connected = await _wait_for_editor(project_path, timeout=45.0)
+            return {"ok": connected, "message": "reused running editor" if connected else "editor running but not connecting",
+                    "project_path": project_path, "daemon_active": connected, "session_id": project_path}
+        # No editor: launch it.
+        ok, msg = godot_launcher.launch_editor(project_path, ws.port, godot_path or "")
+        if not ok:
+            return {"ok": False, "message": msg, "project_path": project_path,
+                    "daemon_active": False}
+        connected = await _wait_for_editor(project_path, timeout=45.0)
+        return {"ok": connected, "message": msg, "project_path": project_path,
+                "daemon_active": connected, "session_id": project_path}
+    if action == "close":
+        target = project_path
+        if not target:
+            projects = ws.connected_projects()
+            target = projects[0]["project_path"] if projects else ""
+        if not target:
+            return {"ok": False, "error": "no session to close"}
+        if close_editor:
+            killed = godot_launcher.close_editor(target)
+            return {"ok": True, "message": "editor closed" if killed else "no editor process found",
+                    "project_path": target, "closed_editor": killed}
+        # Leave the editor running; the WS connection just drops when the
+        # plugin reconnects elsewhere. Nothing to kill.
+        return {"ok": True, "message": "session closed (editor left open for reuse)",
+                "project_path": target, "closed_editor": False}
     if action == "list":
-        return {"ok": True, "sessions": _ws_server().connected_projects(),
-                "count": len(_ws_server().connected_projects())}
+        return {"ok": True, "sessions": ws.connected_projects(),
+                "count": len(ws.connected_projects())}
     if action == "info":
-        projects = _ws_server().connected_projects()
+        projects = ws.connected_projects()
         if project_path:
-            projects = [p for p in projects if p["project_path"] == project_path]
+            from heren.v4.ws_server import normalize_project_path
+            key = normalize_project_path(project_path)
+            projects = [p for p in projects if normalize_project_path(p["project_path"]) == key]
         if not projects:
             return {"ok": False, "error": "no editor connected" + (f": {project_path}" if project_path else "")}
         return {"ok": True, "session": projects[0]}
     if action == "health":
-        return {"ok": True, "editors": _ws_server().connected_projects(),
-                "active": len(_ws_server().connected_projects()) > 0}
+        return {"ok": True, "editors": ws.connected_projects(),
+                "active": len(ws.connected_projects()) > 0}
     return {"ok": False, "error": f"unknown action: {action}"}
 
 
@@ -507,11 +595,8 @@ async def orchestrate(
 
 def main() -> None:
     """Start the WS server in a background thread + FastMCP stdio loop."""
-    ws = _ws_server()
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(ws.start())
-    logger.info("Heren MCP v4 bridge ready (ws on %s)", ws.port)
+    _ensure_ws_running()
+    logger.info("Heren MCP v4 bridge ready (ws on %s)", _ws_server().port)
     mcp.run()
 
 

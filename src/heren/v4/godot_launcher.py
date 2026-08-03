@@ -127,13 +127,89 @@ def enable_plugin_in_project(project_path: str) -> bool:
     return True
 
 
+def _godot_processes_for(project_path: str) -> list[int]:
+    """PIDs of Godot editor processes running for the given project.
+
+    Uses WMI to match CommandLine containing '--editor' and the project path
+    (normalized loosely: any segment that equals the project path). This is
+    how the bridge avoids launching a duplicate editor when one is already
+    open for the project (Q3: reuse an already-open editor).
+    """
+    import subprocess as _sp
+    pids: list[int] = []
+    proj = str(Path(project_path).resolve())
+    try:
+        if sys.platform == "win32":
+            out = _sp.run(
+                ["wmic", "process", "where", "Name like '%Godot%'",
+                 "get", "ProcessId,CommandLine", "/format:csv"],
+                capture_output=True, text=True, timeout=10,
+            )
+            for line in out.stdout.splitlines()[1:]:
+                parts = line.split(",", 2)
+                if len(parts) < 3:
+                    continue
+                cmd = parts[2].lower()
+                if "--editor" not in cmd and "--path" not in cmd:
+                    continue
+                # Match project path with either slash style, no trailing.
+                if proj.lower().rstrip("/").replace("\\", "/") in cmd:
+                    try:
+                        pids.append(int(parts[1]))
+                    except ValueError:
+                        pass
+        else:
+            # POSIX: pgrep -f
+            out = _sp.run(["pgrep", "-f", f"--editor.*{proj}"],
+                          capture_output=True, text=True, timeout=10)
+            for pid_str in out.stdout.split():
+                try:
+                    pids.append(int(pid_str))
+                except ValueError:
+                    pass
+    except Exception as e:  # noqa: BLE001
+        logger.warning("godot process detection failed: %s", e)
+    return pids
+
+
+def is_editor_running(project_path: str) -> bool:
+    return bool(_godot_processes_for(project_path))
+
+
+def close_editor(project_path: str) -> bool:
+    """Kill Godot editor processes running for the project."""
+    pids = _godot_processes_for(project_path)
+    if not pids:
+        return False
+    for pid in pids:
+        try:
+            os.kill(pid, 9) if sys.platform != "win32" else _terminate_windows(pid)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("failed to kill editor pid %s: %s", pid, e)
+    return True
+
+
+def _terminate_windows(pid: int) -> None:
+    import subprocess as _sp
+    _sp.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, text=True)
+
+
 def launch_editor(project_path: str, port: int, godot_path: str = "") -> tuple[bool, str]:
-    """Launch the Godot editor with the plugin for the given project."""
+    """Launch the Godot editor with the plugin for the given project.
+
+    If an editor for this project is already running, does NOT launch a
+    duplicate — returns (False, 'already running') so the caller can wait
+    for it to connect instead.
+    """
     godot = godot_path or find_godot_executable()
     if not godot:
         return False, "no Godot executable found (set GODOT_EXE)"
     if not Path(project_path).exists():
         return False, f"project not found: {project_path}"
+
+    if is_editor_running(project_path):
+        logger.info("editor already running for %s; reusing", project_path)
+        return False, "already running"
 
     installed, msg = ensure_plugin_installed(project_path)
     enable_plugin_in_project(project_path)

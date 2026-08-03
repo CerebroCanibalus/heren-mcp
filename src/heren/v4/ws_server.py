@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Any
 
 import websockets
@@ -22,6 +23,23 @@ logger = logging.getLogger(__name__)
 
 # Max time to wait for a tool response from the editor.
 _TOOL_TIMEOUT = 30.0
+
+
+def normalize_project_path(path: str) -> str:
+    """Canonical key for a project path: forward slashes, no trailing slash.
+
+    The plugin reports Godot-style paths (D:/proj/, forward slashes, trailing
+    slash); agents may pass Windows backslashes with or without trailing.
+    All map to the same canonical key so has_editor/register are consistent.
+    """
+    if not path:
+        return ""
+    import os as _os
+    if _os.name == "nt":
+        p = path.replace("/", "\\")
+        normalized = str(Path(p).resolve())
+        return normalized.replace("\\", "/").rstrip("/")
+    return str(Path(path).resolve()).rstrip("/")
 
 
 class EditorConnection:
@@ -81,7 +99,7 @@ class WsServer:
 
                 if method == "notifications/godot_ready":
                     params = msg.get("params", {}) or {}
-                    project_path = params.get("project_path", "")
+                    project_path = normalize_project_path(params.get("project_path", ""))
                     if conn:
                         self._editors.pop(conn.project_path, None)
                     conn = EditorConnection(project_path, ws)
@@ -133,7 +151,7 @@ class WsServer:
 
     def has_editor(self, project_path: str | None = None) -> bool:
         if project_path:
-            return project_path in self._editors
+            return normalize_project_path(project_path) in self._editors
         return bool(self._editors)
 
     # --------------------------------------------------------- tool calls
@@ -208,8 +226,10 @@ class WsServer:
             return {"error": {"code": -32003, "message": f"editor closed: {e}"}}
 
     def _pick_editor(self, project_path: str | None) -> EditorConnection | None:
-        if project_path and project_path in self._editors:
-            return self._editors[project_path]
+        if project_path:
+            key = normalize_project_path(project_path)
+            if key in self._editors:
+                return self._editors[key]
         # No explicit project: return any (first) connected editor.
         for conn in self._editors.values():
             return conn
