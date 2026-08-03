@@ -492,11 +492,12 @@ session("open", project_path="D:/MiProyectoExistente")
 | **Fase 0 completada (FlojoMCP)** | ws-server, image_content, pagination, SessionManager, hooks/tokens listos en FlojoMCP (commit `94b3d4c`) | 2026-08-03 |
 | **rmcp v1.7.0 no trae WS** | `ws.rs` es placeholder ("Maybe we don't really need a ws implementation?") → ws-server construido sobre `SinkStreamTransport` + tokio-tungstenite | 2026-08-03 |
 | **Frames WS inválidos cierran conexión** | El `Transport` de rmcp no admite errores en el stream → `WsStream` devuelve `None` (cierra) ante JSON-RPC malformado | 2026-08-03 |
-| **SessionManager en `.heren/session.json`** | Sesiones multi-proyecto: `Session::load(project/.heren/session.json)` con cache Arc<RwLock<HashMap>>, `save_all()`/`evict()` | 2026-08-03 |
+| **SessionManager en `.heren/session.json`** | Sesiones multi-proyecto path-based (Fase 0). En v4 (corregido §13.8) el SessionManager solo guarda `last_project` (1 clave) — la sesión real es `ConnectedEditors` en RAM | 2026-08-03 |
 | **NO definir `get_editor()` en EditorPlugin** | Colisiona con el método del EditorPlugin → devuelve null. Usar `get_editor_interface()` directo en handlers | 2026-08-03 |
 | **`add_do_method` de Godot 4.6** | Espera `(Object, StringName, args)` — NO acepta Callable directo. El wrapper de undo/redo usa esa firma | 2026-08-03 |
 | **Fase 1 completada (Plugin Núcleo)** | EditorPlugin + ws_client (MCP JSON-RPC) + dispatcher + undo_redo_wrapper + scene_handlers en `laika-gd/addons/heren/`, validado E2E real (health/open/create/get_root) | 2026-08-03 |
 | **`tools/ws_test_server.py`** | Server WS Python de prueba para validar el plugin antes de Fase 4 (el server Rust definitivo llega después). Soporta `--command`, `--sequence`, `--repeat` | 2026-08-03 |
+| **Sesión corregida: editor vivo, no estado persistente** | El propósito real de sesión es mantener el proceso Godot vivo (como v3 cacheaba el daemon). `ConnectedEditors` en RAM + `last_project` en disco. Se descartó el esquema vision/preferences/workspace_state de session.json (era especulación; eso es State efímero en RAM) | 2026-08-03 |
 
  ### Nuevas Features (v3.0)
 
@@ -825,7 +826,7 @@ raycast(session_id="abc", scene_path="res://Level.tscn",
 | **MCP server** | Python FastMCP (~60MB, schemas rotos con decoradores) | Rust FlojoMCP (7MB, schemas en compile-time) |
 | **Transporte** | WebSocket (daemon=server, frágil) | WebSocket (plugin=cliente, auto-reconnect, patrón gopeak) |
 | **Visibilidad** | SubViewport sin cámara | Viewports 2D/3D reales + sistema de visión con presupuesto de tokens |
-| **Sesiones** | SessionManager Python (LRU, temp files) | `flojo-session` persistente por proyecto |
+| **Sesiones** | SessionManager Python (LRU, daemon cache) | `ConnectedEditors` (editor vivo en RAM) + `last_project` en disco |
 | **Coordenadas** | `serialize_value`/`deserialize_value` (éxito) | Heredado + expansión (Transform2D/3D, snaps, relativas) |
 
 ### 13.2 Decisiones Arquitectónicas (ADR)
@@ -836,7 +837,7 @@ raycast(session_id="abc", scene_path="res://Level.tscn",
 
 **ADR-003: WebSocket con plugin=cliente (patrón gopeak).** Transporte WebSocket local, pero **el plugin es el CLIENTE** y el server MCP es el **SERVER**. gopeak (competencia real) valida el patrón: el MCP server abre server HTTP+WS unificado; el EditorPlugin se conecta con auto-reconnect y backoff exponencial. El editor NO depende de que el server exista. Permite push de eventos (`scene_changed`, `selection_changed`). Invertimos el rol de v3 (daemon=server) que causaba puerto ocupado y daemon muerto sin aviso. Descartadas: HTTP JSON-RPC (sin push), plugin hace MCP completo en GDScript (pierde FlojoMCP).
 
-**ADR-004: Sesiones guardadas por proyecto.** `flojo-session` persistente en `.heren/session.json` dentro del proyecto Godot. Mantiene la arquitectura de sesiones exitosa sin SessionManager Python.
+**ADR-004: Sesión = editor vivo conectado (runtime).** El propósito de "sesión" en v4 es mantener el proceso Godot (editor) vivo y reutilizarlo — no persistir estado de trabajo. `ConnectedEditors` en RAM del server (project_path → conexión WS) registrado vía `godot_ready`. `session.json` en disco se reduce a `last_project` (1 clave) para auto-lanzamiento. El esquema vision/preferences/workspace_state se descarta: es State efímero en RAM, no sesión persistente. `flojo-session` + `SessionManager` (Fase 0) cubren la parte mínima de disco.
 
 **ADR-005: Coordenadas unificadas heredadas + expansión.** Conservar `serialize_value`/`deserialize_value` con auto-detección por keys y expandir tipos. Fue un gran éxito (posiciones aplican correctamente). Expansión backward-compatible.
 
@@ -975,19 +976,55 @@ Cada tool de visión devuelve metadatos: `tokens_estimate`, `bytes`, `resolution
 
 **Regla**: cualquier recurso complejo debe tener (1) inspección → (2) edición → (3) preview → (4) persistencia verificada.
 
-### 13.8 Sesiones Guardadas (arquitectura)
+### 13.8 Sesiones (arquitectura corregida 2026-08-03)
+
+> **Propósito central**: mantener el proceso Godot (editor) vivo y reutilizarlo,
+> evitando el coste de arranque (3-5s) en cada operación. Igual que v3
+> cacheaba el daemon, v4 cachea la conexión con el editor real — pero el
+> editor es un proceso del usuario (con ventana), no un daemon del server.
+
+**Sesión = editor vivo conectado (runtime, en RAM del server).** No es
+session.json, no es un daemon, no es un proceso que el server gestiona.
 
 ```
-.heren/session.json  (dentro del proyecto Godot)
-├── project_path              # proyecto activo (reportado por plugin)
-├── vision: { budget_tokens, spent_tokens, default_resolution, cache }
-├── preferences: { show_grid, ascii_depth, snap_enabled }
-├── last_edited_scene: "res://src/scenes/level1.tscn"
-└── workspace_state: { open_scenes, selected_nodes }
+ConnectedEditors: { project_path → conexión WS }
+├── project_path              # identifica el proyecto (lo reporta el plugin)
+├── conexión WS               # canal de operaciones
+└── estado: connected/alive   # heartbeat + auto-reconnect
+
+Ciclo:
+1. El editor arranca con el plugin → conecta al server → envía godot_ready
+2. El server registra: ConnectedEditors[project_path] = conexión
+3. Operación sobre proyecto X → usa el editor vivo de X (~20ms, sin arranque)
+4. Sin editor vivo para X → lanzar Godot con X una vez (3-5s) o avisar al usuario
+5. El editor se cierra → conexión cae → el server des-registra
 ```
-- Usa `flojo-session` (KV persistente) + patrón *path-based por proyecto* (feature a aportar).
-- El `Context` de FlojoMCP la inyecta a todos los tools automáticamente.
-- El plugin reporta el proyecto activo → FlojoMCP carga la sesión correcta.
+
+**Propósitos reales y de comodidad (además del central):**
+
+| Propósito | Mecanismo | Comodidad |
+|-----------|-----------|-----------|
+| **Descubrimiento** | `ConnectedEditors` expone qué proyectos tienen editor vivo | El agente consulta "¿qué hay abierto?" sin adivinar ni lanzar nada |
+| **Enrutamiento multi-proyecto** | Operación lleva `project_path` → server enruta al editor correcto | Trabajar en N proyectos abiertos sin esperas de arranque |
+| **Auto-lanzamiento** | `last_project` en disco → si nadie está vivo, lanzar el editor de ese proyecto | Reanudar trabajo con un solo comando |
+| **Re-sincronización** | `godot_ready` re-envía project_path + escena actual al reconectar | Tras caída/reconexión el server sabe el estado sin re-consultar |
+| **Presupuesto de visión** | `State` en RAM del Context (NO disco) | El presupuesto de tokens de visión sobrevive entre llamadas de la misma sesión |
+
+**Lo que NO es sesión** (límite explícito):
+- Presupuesto de visión y preferencias → `State` efímero en RAM del Context, muere con la sesión de trabajo. NO va a disco.
+- `open_scenes` / `selected_nodes` / `last_edited_scene` → se consultan al editor vivo bajo demanda (`get_open_scenes`, `get_edited_scene_root`). NO se persisten.
+
+**session.json en disco (mínimo, no central):**
+
+```
+.heren/session.json
+└── last_project: "D:/proyectos/laika"   # solo para auto-lanzamiento
+```
+
+Solo `last_project`. El resto del esquema anterior (vision/preferences/
+workspace_state) se elimina — era especulación sin uso real. `flojo-session`
+(path-based) ya está listo en Fase 0; el `SessionManager` sirve aquí para
+guardar/leer `last_project` (1 clave), no para cachear estado de trabajo.
 
 ### 13.9 Plan por Fases
 
