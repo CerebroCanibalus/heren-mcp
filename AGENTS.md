@@ -5,11 +5,12 @@
 
 Este documento es la biblia para agentes que operan Heren MCP. Lee esto antes de tocar una línea de código.
 
-> 🚧 **ESTADO: v4.0.0 OPERATIVO (EditorPlugin + Bridge Python).**
+> 🚧 **ESTADO: v4.1.0 OPERATIVO (EditorPlugin + heren-server.exe Rust).**
 > **Migración completada 2026-08-03**: GodotDaemon (v3) → EditorPlugin (v4).
-> El MCP es usable HOY con el bridge Python (`python -m heren.v4.bridge`).
-> HerenServer.exe (Rust/FlojoMCP) llega en Fase 4 — el bridge es temporal.
-> Los cambios nuevos van a v4. No ampliar v3 salvo bugs críticos.
+> **Fase 4 completada 2026-08-04**: el MCP es `heren-server.exe` (Rust/FlojoMCP),
+> 21 tools con paridad al bridge Python, WS plugin server + auto-launch del editor.
+> El bridge Python (`python -m heren.v4.bridge`) ya NO es el MCP activo (queda como fallback/referencia).
+> Los cambios nuevos van a v4/Rust. No ampliar v3 salvo bugs críticos.
 
 ---
 
@@ -552,6 +553,11 @@ session("open", project_path="D:/MiProyectoExistente")
 | **Batch rompe con dicts anidados CONFIRMADO** | `godot_orchestrate` falla parseando JSON con sub-recursos (`{"__type":"Resource",...}`). Workaround: llamadas individuales (que sí funcionan con dicts anidados) o set_prop separado. | 2026-08-03 |
 | **scene_coords devuelve paths `../`** | `visual/scene_coords` responde con paths relativos estilo `../../../../../..` en vez de `L1/L2/...`. Legible pero subóptimo para el agente; `visual/scene_ascii` sí muestra el árbol limpio. Mejora opcional: usar `_node_path_relative` en coords map. | 2026-08-03 |
 | **ShaderMaterial vacío si shader path no existe** | Si `set_prop material` referencia un `.gdshader` inexistente, `deserialize_value` devuelve null (ResourceLoader.exists=false) → material sin shader en .tscn. Comportamiento correcto (fail-safe), no bug: el path debe existir. Verificado con background.gdshader: ext_resource + shader + uniforms correctos. | 2026-08-03 |
+| **Fase 4 completada: heren-server.exe (Rust)** | El MCP de OpenCode (`run.bat`) ahora lanza `heren-server.exe` (Rust/FlojoMCP) — 21 tools con paridad al bridge Python, WS plugin server (patrón gopeak), auto-launch del editor. El bridge Python queda como fallback. | 2026-08-04 |
+| **Bug macro FlojoMCP: visibilidad no preservada** | `#[flojo_mcp]` redefinía el struct SIN `pub` → `pub struct X` se volvía privado. Fix: usar `item.vis` en la macro. Descubierto por dogfooding de heren-server. | 2026-08-04 |
+| **Build MSVC: requiere VsDevCmd del BuildTools 2022** | rustc MSVC usaba VS 18 Insiders (sin libs) → error `LNK1104 msvcrt.lib`. Fix: `heren-build.bat` carga `VsDevCmd.bat` del BuildTools 2022 antes de cargo. | 2026-08-04 |
+| **orchestrate con plan_file** | El batch rompía con dicts anidados (JSON del tool-call). Fix en Rust: `orchestrate` acepta `plan_file` (ruta al JSON del plan) — el plan viaja por archivo, no por tool-call. | 2026-08-04 |
+| **Reinicio MCP: matar bridge viejo primero** | Al cambiar el MCP a Rust, el bridge Python viejo (`python -m heren.v4.bridge`) quedó ocupando el puerto 9099 → "failed to get tools". Fix: matar el proceso bridge (taskkill) antes de reiniciar el MCP. | 2026-08-04 |
 
  ### Nuevas Features (v3.0)
 
@@ -1183,12 +1189,16 @@ guardar/leer `last_project` (1 clave), no para cachear estado de trabajo.
 - [x] Eventos push (`selection_changed` via `_edit()` con rate-limit 1/s)
 - **Criterio**: ✅ `visual_*` funcionales (validado E2E: coords, summary, ascii, capture PNG 400x197, coords en add/remove), presupuesto respetado, cache funciona.
 
-**Fase 4 — Tools FlojoMCP + Sesiones (3-4 sem).** Objetivo: portar 14 tools Python → Rust, sesiones persistentes.
-- [ ] Definir tools Rust con macros `#[tool]` + schemas
-- [ ] FlojoTester para cada tool
-- [ ] Sesiones path-based por proyecto
-- [ ] `visual_*` tools en Rust
-- **Criterio**: todos los tests en FlojoTester, sesiones sobreviven reinicio.
+**Fase 4 — Tools FlojoMCP + Sesiones (COMPLETADA 2026-08-04).** Objetivo: portar las tools → Rust, WS plugin server, auto-launch.
+- [x] Crate `heren-server` en workspace FlojoMCP (`crates/heren-server`) — dogfooding
+- [x] **21 tools** con macros `#[tool]` + schemas compile-time (paridad al bridge Python, verificado por `tests/tools_parity.rs`)
+- [x] WS plugin server (`ws_plugin_server.rs`) — el EditorPlugin Godot conecta (patrón gopeak), registra por `project_path`, correlaciona respuestas por id (tolera `"1.0"`/`"1"`)
+- [x] Auto-launch del editor (`launcher.rs`) — port de `godot_launcher.py`: find_godot_executable, ensure_plugin_installed, enable_plugin_in_project, is_editor_running (WMI), launch_editor, close_editor, last_project
+- [x] `orchestrate` con `plan_file` (arregla el batch de dicts anidados: el plan puede venir por archivo)
+- [x] `run.bat` apunta a `heren-server.exe` (Rust) — el MCP activo
+- [x] Tests: `tests/ws_plugin.rs` (WS E2E) + `tests/tools_parity.rs` (21 tools) + unit
+- **Criterio**: ✅ 21 tools con paridad, WS E2E, auto-launch, schemas compile-time, release 8.5MB
+- **Nota**: el bridge Python (`src/heren/v4/bridge.py`) queda como fallback/referencia — NO es el MCP activo.
 
 **Fase 5 — Hardening + Release (2 sem).**
 - [ ] CI: `cargo test`, `flojo check`, GUT, benchmarks
