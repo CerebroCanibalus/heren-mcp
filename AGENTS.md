@@ -175,7 +175,7 @@ D:\Mis Juegos\GodotMCP\heren-mcp\
 | 4 | `resource` | create, read, update, delete, list, create_script, read_script, edit_script | Recursos .tres + .gd | ✅ 100% | EditorFileSystem |
 | 5 | `project` | create, setup_plugin, setting, autoload, remove_autoload, input_map, shader_global | Configuración | ✅ 100% | create sin editor + main.tscn automática |
 | 6 | `shader` | create, edit, validate, material, uniform | Shaders | ✅ 100% | .gdshader + ShaderMaterial |
-| 7 | `animation` | create_player, create, add_track, add_key, state_machine, play, stop, seek, speed, get_animations, get_tracks, get_keyframes, get_state_machine, remove_track, remove_key, update_key, update_props, one_shot, tween, record, from_path, loop_pose, preview, curve, capture_pose, tree_activate, tree_travel, tree_set_param, tree_get_param | Animaciones | ✅ 100% | AnimationLibrary + playback + edición + procedural + tree control (§9) |
+| 7 | `animation` | create_player, create, add_track, add_key, state_machine, play, stop, seek, speed, get_animations, get_tracks, get_keyframes, get_state_machine, remove_track, remove_key, update_key, update_props, one_shot, tween, record, from_path, loop_pose, preview, curve, capture_pose, tree_activate, tree_travel, tree_set_param, tree_get_param, duplicate, delete, rename, reverse, blend_pose, retarget | Animaciones | ✅ 100% | AnimationLibrary + playback + edición + procedural + tree control + gestión (§9) |
 | 8 | `skeleton` | skeleton_create, skeleton_add_bone, skeleton_set_rest, skeleton_skin, skeleton_attachment, skeleton_get_bones, skeleton_get_pose, skeleton_set_pose, skeleton_ik, skeleton_fabrik, capture_pose | Esqueletos 2D/3D | ✅ 100% | fusionado en animation_handlers; IK 2D FABRIK + IK 3D |
 | 9 | `tilemap` | inspect_set, inspect_map, set_cell, terrain, pattern | TileMaps | ✅ 100% | requiere TileSet |
 | 10 | `debug` | run_scene, stop_scene, is_playing, get_editor_errors | Depuración | ✅ 100% | editor real, no subprocess |
@@ -258,6 +258,8 @@ Ciclo:
 > `skeleton_fabrik` (IK 2D procedural FABRIK con pesos), IK 3D ampliado (magnet/influence/target_position),
 > `visual/capture` con seek automático (`animation:{player_path,anim_name,time}`), `preview` devuelve imagen,
 > `skeleton_get_pose` con `global` + AABB de la pose.
+> **P2/P3 COMPLETADAS**: `duplicate`/`delete`/`rename` (gestión), `reverse` (copiar invertida), `blend_pose` (blend procedural),
+> `retarget` (por nombre de hueso, solo rigs compatibles). API verificada contra docs oficiales 4.7.
 > 12/12 handlers `--check-only` OK. Binario release compilado con todas las acciones.
 > **PENDIENTE: validación E2E en vivo** (requiere sesión MCP nueva).
 
@@ -317,6 +319,13 @@ Ciclo:
 - ✅ `visual/capture` con `animation:{player_path,anim_name,time}` — seek automático antes de capturar
 - ✅ `preview` con `with_image:true` — devuelve la imagen del frame directamente
 - ✅ `skeleton_get_pose` con `global` (posición mundial por hueso) + `aabb` de la pose
+
+**P2 — Gestión + P3 — Avanzado (✅ IMPLEMENTADAS):**
+- ✅ `duplicate`/`delete`/`rename` — gestión de animaciones (iterar sin recrear)
+- ✅ `reverse` — copia invertida (walk → walk_rev, ciclos)
+- ✅ `blend_pose` — blend procedural: interpola pose actual → target_pose por hueso con `factor` (0..1), desde `rest` o pose actual
+- ✅ `retarget` — copia animación a otro Skeleton3D mapeando por NOMBRE de hueso (solo rigs compatibles: hips/spine/upper_arm_L...)
+- ✅ API verificada en línea (docs.godotengine.org 4.7): Animation.track_insert_key/transition, AnimationLibrary.rename_animation/remove_animation, AnimationNodeStateMachinePlayback.travel, AnimationTree parameters, Skeleton3D.get_bone_global_pose
 
 **Coordenadas enriquecidas (§9.4) — ✅ IMPLEMENTADA en `node_handlers.gd _node_coords()`.**
 

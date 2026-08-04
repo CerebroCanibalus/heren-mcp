@@ -2045,3 +2045,281 @@ func handle_preview(args: Dictionary) -> Dictionary:
 						out["__image_w"] = img.get_width()
 						out["__image_h"] = img.get_height()
 	return out
+
+
+# ---------------------------------------------------------------- P2: gestión de animaciones (duplicate/delete/rename)
+
+func _get_library(player: AnimationPlayer, library: String) -> AnimationLibrary:
+	var lib_name := library if library != "" else ""
+	var lib := player.get_animation_library(lib_name)
+	if lib == null and lib_name == "":
+		return null
+	return lib
+
+
+func handle_duplicate(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	var anim_name: String = str(args.get("anim_name", ""))
+	if anim_name == "":
+		return {"ok": false, "error": "anim_name required"}
+	if not player.has_animation(anim_name):
+		return {"ok": false, "error": "animation_not_found: " + anim_name}
+
+	var library: String = str(args.get("library", ""))
+	var lib := _get_library(player, library)
+	if lib == null:
+		return {"ok": false, "error": "library_not_found: " + (library if library != "" else "<default>")}
+
+	var new_name: String = str(args.get("new_name", ""))
+	if new_name == "":
+		new_name = anim_name + "_copy"
+	if lib.has_animation(new_name):
+		return {"ok": false, "error": "animation_exists: " + new_name}
+
+	# duplicate() copia length, loop_mode y TODOS los tracks/keys.
+	var copy: Animation = player.get_animation(anim_name).duplicate()
+	lib.add_animation(new_name, copy)
+
+	return {
+		"ok": true,
+		"anim_name": anim_name,
+		"new_name": new_name,
+		"tracks": copy.get_track_count(),
+		"length": copy.length,
+	}
+
+
+func handle_delete(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	var anim_name: String = str(args.get("anim_name", ""))
+	if anim_name == "":
+		return {"ok": false, "error": "anim_name required"}
+	if not player.has_animation(anim_name):
+		return {"ok": false, "error": "animation_not_found: " + anim_name}
+
+	var library: String = str(args.get("library", ""))
+	var lib := _get_library(player, library)
+	if lib == null:
+		return {"ok": false, "error": "library_not_found: " + (library if library != "" else "<default>")}
+
+	# Si está reproduciéndose, parar antes de borrar.
+	if player.current_animation == anim_name:
+		player.stop()
+	lib.remove_animation(anim_name)
+
+	return {"ok": true, "deleted": anim_name}
+
+
+func handle_rename(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	var anim_name: String = str(args.get("anim_name", ""))
+	if anim_name == "":
+		return {"ok": false, "error": "anim_name required"}
+	if not player.has_animation(anim_name):
+		return {"ok": false, "error": "animation_not_found: " + anim_name}
+	var new_name: String = str(args.get("new_name", ""))
+	if new_name == "":
+		return {"ok": false, "error": "new_name required"}
+	if new_name == anim_name:
+		return {"ok": false, "error": "new_name equals anim_name"}
+
+	var library: String = str(args.get("library", ""))
+	var lib := _get_library(player, library)
+	if lib == null:
+		return {"ok": false, "error": "library_not_found: " + (library if library != "" else "<default>")}
+	if lib.has_animation(new_name):
+		return {"ok": false, "error": "animation_exists: " + new_name}
+
+	lib.rename_animation(anim_name, new_name)
+	return {"ok": true, "renamed": anim_name, "to": new_name}
+
+
+# ---------------------------------------------------------------- P3: avanzado (reverse/blend_pose/retarget)
+
+## Crea una copia invertida de la animación (walk → walk_rev). Util para ciclos.
+func handle_reverse(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	var anim_name: String = str(args.get("anim_name", ""))
+	if anim_name == "":
+		return {"ok": false, "error": "anim_name required"}
+	if not player.has_animation(anim_name):
+		return {"ok": false, "error": "animation_not_found: " + anim_name}
+
+	var library: String = str(args.get("library", ""))
+	var lib := _get_library(player, library)
+	if lib == null:
+		return {"ok": false, "error": "library_not_found: " + (library if library != "" else "<default>")}
+	var new_name: String = str(args.get("new_name", ""))
+	if new_name == "":
+		new_name = anim_name + "_rev"
+	if lib.has_animation(new_name):
+		return {"ok": false, "error": "animation_exists: " + new_name}
+
+	var src: Animation = player.get_animation(anim_name)
+	var rev: Animation = src.duplicate()
+	var length: float = src.length
+
+	# Invertir keys de cada track: t' = length - t. Reordenar por tiempo.
+	for t in src.get_track_count():
+		var key_count: int = src.track_get_key_count(t)
+		# Eliminar keys de la copia y re-insertar invertidas.
+		while rev.track_get_key_count(t) > 0:
+			rev.track_remove_key(t, 0)
+		var pairs: Array = []
+		for k in key_count:
+			var time: float = src.track_get_key_time(t, k)
+			var value: Variant = src.track_get_key_value(t, k)
+			var transition: float = src.track_get_key_transition(t, k)
+			pairs.append({"t": length - time, "v": value, "tr": transition})
+		pairs.sort_custom(func(a, b): return a.t < b.t)
+		for p in pairs:
+			rev.track_insert_key(t, p.t, p.v, p.tr)
+
+	lib.add_animation(new_name, rev)
+	return {"ok": true, "anim_name": anim_name, "new_name": new_name, "length": length}
+
+
+## P3: blend procedural — interpola la pose actual del skeleton hacia una pose
+## objetivo por hueso con factor t (0..1). Útil para transiciones suaves.
+func handle_blend_pose(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var skeleton := _resolve_node(root, args.get("skeleton_path", ""))
+	if skeleton == null:
+		return {"ok": false, "error": "skeleton_not_found"}
+	var factor: float = clampf(float(args.get("factor", 0.5)), 0.0, 1.0)
+	var target_pose: Dictionary = _args_dict(args, "target_pose")
+	if target_pose.is_empty():
+		return {"ok": false, "error": "target_pose required (map bone_name → transform)"}
+	var rest_mode: bool = bool(args.get("rest", true))
+
+	var blended: Array = []
+	if skeleton is Skeleton3D:
+		var skel := skeleton as Skeleton3D
+		for bone_name in target_pose.keys():
+			var idx: int = skel.find_bone(str(bone_name))
+			if idx < 0:
+				continue
+			var base: Transform3D = skel.get_bone_rest(idx) if rest_mode else skel.get_bone_pose(idx)
+			var target: Variant = HerenCoordsScript.deserialize_value(target_pose[bone_name])
+			if target is Transform3D:
+				base = base.interpolate_with(target as Transform3D, factor)
+				skel.set_bone_pose(idx, base)
+				blended.append(str(bone_name))
+	elif skeleton is Skeleton2D:
+		var skel := skeleton as Skeleton2D
+		for bone_name in target_pose.keys():
+			var bone: Bone2D = null
+			for i in skel.get_bone_count():
+				if skel.get_bone(i).name == bone_name:
+					bone = skel.get_bone(i)
+					break
+			if bone == null:
+				continue
+			var base: Transform2D = bone.rest if rest_mode else bone.transform
+			var target: Variant = HerenCoordsScript.deserialize_value(target_pose[bone_name])
+			if target is Transform2D:
+				base = base.interpolate_with(target as Transform2D, factor)
+				bone.transform = base
+				blended.append(str(bone_name))
+
+	return {
+		"ok": true,
+		"skeleton_path": _node_path_relative(skeleton, root),
+		"factor": factor,
+		"bones_blended": blended.size(),
+		"bones": blended,
+	}
+
+
+## P3: retarget básico — copia una animación de un skeleton fuente a otro
+## mapeando por NOMBRE de hueso (3D). Reutiliza animaciones entre personajes
+## que comparten rig (hips, spine, upper_arm_L...).
+func handle_retarget(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	var anim_name: String = str(args.get("anim_name", ""))
+	if anim_name == "":
+		return {"ok": false, "error": "anim_name required"}
+	if not player.has_animation(anim_name):
+		return {"ok": false, "error": "animation_not_found: " + anim_name}
+
+	var source := _resolve_node(root, args.get("source_skeleton", "")) as Skeleton3D
+	var target := _resolve_node(root, args.get("target_skeleton", "")) as Skeleton3D
+	if source == null or target == null:
+		return {"ok": false, "error": "source_skeleton and target_skeleton required (Skeleton3D)"}
+
+	var library: String = str(args.get("library", ""))
+	var lib := _get_library(player, library)
+	if lib == null:
+		return {"ok": false, "error": "library_not_found: " + (library if library != "" else "<default>")}
+	var new_name: String = str(args.get("new_name", ""))
+	if new_name == "":
+		new_name = anim_name + "_rt"
+	if lib.has_animation(new_name):
+		return {"ok": false, "error": "animation_exists: " + new_name}
+
+	var src_anim: Animation = player.get_animation(anim_name)
+	var dst_anim := Animation.new()
+	dst_anim.length = src_anim.length
+	dst_anim.loop_mode = src_anim.loop_mode
+
+	# Mapa nombre de hueso source → índice de hueso target.
+	var target_idx_by_name := {}
+	for i in target.get_bone_count():
+		target_idx_by_name[target.get_bone_name(i)] = i
+
+	var mapped := 0
+	for t in src_anim.get_track_count():
+		var path_str: String = str(src_anim.track_get_path(t))
+		if not path_str.contains(":bones/"):
+			continue
+		var bone_name: String = path_str.split(":bones/")[1].split("/")[0]
+		if not target_idx_by_name.has(bone_name):
+			continue
+		var t_idx := dst_anim.add_track(Animation.TYPE_VALUE)
+		dst_anim.track_set_path(t_idx, str(target.get_path()) + ":bones/" + str(target_idx_by_name[bone_name]) + "/pose")
+		for k in src_anim.track_get_key_count(t):
+			dst_anim.track_insert_key(t_idx, src_anim.track_get_key_time(t, k),
+				src_anim.track_get_key_value(t, k), src_anim.track_get_key_transition(t, k))
+		mapped += 1
+
+	lib.add_animation(new_name, dst_anim)
+	return {
+		"ok": true,
+		"anim_name": anim_name,
+		"new_name": new_name,
+		"tracks_mapped": mapped,
+		"source_skeleton": source.name,
+		"target_skeleton": target.name,
+	}
