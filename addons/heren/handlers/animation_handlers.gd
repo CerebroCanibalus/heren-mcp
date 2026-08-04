@@ -348,24 +348,33 @@ func handle_skeleton_set_rest(args: Dictionary) -> Dictionary:
 	var rest_transform: Dictionary = _args_dict(args, "rest_transform")
 
 	# Fix H4: branch by actual type (Skeleton2D vs Skeleton3D) instead of
-	# forcing Skeleton3D. 2D rest is a Transform2D (position/rotation).
+	# forcing Skeleton3D.
+	#
+	# IMPORTANT (Godot 4.7): Skeleton2D has NO set_bone_rest / find_bone
+	# (those are Skeleton3D methods). In Skeleton2D each bone IS a Bone2D
+	# child node; the rest pose is `bone.rest = Transform2D(...)`. So we
+	# find the Bone2D child by name and set its .rest directly.
 	if node is Skeleton2D:
 		var skel2d := node as Skeleton2D
-		var bone_idx := skel2d.find_bone(bone_name)
-		if bone_idx < 0:
-			return {"ok": false, "error": "bone_not_found: " + bone_name}
 		var angle: float = float(rest_transform.get("angle", rest_transform.get("rotation", 0.0)))
 		var origin := Vector2(
 			float(rest_transform.get("x", 0)),
 			float(rest_transform.get("y", 0))
 		)
-		skel2d.set_bone_rest(bone_idx, Transform2D(angle, origin))
-		return {"ok": true, "bone_name": bone_name, "bone_idx": bone_idx, "type": "Skeleton2D"}
+		var bone: Node = null
+		for child in skel2d.get_children():
+			if child is Bone2D and child.name == bone_name:
+				bone = child
+				break
+		if bone == null:
+			return {"ok": false, "error": "bone_not_found: " + bone_name}
+		(bone as Bone2D).rest = Transform2D(angle, origin)
+		return {"ok": true, "bone_name": bone_name, "type": "Skeleton2D"}
 
 	var skeleton := node as Skeleton3D
 	if skeleton == null:
 		return {"ok": false, "error": "invalid_skeleton_type"}
-	var bone_idx := skeleton.find_bone(bone_name)
+	var bone_idx: int = skeleton.find_bone(bone_name)
 	if bone_idx < 0:
 		return {"ok": false, "error": "bone_not_found: " + bone_name}
 
@@ -407,7 +416,14 @@ func handle_skeleton_skin(args: Dictionary) -> Dictionary:
 		var weights: Array = bone_weights[bone_name]
 		# Fix H3: `set_bone_weights` (not `set_bone_weigths`) and it takes
 		# a bone INDEX (int), not a bone name (String).
-		var bone_idx := skeleton.find_bone(str(bone_name))
+		#
+		# Fix H4: Skeleton2D has NO find_bone (Skeleton3D method) — locate the
+		# Bone2D child index by iterating get_bone_count()/get_bone().
+		var bone_idx := -1
+		for i in skeleton.get_bone_count():
+			if skeleton.get_bone(i).name == str(bone_name):
+				bone_idx = i
+				break
 		if bone_idx == -1:
 			return {"ok": false, "error": "bone_not_found: " + str(bone_name)}
 		polygon.set_bone_weights(bone_idx, PackedFloat32Array(weights))
@@ -427,26 +443,33 @@ func handle_skeleton_attachment(args: Dictionary) -> Dictionary:
 	var bone_name: String = str(args.get("bone_name", ""))
 	var attachment_name: String = str(args.get("attachment_name", "Attachment"))
 
-	# Fix H4: branch by type. 2D uses BoneAttachment2D, 3D uses BoneAttachment3D.
+	# Fix H4: branch by type. 2D uses a plain Node2D child of the Bone2D
+	# (BoneAttachment2D does NOT exist in Godot 4); 3D uses BoneAttachment3D.
+	# Skeleton2D has no find_bone (Skeleton3D method) — find the Bone2D child.
 	if node is Skeleton2D:
 		var skel2d := node as Skeleton2D
-		var bone_idx := skel2d.find_bone(bone_name)
-		if bone_idx < 0:
+		var bone: Node = null
+		var bone_idx := -1
+		for i in skel2d.get_bone_count():
+			var b := skel2d.get_bone(i)
+			if b.name == bone_name:
+				bone = b
+				bone_idx = i
+				break
+		if bone == null:
 			return {"ok": false, "error": "bone_not_found: " + bone_name}
-		var att2d := BoneAttachment2D.new()
+		var att2d := Node2D.new()
 		att2d.name = attachment_name
-		att2d.bone_name = bone_name
-		skel2d.add_child(att2d)
+		bone.add_child(att2d)
 		att2d.owner = root
 		return {"ok": true, "attachment": att2d.name, "bone": bone_name, "bone_idx": bone_idx, "type": "BoneAttachment2D"}
 
 	var skeleton := node as Skeleton3D
 	if skeleton == null:
 		return {"ok": false, "error": "invalid_skeleton_type"}
-	var bone_idx := skeleton.find_bone(bone_name)
+	var bone_idx: int = skeleton.find_bone(bone_name)
 	if bone_idx < 0:
 		return {"ok": false, "error": "bone_not_found: " + bone_name}
-
 	var attachment := BoneAttachment3D.new()
 	attachment.name = attachment_name
 	attachment.bone_name = bone_name
