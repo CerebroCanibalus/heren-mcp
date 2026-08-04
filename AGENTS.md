@@ -3,54 +3,42 @@
 > **Filosofía Global: Poder. Eficiencia. Rapidez. Sostenibilidad. Visibilidad. Control.**
 > **Filosofía de Tools: Centralizadas. Modulares. Potentes.**
 
-Este documento es la biblia para agentes que operan Heren MCP. Lee esto antes de tocar una línea de código.
+Biblia para agentes que operan Heren MCP. Léelo antes de tocar código.
 
-> 🚧 **ESTADO: v4.2.0 OPERATIVO (EditorPlugin + heren-server.exe Rust).**
-> **Migración completada 2026-08-03**: GodotDaemon (v3) → EditorPlugin (v4).
-> **Fase 4 completada 2026-08-04**: el MCP es `heren-server.exe` (Rust/FlojoMCP),
-> **15 tools centralizadas** (filosofía §1), WS plugin server + auto-launch del editor.
-> **v4.2 (2026-08-04)**: el .exe habla **NDJSON** por stdio (el framing real de OpenCode,
-> verificado con stdin-spy), bridge Python ELIMINADO, OpenCode apunta al .exe directo.
-> El transporte `Content-Length` (`flojo_run_stdio_cl`) queda en FlojoMCP como feature genérica
-> para clientes LSP-style, pero OpenCode NO lo usa.
-> El bridge Python (`python -m heren.v4.bridge`) ya NO es el MCP activo (queda como fallback/referencia).
-> Los cambios nuevos van a v4/Rust. No ampliar v3 salvo bugs críticos.
+> 🚧 **ESTADO: v4.2.0 OPERATIVO (EditorPlugin + heren-server.exe Rust/FlojoMCP).**
+> Migración GodotDaemon(v3)→EditorPlugin(v4) completada 2026-08-03. Fase 4 (Rust) 2026-08-04.
+> **15 tools centralizadas**, WS plugin server (patrón gopeak), auto-launch del editor.
+> El .exe habla **NDJSON** por stdio (framing real de OpenCode, verificado con stdin-spy).
+> Bridge Python (`python -m heren.v4.bridge`) = fallback/referencia, NO el MCP activo.
+> **Los cambios nuevos van a v4/Rust. No ampliar v3 salvo bugs críticos.**
 >
-> **v4.2 sesión 2026-08-04 (bugs E2E arreglados):**
-> - **15 tools**: 8 renombradas sin `_tool`, 7 de visión consolidadas en `visual`.
-> - **Single-instance**: `run()` mata heren-server viejos (el editor conecta al server correcto).
-> - **`[editor_plugins]` normalizado** a `enabled=PackedStringArray(...)` (Godot 4 carga el plugin).
-> - **Instalación completa**: verifica TODOS los archivos, no solo plugin.cfg.
-> - **`project/create` sin editor** + main.tscn automática + configurabilidad profunda.
-> - **`project/setup_plugin`**: instalación como tool que el agente puede llamar.
-> - **`session.close_editor`** ahora opcional (default false).
-> - Herramienta de diagnóstico: `.temp/probe_tools.py` (probe stdio NDJSON del .exe).
-> - **E2E minijuego 2026-08-04**: ~44 nodos funcionales. 10/15 tools impecables; 8 bugs + 3 gaps documentados en **§0 PRIORIDAD INMEDIATA**. **C1/C2 + H1-H4 RESUELTOS Y VALIDADOS E2E EN VIVO**; pendientes M1-M3, visual 4/7, gaps.
-> - **Fix C1/C2**: `server.rs args()` omite keys None; `handle_setting` trata null explícito como get. **Fix H1**: signal/list defensivo + key `"signal"`. **Fix H2**: `resource_name` (no `name`). **Fix H3**: `set_bone_weights` + índice int. **Fix H4**: skeleton set_rest/attachment ramifican por tipo real.
-> - **API Skeleton2D falsa corregida**: Skeleton2D NO tiene `find_bone`/`set_bone_rest` (son de Skeleton3D); sus huesos son nodos `Bone2D` hijos (`.rest=Transform2D`). `BoneAttachment2D` NO existe en Godot 4 → attachment 2D = Node2D hijo del Bone2D. Lección: validar sintaxis GDScript con `--check-only` tras editar handlers (un parse error silencioso impide que el plugin cargue → editor no conecta).
-> - **Mejora conexión validada**: `launch_editor` recibe `editor_connected`; si hay proceso zombie sin conectar lo mata y relanza limpio. `session/open` contra editor viejo desconectado lanzó uno nuevo que conectó automático. Ya no hay que matar el editor a mano.
+> **v4.2 (2026-08-04)**: 15 tools (8 sin `_tool`, 7 visión→`visual`), single-instance (`run()` mata viejos),
+> `[editor_plugins]` normalizado a `enabled=PackedStringArray(...)`, instalación completa (verifica TODOS los archivos),
+> `project/create` sin editor + main.tscn automática, `project/setup_plugin`, `session.close_editor` opcional (default false).
+> **C1/C2 + H1-H4 RESUELTOS Y VALIDADOS E2E EN VIVO** (setting get, signal/list, shader/material, skeleton 2D rest/attachment/skin).
+> **Mejora conexión**: `launch_editor` mata editor zombie sin conectar y relanza limpio.
 
 ---
 
 ## 0. 🚨 PRIORIDAD INMEDIATA — Bugs/mejoras del E2E (minijuego platformer, 2026-08-04)
 
 > Hallazgos de la prueba E2E completa (`.temp/e2e_minigame`, ~44 nodos, juego funcional).
-> **Estado 2026-08-04 (sesión de fixes)**: C1/C2, H1-H4 **RESUELTOS Y VALIDADOS E2E EN VIVO** (setting get, signal/list, shader/material, skeleton 2D rest/attachment/skin). Pendientes: M1-M3, visual 4/7, gaps. + **Mejora de conexión**: `launch_editor` mata editor zombie sin conectar.
-> Archivos fuente: `crates/heren-server/src/server.rs` (args) + `addons/heren/handlers/*.gd`.
+> **Estado 2026-08-04**: C1/C2, H1-H4 **RESUELTOS Y VALIDADOS E2E EN VIVO**. Pendientes: M1-M3, visual 4/7, gaps.
+> Fuente: `crates/heren-server/src/server.rs` (args) + `addons/heren/handlers/*.gd`.
 
 ### Bugs críticos (rompen datos) — ✅ RESUELTOS
-| # | Tool | Bug | Fix aplicado |
-|---|------|-----|--------------|
-| **C1** | `project/setting` get | **Borraba el setting** (op:"set", value:null). | `server.rs args()` **omite keys None** (antes insertaba `Value::Null`). + `project_handlers.gd`: guard `if args.has("value") and args.get("value") != null` → null explícito = get. |
+| # | Tool | Bug | Fix |
+|---|------|-----|-----|
+| **C1** | `project/setting` get | **Borraba el setting** (op:"set", value:null). | `server.rs args()` **omite keys None** (antes `Value::Null`). + `project_handlers.gd`: null explícito = get. |
 | **C2** | Sistémico | `str(null)`="<null>" rompía guards `if x == ""`. | Misma raíz C1: keys None ya no se inyectan. |
 
 ### Bugs altos (crashes) — ✅ RESUELTOS
-| # | Tool | Bug | Fix aplicado |
-|---|------|-----|--------------|
-| **H1** | `signal/list` | Crash "Unknown error" con conexiones entrantes. | `signal_handlers.gd`: loop totalmente defensivo (`.get()`, aísla por conexión, try-safe). **Bonus**: key correcta `"signal"` (no `"signal_name"` que daba `""`). |
-| **H2** | `shader/material` | "Unknown error" siempre. | **CAUSA RAÍZ**: `material.name =` (ShaderMaterial es Resource, no tiene `name`). Fix: `material.resource_name =`. |
-| **H3** | `skeleton/skin` | Crash. | `set_bone_weigths` → `set_bone_weights` + pasa **índice int** (`find_bone`), no nombre. |
-| **H4** | `skeleton` 2D | set_rest/attachment exigían Skeleton3D. | Ramificar por tipo: Skeleton2D→`Transform2D`/`BoneAttachment2D`, Skeleton3D→`Transform3D`/`BoneAttachment3D`. |
+| # | Tool | Bug | Fix |
+|---|------|-----|-----|
+| **H1** | `signal/list` | Crash con conexiones entrantes. | Loop defensivo (`.get()`, aísla por conexión). **Bonus**: key `"signal"` (no `signal_name`). |
+| **H2** | `shader/material` | "Unknown error" siempre. | **CAUSA RAÍZ**: `material.name =` (Resource no tiene `name`). Fix: `material.resource_name =`. |
+| **H3** | `skeleton/skin` | Crash. | `set_bone_weigths`→`set_bone_weights` + **índice int** (`find_bone`), no nombre. |
+| **H4** | `skeleton` 2D | set_rest/attachment exigían Skeleton3D. | Ramificar por tipo: Skeleton2D→`Transform2D`/Node2D hijo, Skeleton3D→`Transform3D`/`BoneAttachment3D`. |
 
 ### Bugs medios — ⚠️ PENDIENTES
 | # | Tool | Bug | Causa raíz / Fix |
@@ -71,8 +59,8 @@ Este documento es la biblia para agentes que operan Heren MCP. Lee esto antes de
 | `cache` | ❌ **handler `handle_vision_cache` NO existe** en el plugin |
 
 ### Gaps de exposición (tool vs handler)
-- Tool `node` **no expone** `query`, `by`, `recursive`, `owner_path`, `script` → `find`, `get_children(recursive)`, `set_owner`, `add(script)` solo funcionan vía `orchestrate` (args crudos). Fix: añadir params al schema.
-- Tool `resource` **no crea directorios padre** → "save_failed: Can't open"/"cannot_open" si la carpeta no existe; no hay tool de mkdir. Fix: crear dirs en create/create_script o exponer mkdir.
+- Tool `node` **no expone** `query`, `by`, `recursive`, `owner_path`, `script` → `find`, `get_children(recursive)`, `set_owner`, `add(script)` solo vía `orchestrate` (args crudos). Fix: añadir params al schema.
+- Tool `resource` **no crea directorios padre** → "save_failed: Can't open" si la carpeta no existe; no hay tool de mkdir. Fix: crear dirs en create/create_script o exponer mkdir.
 - Tool `resource` exige params **required irrelevantes** (append/directory/extension/recursive/resource_type/template) en create_script/edit_script. Fix: hacerlos opcionales.
 
 ### Workaround actual
@@ -83,932 +71,27 @@ Este documento es la biblia para agentes que operan Heren MCP. Lee esto antes de
 
 ## 1. Filosofía de Hierro
 
-### Los Tres Pilares Globales
-
 | Pilar | Significado | Aplicación |
 |-------|-------------|------------|
 | **PODER** | Acceso total a Godot. Cero limitaciones. | Si Godot puede hacerlo, Heren puede hacerlo. |
-| **EFICIENCIA** | Cada operación debe ser óptima. Sin desperdicio. | Cache agresiva, scripts temporales limpios, sin archivos huérfanos. |
-| **RAPIDEZ** | Tiempo de respuesta mínimo. Sin latencia innecesaria. | Cache LRU + TTL, invalidación inteligente, reutilización de sesiones. |
+| **EFICIENCIA** | Cada operación óptima. Sin desperdicio. | Cache agresiva, scripts temporales limpios, sin huérfanos. |
+| **RAPIDEZ** | Tiempo de respuesta mínimo. | Cache LRU + TTL, invalidación inteligente, reutilización de sesiones. |
 
-### Los Tres Pilares de las Tools
+| Pilar Tools | Significado | Aplicación |
+|-------------|-------------|------------|
+| **CENTRALIZADAS** | Pocas tools que agrupan funcionalidad relacionada. | Una tool maneja TODO lo de su dominio. |
+| **MODULARES** | Una tool con múltiples modos/comandos. | `action="get_tree"` o `action="save"`. Un punto de entrada, múltiples operaciones. |
+| **POTENTES** | Máximo poder con mínima cantidad de tools. | Una tool crea, modifica, elimina y consulta. Godot hace el trabajo pesado. |
 
-| Pilar | Significado | Aplicación |
-|-------|-------------|------------|
-| **CENTRALIZADAS** | Pocas tools que agrupan funcionalidad relacionada. | `scene_tools.py` maneja TODO lo de escenas. `node_tools.py` maneja TODO lo de nodos. |
-| **MODULARES** | Una tool con múltiples modos/comandos. Flexible. | `scene_tool` con `action="get_tree"` o `action="save"`. Un punto de entrada, múltiples operaciones. |
-| **POTENTES** | Máximo poder con mínima cantidad de tools. | Una tool puede crear, modificar, eliminar y consultar. Godot hace TODO el trabajo pesado. |
-
-### Decisiones Arquitectónicas Derivadas
-
-1. **GodotDaemon ÚNICAMENTE.** Sin fallback a scripts CLI. GodotDaemon WebSocket es el único modo.
-2. **Session Manager PRIMERO.** Se inicializa antes que todo. Sin sesión, no hay operaciones.
-3. **Daemon persistente.** Proceso Godot vivo con WebSocket. Cache en RAM. ~20ms por operación.
-4. **Cache en memoria.** Las escenas se mantienen en RAM. Invalidación explícita tras modificaciones.
-5. **Fail-fast.** Si el daemon no responde, error inmediato. Sin cuelgues.
-6. **Tools multifuncionales.** Una tool = múltiples operaciones relacionadas. Menos tools, más poder.
+**Decisiones derivadas:** GodotDaemon ÚNICAMENTE (sin fallback CLI) → *v4: EditorPlugin real*. Session Manager primero. Daemon persistente (~20ms/op). Cache en RAM. Fail-fast. Tools multifuncionales.
 
 ---
 
-## 2. Arquitectura de Capas (Implementación Actual - GodotDaemon)
-
-```
-┌─────────────────────────────────────────────┐
-│           Cliente (LLM/Agente)              │
-└──────────────┬──────────────────────────────┘
-               │ MCP Protocol (stdio)
-┌──────────────▼──────────────────────────────┐
-│           HEREN MCP SERVER                  │
-│                                             │
-│  ┌─────────────────────────────────────┐   │
-│  │  CAPA 0: SESSION MANAGER            │   │
-│  │  ├─ Singleton thread-safe           │   │
-│  │  ├─ LRU Cache con TTL (5 min)       │   │
-│  │  ├─ Gestión de sesiones por proyecto│   │
-│  │  ├─ Auto-limpieza de archivos temp  │   │
-│  │  ├─ GodotDaemon integration         │   │
-│  │  └─ Sin fallback (daemon-only)      │   │
-│  └──────────────┬──────────────────────┘   │
-│                 │                            │
-│  ┌──────────────▼──────────────────────┐   │
-│  │  CAPA 1: GODOT DAEMON (WebSocket)   │   │
-│  │  ├─ Proceso Godot con ventana       │   │
-│  │  ├─ Servidor WebSocket (localhost)  │   │
-│  │  ├─ Cache de escenas en RAM         │   │
-│  │  ├─ Rendering GPU disponible        │   │
-│  │  └─ Heartbeat + auto-reconnect      │   │
-│  └──────────────┬──────────────────────┘   │
-│                 │ WebSocket (~20ms)        │
-│  ┌──────────────▼──────────────────────┐   │
-│  │  CAPA 2: API TOOLS (10 tools)       │   │
-│  │  ├─ session   - Gestión de sesiones │   │
-│  │  ├─ scene     - Escenas             │   │
-│  │  ├─ node      - Nodos               │   │
-│  │  ├─ batch     - Operaciones múltiples│  │
-│  │  ├─ resource  - Recursos .tres      │   │
-│  │  ├─ animation - Animaciones/SM      │   │
-│  │  ├─ skeleton  - Esqueletos 2D/3D    │   │
-│  │  ├─ shader    - Shaders/Materiales  │   │
-│  │  ├─ tilemap   - TileMaps/TileSets   │   │
-│  │  └─ project   - Configuración       │   │
-│  └─────────────────────────────────────┘   │
-└─────────────────────────────────────────────┘
-               │ WebSocket (localhost)
-┌──────────────▼──────────────────────────────┐
-│  GODOT DAEMON (Godot 4.x con ventana)       │
-│  ├─ Escenas cacheadas en memoria            │
-│  ├─ SubViewport para screenshots            │
-│  ├─ ClassDB para instanciación              │
-│  ├─ ResourceSaver para guardar              │
-│  └─ PhysicsServer para raycasts             │
-└─────────────────────────────────────────────┘
-```
-
-### Flujo de Datos Real (Con Daemon)
-
-1. Agente llama `session("open", project_path="...")`
-2. Session Manager inicia GodotDaemon (WebSocket en localhost)
-3. Daemon carga proyecto, escucha en puerto auto-asignado
-4. Agente llama `scene("load", scene_path="res://Player.tscn")`
-5. Daemon carga escena en RAM, retorna en ~3s (primera vez)
-6. Agente llama `node("add", ...)` 
-7. Daemon modifica escena en memoria (~20ms), retorna éxito
-8. Agente llama `scene("save", ...)`
-9. Daemon hace `packed_scene.pack()` + `ResourceSaver.save()` (~20ms)
-10. Escena persiste en disco, cache RAM se mantiene
-
----
-
-
-
-## 2.1 Arquitectura Modular del Daemon (v2.0)
-
-El daemon monolítico original (4,563 líneas) fue refactorizado en **10 módulos GDScript** con inyección de dependencias.
-
-### Módulos del Daemon
-
-| Módulo | Líneas | Responsabilidad | `class_name` |
-|--------|--------|-----------------|--------------|
-| `heren_daemon.gd` | ~400 | Orquestador: WebSocket, heartbeat, registro de handlers | — |
-| `heren_window_manager.gd` | ~80 | Ventana no intrusiva (flags, posición) | `HerenWindowManager` |
-| `heren_core_utils.gd` | ~109 | Serialización/deserialización de valores Godot ↔ JSON | `HerenCoreUtils` |
-| `heren_scene_ops.gd` | ~1500 | CRUD de escenas/nodos: add, remove, set_prop, save, batch | `HerenSceneOps` |
-| `heren_resource_ops.gd` | ~511 | Recursos .tres, scripts .gd, ext_resources | `HerenResourceOps` |
-| `heren_animation_ops.gd` | ~450 | Animaciones, tracks, keys, state machines, skeletons | `HerenAnimationOps` |
-| `heren_shader_ops.gd` | ~190 | Crear/editar shaders, materiales, uniforms | `HerenShaderOps` |
-| `heren_debug_ops.gd` | ~900 | Debug, validación, screenshots, raycast, measure | `HerenDebugOps` |
-| `heren_project_ops.gd` | ~380 | Project settings, autoloads, tilemaps | `HerenProjectOps` |
-| `heren_tscn_serializer.gd` | — | Serialización e inyección en archivos .tscn | — |
-
-### Patrón de Inyección de Dependencias
-
-```gdscript
-# En el orquestador (heren_daemon.gd)
-var scene_ops = preload("heren_scene_ops.gd").new()
-scene_ops.init(self)  # Pasa referencia al orquestador
-scene_ops._scene_cache = _scene_cache
-scene_ops._serialize_value_callback = _core_utils.serialize_value
-
-# En el módulo (heren_scene_ops.gd)
-var _daemon: SceneTree = null
-
-func init(daemon: SceneTree) -> void:
-    _daemon = daemon
-
-func handle_save_scene(params: Dictionary) -> Dictionary:
-    # Puede acceder al orquestador para llamar ensure_mouse_free()
-    _daemon.ensure_mouse_free()
-```
-
-### ¿Por qué Modular?
-
-- **Mantenibilidad**: Cada módulo tiene una responsabilidad única
-- **Testabilidad**: Se pueden probar módulos individualmente
-- **Extensibilidad**: Nuevos handlers se añaden registrando métodos del módulo
-- **Colaboración**: Múltiples desarrolladores pueden trabajar en módulos diferentes
-
----
-
-## 3. Reglas de Oro para Agentes
-
-### Regla 1: Session Manager es el Rey
-```python
-# SIEMPRE empezar así:
-session = heren_start_session("D:/MiProyecto")
-
-# NUNCA hacer operaciones sin sesión activa
-# NUNCA cerrar la sesión hasta que el agente termine
-```
-
-### Regla 2: Godot Hace el Trabajo Pesado (Via Daemon)
-```python
-# MAL - Intentar parsear manualmente
-with open("scene.tscn") as f:
-    content = f.read()
-    # ... parsing manual ...
-
-# BIEN - Daemon Godot hace TODO en memoria
-result = scene("get_tree", session_id="abc", scene_path="res://scene.tscn")
-# Godot devuelve JSON perfecto en ~20ms
-
-# El daemon mantiene escenas en RAM. Operaciones son instantáneas.
-# Solo la primera carga lee de disco (~3s), el resto es memoria.
-```
-
-### Regla 3: Las Tools son Centralizadas (10 Tools Totales)
-```python
-# 10 tools que cubren TODO Godot:
-# session   → open, close, list, info, health
-# scene     → get_tree, save, load, unload, screenshot
-# node      → add, remove, set_prop, get_prop, duplicate, rename, move
-# batch     → múltiples operaciones en una llamada
-# resource  → create, read, update, delete, list (.tres)
-# animation → create_player, create, add_track, add_key, state_machine
-# skeleton  → create, add_bone, set_rest, skin, attachment
-# shader    → create, edit, validate, material, uniform
-# tilemap   → inspect_set, inspect_map, set_cell, terrain, pattern
-# project   → setting, autoload, group, shader_global
-
-# NO dispersar en 50 tools con 1 función cada una
-# NO crear tools que puedan agruparse lógicamente
-```
-
-### Regla 4: Las Tools son Modulares
-```python
-# Una tool con múltiples modos via parámetros
-scene_tool(action="get_tree", scene_path="...")
-scene_tool(action="save", scene_path="...")
-scene_tool(action="get_info")
-
-node_tool(action="add", scene_path="...", node_type="Sprite2D")
-node_tool(action="remove", scene_path="...", node_path="...")
-node_tool(action="set_prop", scene_path="...", property="position")
-
-# Una tool, múltiples operaciones relacionadas
-```
-
-### Regla 5: Las Tools son Potentes
-```python
-# Una sola tool puede hacer TODO un flujo de trabajo
-# Crear nodo + configurar propiedades + guardar escena
-# Todo en una sola llamada, un solo script GDScript
-# Godot ejecuta TODO el trabajo pesado
-# El agente solo dice QUÉ hacer, no CÓMO hacerlo
-```
-
-### Regla 6: Cache es tu Amigo
-```python
-# La primera vez lee de disco (Godot CLI)
-scene = heren_get_scene_tree("res://Player.tscn")  # ~370ms
-
-# La segunda vez lee de memoria (cache LRU)
-scene = heren_get_scene_tree("res://Player.tscn")  # ~0ms
-```
-
-### Regla 7: Fail-Fast
-```python
-# Si Godot no responde, error inmediato
-# Si el archivo no existe, error inmediato
-# Si la operación es inválida, error inmediato
-# NUNCA silenciar errores. NUNCA retornar None sin explicación.
-```
-
-### Regla 8: LAIKA es SOLO PRUEBAS — el MCP es lo importante
-```python
-# LAIKA (D:\Mis Juegos\LAIKA\...) es el BANCO DE PRUEBAS, NO la fuente de verdad.
-# El plugin v4 FUENTE vive en D:\Mis Juegos\GodotMCP\heren-mcp\addons\heren\.
-#
-# Reglas:
-# - NUNCA commitear a LAIKA (es proyecto de prueba; no versionar ahí).
-# - Desarrollar/editar SIEMPRE en addons/heren/ (fuente).
-# - Para validar: copiar addons/heren/ → LAIKA (o proyecto temporal) y probar.
-# - Cualquier cambio en el plugin v4 → commit SOLO en heren-mcp.
-```
-
----
-
-## 4. Estructura de Directorios (Actual - v2.0 Modular)
-
-```
-D:\Mis Juegos\GodotMCP\heren-mcp\
-├── AGENTS.md                 # Este archivo - Biblia para agentes (incluye PLAN v4.0 §13)
-├── README.md                 # Para usuarios finales
-├── requirements.txt          # Dependencias Python
-├── run.bat                   # Launcher para OpenCode
-├── addons/
-│   └── heren/                # 🆕 FUENTE del plugin v4 (GDScript, copiable a cualquier proyecto)
-│       ├── plugin.cfg        # Config del addon Godot
-│       ├── editor_plugin.gd  # EditorPlugin core (WS client + dispatcher + registro)
-│       ├── ws_client.gd      # Cliente WS MCP JSON-RPC (auto-reconnect)
-│       ├── dispatcher.gd     # Rutea tools/call → handlers por prefijo
-│       ├── undo_redo_wrapper.gd
-│       └── handlers/         # 10 handlers: scene, node, resource, project, signal,
-│                             #   validate, debug, shader, animation(+skeleton), tilemap
-├── src/
-│   └── heren/
-│       ├── __init__.py
-│       ├── server.py         # Entry point FastMCP (15 tools)
-│       ├── core/
-│       │   ├── session_manager.py    # Capa 0 - Singleton + LRU Cache
-│       │   └── godot_daemon.py       # Wrapper WebSocket del daemon
-│       ├── daemon/           # 🆕 Arquitectura Modular v2.0
-│       │   ├── heren_daemon.gd           # Orquestador principal (~400 líneas)
-│       │   ├── heren_window_manager.gd   # Gestión ventana no intrusiva
-│       │   ├── heren_core_utils.gd       # Serialización/deserialización
-│       │   ├── heren_scene_ops.gd        # Operaciones escenas/nodos (~1500 líneas)
-│       │   ├── heren_resource_ops.gd     # Recursos/scripts
-│       │   ├── heren_animation_ops.gd    # Animaciones/esqueletos
-│       │   ├── heren_shader_ops.gd       # Shaders/materiales
-│       │   ├── heren_debug_ops.gd        # Debug/validación
-│       │   ├── heren_project_ops.gd      # Proyecto/tilemaps
-│       │   ├── heren_server_manager.gd   # WebSocket server (legacy)
-│       │   ├── heren_tscn_serializer.gd  # Serialización TSCN (legacy)
-│       │   └── daemon_utils.gd           # Utilidades compartidas
-│       ├── interfaces/       # 🗑️ Eliminado v3.0 (era fallback)
-│       ├── templates/        # 🗑️ Eliminado v3.0 (era fallback)
-│       └── tools/
-│           ├── session_tool.py       # Tool de sesiones
-│           ├── scene_tool.py         # Tool de escenas
-│           ├── node_tool.py          # Tool de nodos
-│           ├── batch_tools.py        # Tool de batch
-│           ├── resource_tool.py      # Tool de recursos
-│           ├── animation_tool.py     # Tool de animaciones
-│           ├── skeleton_tool.py      # Tool de esqueletos
-│           ├── shader_tool.py        # Tool de shaders
-│           ├── tilemap_tool.py       # Tool de tilemaps
-│           ├── project_tool.py       # Tool de proyecto
-│           ├── debug_tool.py         # Tool de debug
-│           ├── validate_tool.py      # Tool de validación
-│           ├── signal_tool.py        # Tool de señales
-│           └── global_tool.py        # Tool de config global
-├── .temp/                    # Archivos temporales (auto-limpieza)
-├── tests/                    # Tests unificados por capa
-│   ├── conftest.py           # Fixtures compartidas
-│   ├── test_core/            # Tests Capa 0 (sin Godot)
-│   ├── test_interfaces/      # Tests Capa 1 (mock Godot)
-│   ├── test_tools/           # Tests Capa 2 (con Godot real)
-│   └── test_integration/     # Tests end-to-end
-└── benchmarks/               # Benchmarks de rendimiento
-    ├── benchmark_tools.py    # Benchmark por tool
-    ├── benchmark_cache.py    # Benchmark de cache
-    └── run_benchmarks.py     # Runner unificado
-```
-
----
-
-## 5. Templates GDScript (ELIMINADOS v3.0)
-
-El sistema de templates GDScript (`TemplateEngine`, `gdscript_templates.py`) y el fallback a scripts
-temporales fueron eliminados completamente.
-
-**TODO pasa por GodotDaemon WebSocket.** No más `godot --headless --script temp.gd`.
-No más `TEST_OUTPUT:` parsing. No más ~370ms de latencia.
-
----
-
-## 6. Performance Benchmark (Real - GodotDaemon)
-
-Medido con proyecto LAIKA (Godot 4.6.1), **testing real 2026-05-13**:
-
-### Con Daemon (WebSocket + Cache RAM)
-| Operación | Primera vez | Cache hit | Speedup vs Scripts | Estado |
-|-----------|-------------|-----------|-------------------|--------|
-| `session_start` | ~3.5s | — | — | ✅ Estable |
-| `load_scene` | ~3.0s | ~20ms | 150x | ✅ Estable |
-| `get_scene_tree` | ~3.0s | ~20ms | 18x | ✅ Estable |
-| `add_node` | — | ~20ms | 18x | ✅ Estable |
-| `set_property` | — | ~20ms | 18x | ✅ Estable |
-| `save_scene` | — | ~20ms | 18x | ✅ Estable |
-| `screenshot` | — | ~60ms | — | ✅ Funcional |
-| `batch (11 ops)` | — | ~200ms | 18x | ✅ **Excelente** |
-| `duplicate_node` | — | ~20ms | — | ✅ Estable |
-| `rename_node` | — | ~20ms | — | ✅ Estable |
-| `move_node` | — | ~20ms | — | ✅ Estable |
-| `create_scene` | — | ~20ms | — | ✅ Estable |
-| `project_setting` | — | ~20ms | — | ✅ Estable |
-| `validate_scene` | — | ~20ms | — | ✅ Estable |
-
-**Promedio:** ~20ms por operación con daemon
-**Sin daemon: ELIMINADO (v3.0).** 18x más rápido sin el peso muerto del fallback.
-
-### Métricas del Testing Real (2026-05-13)
-- **Operaciones exitosas:** 25/28 (89%)
-- **Operaciones fallidas:** 3/28 (11%) - Bugs conocidos del daemon
-- **Tiempo total de testing:** ~5 minutos
-- **Escena creada:** 15 nodos, 1 skeleton, 1 shader, 1 animation player
-- **Memoria daemon:** ~47MB estable
-
----
-
-## 7. Flujo Correcto para Proyectos Nuevos
-
-### Crear Proyecto Nuevo (v1.1+)
-
-```python
-# 1. Abrir sesión en un proyecto temporal (para tener daemon)
-session("open", project_path="D:/MiProyectoActual")
-
-# 2. Crear proyecto nuevo (configura daemon automáticamente)
-project("create", 
-        project_path="D:/MiNuevoJuego",
-        project_name="Mi Nuevo Juego",
-        renderer="forward_plus")
-# Resultado: daemon_setup: "success" (o "failed" con error)
-
-# 3. Abrir sesión en el nuevo proyecto
-session("open", project_path="D:/MiNuevoJuego")
-# Resultado: daemon_active: true
-```
-
-### Configurar Daemon en Proyecto Existente
-
-```python
-# Si session("open") devuelve daemon_active: false
-# y daemon_error indica que falta el daemon:
-
-# Configurar daemon manualmente
-project("setup_daemon", project_path="D:/MiProyectoExistente")
-
-# Luego reabrir sesión
-session("open", project_path="D:/MiProyectoExistente")
-```
-
-### Errores Comunes al Crear Proyectos
-
-| Error | Causa | Solución |
-|-------|-------|----------|
-| `daemon_active: false` | Proyecto nuevo sin daemon | Ejecutar `project("setup_daemon", ...)` |
-| `No hay sesión activa` | Intentar create sin sesión | Abrir sesión primero en cualquier proyecto |
-| `Daemon no disponible` | Sesión abierta pero daemon murió | Cerrar y reabrir sesión |
-| `Proyecto no encontrado` | Path incorrecto | Verificar ruta absoluta |
-
----
-
-## 8. Decisiones Registry
-
-| Fecha | Decisión | Razón |
-|-------|----------|-------|
-| 2026-05-12 | Godot CLI Nativo vs Parser Propio | Parser propio tiene bugs de serialización. Godot nunca falla. |
-| 2026-05-12 | Session Manager primero | Asegura que el proyecto esté listo antes de cualquier operación. |
-| 2026-05-12 | Scripts temporales vs Godot persistente | Procesos persistentes tienen problemas de sincronización. Scripts temporales son 100% confiables. |
-| 2026-05-12 | Templates con f-strings vs string.Template | f-strings son type-safe y permiten inyección de JSON válido. |
-| 2026-05-12 | Cache en memoria (no disco) | Velocidad. Invalidación explícita tras modificaciones. |
-| 2026-05-12 | packed_scene.pack() antes de save | Godot 4 requiere pack() para guardar instancias modificadas. |
-| 2026-05-12 | Arquitectura híbrida moderada (~10 tools) | 10 tools centralizadas cubren TODO Godot. Evita parameter bloat. |
-| 2026-05-12 | Tests unificados + benchmarks | MCP anterior tenía 93 tools dispersas y tests fragmentados. Unificar testing en capas + benchmarks. |
-| 2026-05-13 | GodotDaemon WebSocket vs HTTP | Bug #92367 bloquea HTTP en headless. WebSocket con ventana funciona perfecto. |
-| 2026-05-13 | 10 Tools centralizadas | session, scene, node, batch, resource, animation, skeleton, shader, tilemap, project. |
-| 2026-05-13 | Visual Inspection System | El agente es ciego. Grid + labels + axes + raycast + measure le dan "ojos". |
-| 2026-05-13 | FPS limitado a 10 | Reduce consumo GPU/CPU del daemon en segundo plano. |
-| 2026-05-13 | 14 Tools centralizadas | session, scene, node, batch, resource, animation, skeleton, shader, tilemap, project, debug, validate, signal, global. |
-| 2026-05-13 | **Bug crítico: session.id** | Múltiples tools usaban `session.session_id` en vez de `session.id`. Fix aplicado a project, animation, skeleton, shader, tilemap. |
-| 2026-05-13 | **Fix: _deserialize_value** | Auto-detección de Vector2/3/Color por keys (x,y,z,r,g,b) sin necesidad de `__type`. Posiciones ahora aplican correctamente. |
-| 2026-05-13 | **Batch funcional** | 11 operaciones en ~200ms. Mapeo completo action→method con 30+ acciones soportadas. |
-| 2026-05-13 | **Debug + Validate implementados** | 8 handlers nuevos en daemon: breakpoint, stack_trace, watch, console, validate_scene/script/node/resource. |
-| 2026-05-13 | **89% operaciones exitosas** | Testing real en proyecto LAIKA: 25/28 operaciones exitosas. 3 bugs menores del daemon identificados. |
-| 2026-05-14 | **Bug: daemon no arranca en proyecto nuevo** | `project/create` crea proyecto pero no copia daemon. Solucion: `setup_daemon` automatico en create + tool separada para proyectos existentes. |
-| 2026-05-14 | **project/setup_daemon** | Nueva tool para configurar daemon en proyectos existentes. Copia heren_daemon.gd + registra autoload. |
-| 2026-05-14 | **Auto-shutdown 60s -> 180s** | Timeout inicial de 60s era muy corto. Aumentado a 3 minutos para evitar cierres durante operaciones largas. |
-| 2026-05-14 | **Retry del daemon (3 intentos)** | Si el daemon falla al iniciar, el Session Manager reintenta automaticamente con delay exponencial (2s, 4s). |
-| 2026-05-14 | **Ventana pequena (320x200)** | El daemon se renderiza en esquina inferior derecha para no estorbar al usuario. No afecta screenshots. |
-| 2026-05-14 | **resource_local_to_scene = true** | Solucion para persistencia de sub-resources: marcar todos los recursos como local_to_scene fuerza a Godot a incrustarlos en .tscn. |
-| 2026-05-14 | **No reiniciar MCPs sin permiso** | Regla critica: NUNCA matar/reiniciar procesos MCP sin confirmacion explicita del usuario. |
-| 2026-05-15 | **Arquitectura Modular v2.0** | Daemon monolítico (4563 líneas) partido en 10 módulos GDScript para mantenibilidad. Orquestador + módulos de operaciones. |
-| 2026-05-15 | **Inyección de dependencias** | Módulos reciben referencia al orquestador vía `init(daemon: SceneTree)` para acceso a estado compartido (`_scene_cache`, `_project_path`). |
-| 2026-05-15 | **Daemon ejecuta desde proyecto** | `godot_daemon.py` usa copia del daemon en `addons/heren/daemon/` del proyecto en vez del paquete MCP. Esto habilita `class_name` en módulos. |
-| 2026-05-15 | **setup_daemon copia TODOS los módulos** | Antes solo copiaba `heren_daemon.gd`. Ahora copia los 12 archivos `.gd` del daemon al proyecto. |
-| 2026-05-15 | **Mouse lock fix** | `Input.mouse_mode = MOUSE_MODE_VISIBLE` + `ensure_mouse_free()` cada 0.5s + post-save. Ventana 240x150 con NO_FOCUS + MOUSE_PASSTHROUGH. |
-| 2026-05-15 | **Shader type deduplicación** | `handle_create_shader` detecta si el código ya incluye `shader_type` y no lo duplica. |
-| 2026-05-15 | **Mesh inline con __type** | `set_property` acepta `{"__type":"Resource","resource_type":"SphereMesh",...}` para crear meshes primitivos inline. |
-| 2026-07-17 | **Eliminado fallback sin daemon (v3.0)** | GodotInterface, TemplateEngine, execute_gdscript, y todo el código de scripts CLI eliminados. GodotDaemon es el ÚNICO modo. ~412 + 1277 líneas de basura eliminadas. |
-| 2026-07-28 | **Fix parse error: palabras reservadas GDScript** | `signal` y `match` usados como nombres de variable causaban parse errors. Renombrados a `sig`/`is_match`. |
-| 2026-07-28 | **Fix parse error: funciones anidadas** | `func _search(node: Node)` dentro de `handle_find_nodes` no es válido en GDScript. Reemplazado por búsqueda iterativa con pila. |
-| 2026-07-28 | **Fix heren_debug_ops.gd corrupto** | Bloque entre `execute_editor_script` y `handle_run_scene` tenía `}` faltante + indentación rota. Reconstruido. |
-| 2026-07-28 | **Fix project setting write** | `handle_set_project_setting` llamaba a `_daemon._value_to_godot_config()` inexistente. Añadido helper local `_value_to_godot_config()`. |
-| 2026-07-28 | **Fix screenshot sincrónico** | `await _daemon.create_timer(0.0).timeout` en handlers requería soporte async en `_dispatch`. Reemplazado por `RenderingServer.force_sync/draw` para mantener dispatch síncrono. |
-| 2026-07-28 | **Fix validate_node root path** | `handle_validate_node` no normalizaba `node_path="Root"`. Añadido `_normalize_node_path()` para soportar paths absolutos y nombre del root. |
-| 2026-07-28 | **Fix orchestrate action/params** | `handle_orchestrate` esperaba ops como `{"add": {...}}`. Actualizado a formato cliente `{"action": "add", "params": {...}}`. |
-| 2026-07-28 | **Nuevos handlers expuestos** | `node_tool` ahora expone: get_info, get_children, find, set_owner, reorder, add+script/signals. `scene_tool` ahora expone instantiate. |
-| 2026-07-28 | **Tests únicos y limpieza** | Tests que crean archivos ahora usan nombres únicos + cleanup, evitando falsos negativos por archivos residuales. |
-
----
-
-## 8. Limitaciones Conocidas y Workarounds
-
-### Capacidades del Debug Tool
-
-| Action | Modo | Requiere Daemon | Descripción |
-|--------|------|-----------------|-------------|
-| `breakpoint` | Daemon | ✅ Sí (editor) | Setear/quitar breakpoints |
-| `stack_trace` | Daemon | ✅ Sí (editor) | Obtener stack trace |
-| `watch` | Daemon | ✅ Sí (editor) | Watch variables |
-| `console` | Daemon | ✅ Sí | Capturar output de consola |
-| `stop_scene` | Daemon | ✅ Sí (editor) | Detener ejecución |
-| `get_editor_errors` | Daemon | ✅ Sí (editor) | Obtener errores del editor |
-| `run_scene` | Subprocess | ❌ No | Ejecutar escena vía `godot --headless` |
-| `execute_editor_script` | Subprocess | ❌ No | Ejecutar GDScript completo (FileAccess, ClassDB, etc.) |
-| `check_script_syntax` | Subprocess | ❌ No | Verificar sintaxis vía `godot --check-only` |
-
-### Bugs Arreglados (v1.1+)
-
-| Bug | Fix | Fecha |
-|-----|-----|-------|
-| scene.create no aceptaba root_type/root_name | server.py ahora acepta root_type/root_name explicitos | 2026-05-14 |
-| batch set_prop fallaba con "missing_params" | Daemon ahora acepta "property" y "property_name" | 2026-05-14 |
-| batch nodes no persistían | Verificacion post-save + tracking de node_count | 2026-05-14 |
-| node.set_prop fallaba tras batch | Compatibilidad de nombres de parametros | 2026-05-14 |
-| Daemon no arrancaba en proyecto nuevo | `get_editor_interface()` causaba error de parseo | 2026-05-14 |
-| **Persistencia de sub-resources** | `resource_local_to_scene = true` + `_setup_resource_local_to_scene_recursive()` | 2026-05-14 |
-| **Persistencia de senales** | `_collect_connections()` + `_inject_into_tscn()` | 2026-05-14 |
-| **execute_editor_script corrupto** | Eliminar f-string problematico, guardar script tal cual | 2026-05-14 |
-| **Fallback property vs property_name** | `prop_name = params.get("property_name") or params.get("property", "")` | 2026-05-14 |
-| **Daemon crashea por Unicode** | Remover caracteres especiales de logs en Windows | 2026-05-14 |
-| **Sub-resources anidados (ShaderMaterial.shader)** | `_serialize_resource_properties()` maneja recursos anidados | 2026-05-14 |
-| **Arquitectura monolítica** | Daemon partido en 10 módulos GDScript con inyección de dependencias | 2026-05-15 |
-| **Mouse lock durante guardado** | `ensure_mouse_free()` cada 0.5s + post-save + flags NO_FOCUS/MOUSE_PASSTHROUGH | 2026-05-15 |
-| **Duplicación shader_type** | `handle_create_shader` detecta shader_type existente y no lo duplica | 2026-05-15 |
-| **Mesh inline** | `__type: Resource` con `resource_type` soporta BoxMesh, SphereMesh, etc. | 2026-05-15 |
-| **ExtResource faltante** | `_serialize_resource_properties` detecta recursos externos y genera `[ext_resource]` + `ExtResource()` | 2026-05-15 |
-| **Sub-resource ID corrupcion en save** | `_inject_into_tscn` creaba IDs duplicados (`_heren_N`) que rompian las referencias de nodos. Fix: eliminar sub-resource injection — `pack()`+`FLAG_BUNDLE_RESOURCES` ya los maneja. Solo connections se inyectan. | 2026-07-17 |
-| **Pipeline de guardado refactorizado (v3.0)** | Eliminadas 462 líneas de inyección de texto que corrompían .tscn. El pipeline ahora es: `_pre_save_resource_fix → pack() → save(FLAG_BUNDLE_RESOURCES) → verify`. `handle_connect_signal` usa `CONNECT_PERSIST` para que `pack()` serialice señales nativamente. Funciones eliminadas: `_collect_sub_resources`, `_collect_connections`, `_inject_into_tscn`, `_serialize_resource_properties`, `_update_node_subresource_ref`, `_serialize_value_tscn`. | 2026-07-17 |
-| **Parse error: palabras reservadas** | `signal` → `sig`, `match` → `is_match` en variables GDScript | 2026-07-28 |
-| **Parse error: función anidada** | `func _search()` en `handle_find_nodes` reemplazada por búsqueda iterativa con pila | 2026-07-28 |
-| **heren_debug_ops.gd corrupto** | Reconstruido bloque entre `execute_editor_script` y `handle_run_scene` (`}` faltante + indentación) | 2026-07-28 |
-| **project setting write roto** | Añadido helper `_value_to_godot_config()` en `heren_project_ops.gd` | 2026-07-28 |
-| **Screenshot async roto** | Reemplazado `await create_timer()` por `RenderingServer.force_sync/draw` para mantener handlers síncronos | 2026-07-28 |
-| **validate_node no acepta "Root"** | Añadido `_normalize_node_path()` en `heren_debug_ops.gd` | 2026-07-28 |
-| **orchestrate formato ops** | Actualizado a `{"action": "...", "params": {...}}` | 2026-07-28 |
-| **Tests con nombres fijos** | Tests ahora usan nombres únicos + cleanup para evitar falsos negativos por archivos residuales | 2026-07-28 |
-| **Fase 0 completada (FlojoMCP)** | ws-server, image_content, pagination, SessionManager, hooks/tokens listos en FlojoMCP (commit `94b3d4c`) | 2026-08-03 |
-| **rmcp v1.7.0 no trae WS** | `ws.rs` es placeholder ("Maybe we don't really need a ws implementation?") → ws-server construido sobre `SinkStreamTransport` + tokio-tungstenite | 2026-08-03 |
-| **Frames WS inválidos cierran conexión** | El `Transport` de rmcp no admite errores en el stream → `WsStream` devuelve `None` (cierra) ante JSON-RPC malformado | 2026-08-03 |
-| **SessionManager en `.heren/session.json`** | Sesiones multi-proyecto path-based (Fase 0). En v4 (corregido §13.8) el SessionManager solo guarda `last_project` (1 clave) — la sesión real es `ConnectedEditors` en RAM | 2026-08-03 |
-| **NO definir `get_editor()` en EditorPlugin** | Colisiona con el método del EditorPlugin → devuelve null. Usar `get_editor_interface()` directo en handlers | 2026-08-03 |
-| **`add_do_method` de Godot 4.6** | Espera `(Object, StringName, args)` — NO acepta Callable directo. El wrapper de undo/redo usa esa firma | 2026-08-03 |
-| **Fase 1 completada (Plugin Núcleo)** | EditorPlugin + ws_client (MCP JSON-RPC) + dispatcher + undo_redo_wrapper + scene_handlers en `laika-gd/addons/heren/`, validado E2E real (health/open/create/get_root) | 2026-08-03 |
-| **`tools/ws_test_server.py`** | Server WS Python de prueba para validar el plugin antes de Fase 4 (el server Rust definitivo llega después). Soporta `--command`, `--sequence`, `--repeat` | 2026-08-03 |
-| **Sesión corregida: editor vivo, no estado persistente** | El propósito real de sesión es mantener el proceso Godot vivo (como v3 cacheaba el daemon). `ConnectedEditors` en RAM + `last_project` en disco. Se descartó el esquema vision/preferences/workspace_state de session.json (era especulación; eso es State efímero en RAM) | 2026-08-03 |
-| **Fix: undo_redo_wrapper add_do_method con callv** | `EditorUndoRedoManager.add_do_method` es varargs. Pasar el Array directo (`add_do_method(obj, method, args)`) hace que `add_child([node])` reciba UN Array, no el nodo → mutaciones no aplicaban. Fix: `urm.callv(&"add_do_method", [obj, method] + args)` expande el Array. Sin esto, node/add devolvía `node_path: ""` sin añadir nada. | 2026-08-03 |
-| **Fix: project.godot corrupto en proyecto E2E** | `Set-Content -Encoding UTF8` en PowerShell 5.1 escribe BOM + ruido de encoding → Godot parseaba `"����config_version"=5` y el editor no arrancaba. Fix: `[System.IO.File]::WriteAllText(path, content, New-Object System.Text.UTF8Encoding($false))` para .gd/.tscn/.godot. | 2026-08-03 |
-| **Harness: `--sequence-file`** | `ws_test_server.py` añade `--sequence-file`: lee comandos de un archivo (1 por línea) evitando escapes de comillas en PowerShell/JSON. También soporta `SLEEP N` para esperar frames del editor entre llamadas. | 2026-08-03 |
-| **E2E nodos: proyecto temporal mínimo** | Probar node_handlers contra el proyecto LAIKA entero (103 nodos + daemon v3 roto con parse errors en heren_server_manager.gd) daba resultados no deterministas. Fix: proyecto E2E mínimo en `.temp/e2e_proj/` con SOLO el plugin v4 + escena simple. Resultado: 14/14 ops OK. | 2026-08-03 |
-| **resource_handlers sin undo/redo** | Los recursos son archivos externos (no la escena viva) → las mutaciones (create/update/delete/edit_script) NO pasan por EditorUndoRedoManager. Usan `EditorFileSystem.update_file()` para que el editor reimporte/olvide el archivo. | 2026-08-03 |
-| **delete usa DirAccess, no ResourceLoader** | `ResourceLoader` no tiene API de borrado. `handle_delete` abre `DirAccess.open(base_dir)` + `remove(file)`. `EditorFileSystem.update_file` tras borrar para que el editor olvide el archivo. | 2026-08-03 |
-| **E2E recursos: 10/10 ops** | create (PhysicsMaterial con props), read, update (bounce/rough), delete, list (tipos via EditorFileSystem.get_file_type), create_script, read_script, edit_script (append). Validado contra proyecto temporal + ws_test_server. | 2026-08-03 |
-| **Fase 2 migrada al completo** | project (setting/autoload/input_map/shader_global), shader (create/edit/validate/material/uniform), animation+skeleton (player/library/tracks/keys/state_machine + Skeleton2D/3D), signal (connect/disconnect/list/set_script), validate (scene/script/node/resource), debug (play/stop/is_playing), tilemap (inspect/set_cell/terrain/pattern). Editor real + undo/redo para mutaciones de escena; EditorFileSystem.update_file para recursos/scripts/shader. | 2026-08-03 |
-| **skeleton fusionado en animation_handlers.gd** | Como en v3 (animation_ops.gd), skeleton vive en el mismo archivo que animación. El dispatcher registra el prefijo `skeleton` al MISMO nodo handler: `skeleton/skeleton_create` → `handle_skeleton_create`. | 2026-08-03 |
-| **project/autoload list via property_list** | `ProjectSettings.get_autoload_list()` falla en parse del editor (GDScriptNativeClass no lo expone en 4.x). Fix: iterar `get_property_list()` filtrando prefijo `autoload/`. | 2026-08-03 |
-| **Harness: separador de secuencia** | ws_test_server unía líneas con `;` y re-spliteaba — el JSON de args con `;` (código shader/GDScript) rompía la secuencia a mitad. Fix: `--sequence-file` lee líneas DIRECTAS (sin join/split). | 2026-08-03 |
-| **debug sin breakpoint/stack_trace/watch** | Esas acciones de v3 dependían del debugger subprocess. Con editor real: play/stop/is_playing nativos; los errores se ven en el panel Output (sin API pública estable para leerlos desde plugin). | 2026-08-03 |
-| **LAIKA SOLO pruebas, fuente en addons/heren** | Corrección de flujo: el plugin v4 se versiona ÚNICAMENTE en `heren-mcp/addons/heren/`. LAIKA es banco de pruebas — se copia el addon para validar, NUNCA se commitea ahí. Eliminado daemon v3 legacy de LAIKA (ruido; el plugin v4 no lo usa) → sintaxis del plugin 100% limpia. | 2026-08-03 |
-| **Bridge Python v4 (temporal)** | Mientras HerenServer.exe (Rust) no existe, `src/heren/v4/bridge.py` hace usable el MCP HOY: FastMCP (14 tools v3) → ws_server.py → EditorPlugin v4. `run.bat` ahora lanza el bridge. Auto-launch del editor en `session/open`. | 2026-08-03 |
-| **Fix: id JSON-RPC float→string** | El plugin GDScript devuelve `str(id)` del request → `"1.0"` si el server envió int. El match exacto `"1"` ≠ `"1.0"` daba timeout en TODAS las tools. Fix: `_pop_pending()` tolera `1`, `"1"`, `"1.0"` (normalización float). El harness no correlaciona ids por eso no fallaba. | 2026-08-03 |
-| **Harness en primer plano** | `ws_test_server.py` como Start-Job de PowerShell pierde timing/output (falsos negativos). Debe correr en primer plano; el editor Godot sí puede ir en job. | 2026-08-03 |
-| **Ciclo de vida sesión: SOLO session/open-close** | Fix crítico: `_require_editor` NUNCA lanza el editor (antes relanzaba por cada tool por mismatch de paths). El lanzamiento es SOLO `session/open`; las tools consultan `has_editor` con paths normalizados. Si no hay editor → error 'use session/open first'. | 2026-08-03 |
-| **Normalización de paths (clave canónica)** | El plugin reporta `D:/proj/` (forward, trailing) y el agente pasa `D:\proj` (backslashes) → mismatch rompía `has_editor` → relanzaba editor por cada tool. Fix: `normalize_project_path()` = resolve + forward slashes + sin trailing; ConnectedEditors usa la clave canónica. | 2026-08-03 |
-| **Reuso de editor ya abierto (Q3)** | `session/open` detecta proceso Godot del proyecto vía WMI CommandLine (`is_editor_running`). Si existe → espera a que conecte SIN duplicar. `launch_editor` también evita duplicado. Validado: open→tool→close(false)→open reusa el MISMO PID. | 2026-08-03 |
-| **close(close_editor) dos modos** | `close_editor=false` (default): deja el editor vivo — el plugin queda reconectando, listo para la próxima sesión. `close_editor=true`: mata el proceso Godot del proyecto (taskkill). Decisión del General: el editor debe quedar visible y reutilizable. | 2026-08-03 |
-| **CRÍTICO: project/setting corrompe project.godot con UID sintético** | `deserialize_value()` carga strings `res://` → Resource; `ProjectSettings.save()` serializa como `Resource("uid://X", "res://...")` con un UID sintético que NO existe en uid_cache (los archivos creados por MCP no tienen sidecar `.uid` aún) → Godot descarta TODO project.godot (`Can't load resource ... with uid ... File might be corrupted`) → el proyecto NO se abre ni en el admin. Fix en `project_handlers.gd handle_setting()`: los strings `res://`/`user://` se guardan como STRING PLANO (no se deserializan), igual que LAIKA (`run/main_scene="res://..."`). Verificado: project.godot válido, Godot abre el proyecto. | 2026-08-03 |
-| **Archivos MCP no generan .uid sidecar** | Godot 4.4+ crea `<archivo>.uid` al escanear con el editor. Los archivos creados por el plugin (ResourceSaver desde handler) no lo tienen hasta que el editor escanea → cualquier referencia `uid://` a ellos falla. Regla: paths en settings → string plano; nunca asumir UID disponible. | 2026-08-03 |
-| **Godot headless compite por .godot lock** | Correr `godot --headless --path X --editor` en un proyecto con editor vivo tumba la conexión WS del editor (compiten por el lock de `.godot/`). Usar headless solo con editor cerrado, o contra copia. | 2026-08-03 |
-| **BUG pendiente: animation/create loop=true borra tracks** | `animation/create` con `loop=true` sobre una animación existente la re-crea vacía (pierde tracks/keys). Workaround: crear sin loop y setear loop_mode post-hoc, o re-añadir tracks. Fix en handler pendiente. | 2026-08-03 |
-| **Batch rompe con dicts anidados** | `godot_orchestrate` falla a parsear JSON con sub-recursos anidados (`{"__type":"Resource","resource_type":"RectangleShape2D","size":{...}}`) y colores. Workaround: llamadas individuales para shapes/colores; batch solo con dicts planos. | 2026-08-03 |
-| **E2E escena épica: 39 nodos creados desde 0** | `epic_arena` (proyecto nuevo + session/open auto-launch): Main + Player (física/script/cámara/luz/partículas) + 4 plataformas + 3 monedas (Area2D bob/collect) + 2 enemigos (patrol) + 3 luces + estrellas + HUD + shader neón + AnimationPlayer con 2 tracks (6 keys). Guardada, validada y ejecutada en el editor. **Bloqueado por el bug de UID hasta el fix de project_handlers.** | 2026-08-03 |
-| **E2E tortura: anidación profunda + arrays + recursos** | `tortura.tscn` en epic_arena: 12 niveles de anidación (L1→L12) + Polygon2D con PackedVector2Array/Color + Line2D.points + CollisionShape2D (Rect/Circle sub-resources) + Area2D layers + Sprite2D con ShaderMaterial+ext_resource shader + Label StyleBoxFlat + GradientTexture2D con Gradient sub-recurso. Persistencia .tscn 100% (ext_resource + SubResource + PackedArrays). | 2026-08-03 |
-| **Fix: deserialize_value no recorría Array** | **CAUSA RAÍZ**: `coords.gd deserialize_value()` manejaba Dictionary pero Array caía al `else` → dicts crudos a Godot → Vector2/Color en arrays se serializaban a 0.0. **FIX**: rama `elif value is Array` que deserializa cada elemento recursivamente; Godot convierte Array[Vector2]→PackedVector2Array en props tipadas. Verificado: polygon/vertex_colors/points con valores reales. | 2026-08-03 |
-| **GAP: tool `node` directa no expone parent_path** | El handler GDScript `handle_add` lee `parent_path` pero la tool MCP `node` (bridge) NO lo expone — solo `node_path` que no llega al handler como parent. Workaround: `godot_orchestrate` (pasa args crudos al handler) o `node/move` post-add. Fix pendiente en bridge.py: añadir `parent_path` a la firma de `node`. | 2026-08-03 |
-| **Batch rompe con dicts anidados CONFIRMADO** | `godot_orchestrate` falla parseando JSON con sub-recursos (`{"__type":"Resource",...}`). Workaround: llamadas individuales (que sí funcionan con dicts anidados) o set_prop separado. | 2026-08-03 |
-| **scene_coords devuelve paths `../`** | `visual/scene_coords` responde con paths relativos estilo `../../../../../..` en vez de `L1/L2/...`. Legible pero subóptimo para el agente; `visual/scene_ascii` sí muestra el árbol limpio. Mejora opcional: usar `_node_path_relative` en coords map. | 2026-08-03 |
-| **ShaderMaterial vacío si shader path no existe** | Si `set_prop material` referencia un `.gdshader` inexistente, `deserialize_value` devuelve null (ResourceLoader.exists=false) → material sin shader en .tscn. Comportamiento correcto (fail-safe), no bug: el path debe existir. Verificado con background.gdshader: ext_resource + shader + uniforms correctos. | 2026-08-03 |
-| **Fase 4 completada: heren-server.exe (Rust)** | El MCP de OpenCode (`run.bat`) ahora lanza `heren-server.exe` (Rust/FlojoMCP) — 21 tools con paridad al bridge Python, WS plugin server (patrón gopeak), auto-launch del editor. El bridge Python queda como fallback. | 2026-08-04 |
-| **Bug macro FlojoMCP: visibilidad no preservada** | `#[flojo_mcp]` redefinía el struct SIN `pub` → `pub struct X` se volvía privado. Fix: usar `item.vis` en la macro. Descubierto por dogfooding de heren-server. | 2026-08-04 |
-| **Build MSVC: requiere VsDevCmd del BuildTools 2022** | rustc MSVC usaba VS 18 Insiders (sin libs) → error `LNK1104 msvcrt.lib`. Fix: `heren-build.bat` carga `VsDevCmd.bat` del BuildTools 2022 antes de cargo. | 2026-08-04 |
-| **orchestrate con plan_file** | El batch rompía con dicts anidados (JSON del tool-call). Fix en Rust: `orchestrate` acepta `plan_file` (ruta al JSON del plan) — el plan viaja por archivo, no por tool-call. | 2026-08-04 |
-| **Reinicio MCP: matar bridge viejo primero** | Al cambiar el MCP a Rust, el bridge Python viejo (`python -m heren.v4.bridge`) quedó ocupando el puerto 9099 → "failed to get tools". Fix: matar el proceso bridge (taskkill) antes de reiniciar el MCP. | 2026-08-04 |
-| **🚨 CRÍTICO: OpenCode usa NDJSON, NO Content-Length (diagnóstico corregido)** | El diagnóstico original ("OpenCode usa Content-Length") fue **INCORRECTO**. Verificado con un **stdin-spy** (script que dumpea los bytes crudos del stdin): OpenCode 1.18 envía `{"method":"initialize","params":{...},"jsonrpc":"2.0","id":0}\n` — **NDJSON puro terminado en `\n` (0x0a), SIN header Content-Length**. El `probe_cl.py` original solo probó que el *server* rmcp usa NDJSON, nunca probó qué usa *OpenCode*. Construir un transporte Content-Length (`flojo_run_stdio_cl`) fue la causa del timeout: el server se quedaba buscando `\r\n\r\n` que nunca llega. **FIX DEFINITIVO**: heren-server usa `flojo_run_stdio` (NDJSON nativo de rmcp), igual que PulseWire. | 2026-08-04 |
-| **Confirmado por PulseWire (FlojoMCP)** | PulseWire (`D:\Mis Juegos\ClaudeMCPs\pulsewire`), el MCP de referencia de FlojoMCP, usa `flojo_run_stdio(PulseWire::new())` (NDJSON) en su main.rs L588 — NO Content-Length. Eso confirma que OpenCode espera NDJSON. PulseWire está `enabled:false` en OpenCode (escribe tracing a stderr; si OpenCode no drena stderr puede bloquearse — mismo deadlock de abajo). | 2026-08-04 |
-| **Config MCP local en OpenCode: clave `environment`, NO `env`** | La doc oficial de OpenCode usa `"environment": {...}` para las variables de entorno del MCP local. Usar `"env"` hace que OpenCode NO pase las variables (GODOT_EXE, HEREN_LOG_FILE) al proceso. También existe `"timeout"` (ms, default 5000) para el handshake. | 2026-08-04 |
-| **Deadlock: stderr del server sin drenar** | Si el server escribe logs de tracing a stderr y OpenCode no lo drena, el pipe (64KB Windows) se llena y el server se bloquea → timeout. **FIX**: heren-server NO escribe tracing a stderr — solo a `HEREN_LOG_FILE` (si está definido); sin él, SILENCIO total. Un MCP server nunca debe inundar stderr. | 2026-08-04 |
-| **Transporte Content-Length en FlojoMCP (feature genérica, NO para OpenCode)** | `flojo-mcp::transport_cl::ContentLengthTransport` + `flojo_run_stdio_cl()` existen y funcionan (tests roundtrip verdes), pero **OpenCode NO los usa** (usa NDJSON). Quedan como feature reutilizable para clientes MCP que hablen framing LSP-style. heren-server usa `flojo_run_stdio` (NDJSON). | 2026-08-04 |
-| **Debugging definitivo: stdin-spy + boot-marker** | Para diagnosticar MCP stdio: (1) `boot-marker` en main() escribe a un archivo fijo al arrancar (confirma si OpenCode ejecuta el binario y si stdin es pipe); (2) `stdin-spy.py` como MCP temporal dumpea los bytes crudos del stdin (revela el framing real del cliente); (3) logs `CL-transport:` en el transporte muestran si llega el frame. Con esto se aisló que OpenCode ejecuta el .exe (stdin_is_pipe=true) pero envía NDJSON. | 2026-08-04 |
-| **🚨 CAUSA RAÍZ FINAL: schemas con booleanos `true` → "Failed to get tools"** | Con NDJSON el handshake funcionaba (initialize + tools/list respondía las 21 tools en 0.017s), pero OpenCode marcaba `failed`. El error real era **"Failed to get tools"** = opencode issue #650 "Invalid JSON Schema". `schemars` genera `true` booleano como schema para campos `serde_json::Value` (ej. `"plan":true`, `"value":true`, `"properties":true`). OpenCode rechaza esos schemas booleanos. **FIX**: `flojo-mcp::tool::normalize_json_schema()` recorre el schema y reemplaza booleanos por `{}` (schema equivalente, acepta cualquier valor) en `collect_tool_infos()`. Tras el fix, las 21 tools se cargan en OpenCode. | 2026-08-04 |
-| **🚨 Duplicación de heren-server → "no editor connected" + handshake WS roto** | OpenCode lanza un heren-server por sesión/chat. El VIEJO quedaba con el puerto 9099 (WS server); el NUEVO fallaba el bind pero SEGUÍA sirviendo MCP sin WS server (el bind fallido solo imprimía a stderr en `run()`). El editor Godot conectaba al proceso VIEJO (runtime MCP muerto → `Handshake not finished`) y las tools iban al NUEVO sin editores → "no editor connected". **FIX**: `kill_previous_servers()` en `run()` mata otros heren-server.exe (nunca el actual) antes de bindear. `run.bat` también mata viejos (`taskkill /F /IM heren-server.exe`). | 2026-08-04 |
-| **🚨 `[editor_plugins]` formato viejo → Godot ignora el plugin en silencio** | Godot 4 requiere `enabled=PackedStringArray("res://addons/heren/plugin.cfg")`. El formato viejo/manual `enabled_plugins=["..."]` NO carga el plugin. `enable_plugin_in_project` (launcher.rs) e `install_plugin.py` solo verificaban si el texto CONTENÍA la ruta → "ya habilitado" sin corregir el formato → plugin nunca cargaba (no había conexión WS). **FIX**: normalizar: si existe línea `enabled_plugins=[...]` con la ruta, reemplazarla por el formato Godot 4 correcto. | 2026-08-04 |
-| **🚨 Instalación parcial del plugin (solo plugin.cfg)** | `ensure_plugin_installed` (launcher.rs) e `install_plugin.py` verificaban SOLO `plugin.cfg` → si existía pero faltaban handlers (copia rota), decían "already installed" sin re-copiar. **FIX**: `source_files_match()` verifica que TODOS los archivos fuente existan en el destino; si falta algo, borra y re-copia. | 2026-08-04 |
-| **🚨 `project/create` perdido en migración a Rust + circular dependency** | El bridge Python tenía `project("create")`; en `server.rs` solo existían setting|autoload|input_map|shader_global. Además `resolve_project` exigía editor conectado → **circular**: no se podía crear el PRIMER proyecto sin editor. **FIX**: action `create` escribe `project.godot` directo en disco sin editor. También se añadió `setup_plugin` (instala el plugin sin editor). | 2026-08-04 |
-| **Tools sin sufijo `_tool` + create con configurabilidad** | Renombradas: `resource_tool→resource`, `project_tool→project`, `shader_tool→shader`, `animation_tool→animation`, `skeleton_tool→skeleton`, `tilemap_tool→tilemap`, `debug_tool→debug`, `validate_tool→validate` (el reenvío al plugin no cambia: el prefijo del handler es el mismo). `project/create` ahora genera la escena main (root type/name configurables) conectada a `run/main_scene`, y acepta `project_name`, `renderer` (type), `main_scene`, `root_type`, `root_name`, `viewport_width`, `viewport_height`, `stretch_mode`. Nueva action `project/setup_plugin`: instala el plugin v4 + normaliza `[editor_plugins]` sin editor (la puede llamar el agente). | 2026-08-04 |
-| **E2E: `args()` inyecta null en params opcionales → rompe guards (C1/C2)** | server.rs `args()` inserta `Value::Null` para todo param None. Los handlers usan `args.get("key","")` (que devuelve null si la key existe) y `str(null)` = `"<null>"` → los guards `if x == ""` fallan. `project/setting` get **borra** el setting (responde op:"set", value:null); `autoload` list trata "<null>" como nombre; `input_map` sin `type` explícito cae a `unknown_type: <null>`. **FIX (pendiente)**: `args()` debe OMITIR keys None en vez de insertar null; y `handle_setting` trata value=null como get. Ver §0. | 2026-08-04 |
-| **E2E: `signal/list` crashea con conexiones entrantes (H1)** | En nodos SIN conexiones funciona; en nodos CON conexiones (p.ej. Player tras `signal/connect`) devuelve "Unknown error" (editor_plugin.gd:280). Causa probable: acceso en el bucle `get_incoming_connections()` de `signal_handlers.gd`. Fix: acceso defensivo (conn es Dictionary; usar `.get()`). Ver §0. | 2026-08-04 |
-| **E2E: `shader/material` "Unknown error" siempre (H2)** | Asignar un ShaderMaterial a cualquier nodo (`.`, Player/Visual) falla con "Unknown error". El handler `handle_material` de `shader_handlers.gd` parece correcto; diagnosticar el error GDScript real. Ver §0. | 2026-08-04 |
-| **E2E: typo `set_bone_weigths` en skeleton_skin (H3)** | `animation_handlers.gd handle_skeleton_skin` llama `polygon.set_bone_weigths(...)` → método inexistente → "Unknown error". Fix: `set_bone_weights`. Ver §0. | 2026-08-04 |
-| **E2E: `skeleton_set_rest`/`skeleton_attachment` exigen Skeleton3D (H4)** | `as Skeleton3D` fijo en ambos handlers → fallan en Skeleton2D aunque `is_3d=false`. El skeleton 2D completo (create/add_bone) funciona; set_rest/attachment solo en 3D. Fix: ramificar por `is_3d`. Ver §0. | 2026-08-04 |
-| **E2E: `node/array_remove` elimina el primer elemento (M1)** | Con `value=20` en `[10,20,30,40]` removió el 10 (find devolvió 0). `current.find(deserialize_value(value))` — posible int vs float. Fix: normalizar tipos antes de find. Ver §0. | 2026-08-04 |
-| **E2E: tool `node` no expone query/by/recursive/owner_path/script (gap)** | Los handlers `find`, `set_owner`, `get_children(recursive)`, `add(script)` funcionan pero la tool directa no los expone → solo accesibles vía `orchestrate` (args crudos). Fix: añadir params al schema de la tool `node`. Ver §0. | 2026-08-04 |
-| **E2E: `resource` no crea directorios padre (gap)** | `create`/`create_script` fallan con "save_failed: Can't open"/"cannot_open" si la carpeta no existe; no hay tool de mkdir. Fix: crear dirs en create/create_script o exponer mkdir. Ver §0. | 2026-08-04 |
-| **E2E: visual 4/7 acciones rotas (coords/capture/node/budget/cache)** | `visual/coords` devuelve solo 3 nodos con paths ".." (incompleto); `capture`/`node` imagen 2×2 px (viewport 2D no renderiza) + pos (0,0); `budget`/`cache` fallan porque `handle_vision_budget`/`handle_vision_cache` **no existen** en `visual_handlers.gd` (el server los mapea pero el plugin no). Solo `ascii` y `summary.by_type` funcionan. Ver §0. | 2026-08-04 |
-| **E2E: `validate/node` script_cannot_instantiate (M3)** | Scripts creados por MCP no se compilan: `efs.update_file()` no basta, falta re-import/scan del editor para que `can_instance` sea true. Ver §0. | 2026-08-04 |
-| **Fix C1/C2: `args()` omite keys None** | server.rs `args()` insertaba `Value::Null` para todo param opcional → `project/setting` get se leía como set (borraba el setting) y `str(null)`="<null>" rompía guards `if x == ""` en todos los handlers. **FIX**: `args()` ahora OMITE keys None; además `handle_setting` (project_handlers.gd) trata value null explícito como get. `heren-check` y `heren-build` (release) verdes. | 2026-08-04 |
-| **Fix H2: `shader/material` resource_name** | CAUSA RAÍZ: `material.name =` en shader_handlers.gd — ShaderMaterial es un Resource que NO tiene propiedad `name` (tiene `resource_name`); asignar `.name` lanzaba runtime error GDScript → "Unknown error" siempre. **FIX**: `material.resource_name =`. | 2026-08-04 |
-| **Fix H3: `set_bone_weights` + índice int** | `animation_handlers.gd handle_skeleton_skin` llamaba `polygon.set_bone_weigths(bone_name, ...)` (typo + nombre en vez de índice). **FIX**: `set_bone_weights(find_bone(str(bone_name)), PackedFloat32Array(weights))` con guard `bone_not_found`. | 2026-08-04 |
-| **Fix H4: skeleton set_rest/attachment ramifican por tipo** | Ambos handlers hacían `as Skeleton3D` fijo → fallaban en Skeleton2D aunque `is_3d=false`. **FIX**: si `node is Skeleton2D` → `Transform2D(angle, origin)` / `BoneAttachment2D`; else Skeleton3D → `Transform3D`/`BoneAttachment3D`. Paridad con `handle_skeleton_add_bone` (que ya ramificaba bien). | 2026-08-04 |
-| **Fix H1: `signal/list` totalmente defensivo** | Loop de `get_incoming_connections()` accedía a conn como objeto (`conn.source`) → crash "Unknown error" en nodos con conexiones. **FIX**: trata cada conn como Dictionary, acceso `.get()`, aísla por conexión. **Bonus**: key correcta `"signal"` (no `"signal_name"` — que devolvía siempre `""`). | 2026-08-04 |
-| **Gotcha: las tools MCP se cargan al INICIO de la sesión** | Tras recompilar heren-server.exe, el toolset MCP de OpenCode (`godot_*`) NO se refresca en una conversación en curso — quedó fijado a la instancia MCP anterior. Para usar el binario nuevo con los fixes, abrir una SESIÓN/CONVERSACIÓN NUEVA de OpenCode (arranca el MCP con el binario actualizado). Validación manual E2E post-fix requiere esa sesión nueva. | 2026-08-04 |
-| **🚨 Skeleton2D NO tiene find_bone/set_bone_rest (API falsa en handlers)** | Los handlers de skeleton asumían una API UNIFICADA Skeleton2D/Skeleton3D que NO existe: `Skeleton3D` tiene `find_bone()`, `set_bone_rest(idx, Transform3D)`, `add_bone()`; pero `Skeleton2D` NO los tiene — sus huesos son nodos `Bone2D` hijos con `.rest = Transform2D(...)`. Además `BoneAttachment2D` NO existe en Godot 4 (solo `BoneAttachment3D`). Resultado: `skeleton_set_rest`/`skeleton_attachment`/`skeleton_skin` en 2D daban "Unknown error". **FIX**: ramificar por tipo real; 2D busca el `Bone2D` hijo por nombre (iterando `get_bone_count()`/`get_bone()`), attachment 2D = Node2D hijo del Bone2D. | 2026-08-04 |
-| **🚨 `BoneAttachment2D` inexistente rompía TODO el plugin (editor no conecta)** | `var att2d := BoneAttachment2D.new()` es un parse error (clase no existe) → `animation_handlers.gd` no compila → el plugin entero no carga → el editor Godot lanza pero NUNCA conecta al WS (silencioso). Síntoma: `session/open` ok pero `health` siempre `connected_projects: []`. **Fix**: usar `Node2D` hijo del Bone2D para attachment 2D. **Lección**: SIEMPRE validar sintaxis GDScript (`godot --headless --path <proj> --check-only --script res://addons/heren/handlers/X.gd`) tras editar handlers — el editor no da error visible de parse del plugin en el log del server. | 2026-08-04 |
-| **Mejora conexión: matar editor zombie sin conectar en session/open** | Antes `launch_editor` reutilizaba CUALQUIER proceso Godot del proyecto (`is_editor_running`), incluso si tenía plugin roto/obsoleto y no conectaba al WS → tras recompilar handlers había que matar el editor a mano. **FIX**: `launch_editor` ahora recibe `editor_connected` (bool, evaluado via registry async); si hay proceso pero NO conectado → lo mata y relanza limpio. Además siempre sincroniza el plugin (`ensure_plugin_installed`) ANTES de lanzar. | 2026-08-04 |
-| **Validado E2E: fix conexión con editor zombie real** | `session/open` contra un editor Godot viejo desconectado (PID de test anterior): lanzó un editor NUEVO que conectó automáticamente al WS (`editor connected` en log) → `health` devuelve `connected_projects:[...]` y `project_connected:true`. Ya NO hace falta matar el editor a mano tras recompilar handlers. **Nota menor**: el zombie viejo no siempre se mata solo (el `wmic` de `godot_processes_for` puede no captarlo en el instante) pero queda inofensivo — el server usa el editor conectado. | 2026-08-04 |
-
- ### Nuevas Features (v3.0)
-
-| Feature | Descripcion |
-|---------|-------------|
-| **Auto-shutdown** | Daemon se apaga tras 3 minutos sin comandos (evita procesos colgados) |
-| **Retry automatico** | Session Manager reintenta iniciar daemon hasta 3 veces con delay exponencial |
-| **Ventana pequena** | Daemon renderiza a 320x200 en esquina inferior derecha (no estorba) |
-| **Sub-resources complejos** | Soporte para RectangleShape2D, CircleShape2D, CapsuleShape2D, GradientTexture2D, Environment, StandardMaterial3D |
-| **Edicion de recursos** | Modificar propiedades de sub-resources existentes y re-guardar |
-| **Escenas 3D completas** | Crear cuartos, luces, camaras, materiales con transparencia/metallic |
-| **Eliminado index tool** | Tool redundante (MCP protocol ya lista tools automáticamente). Eliminados ~205 líneas de tools_index.py + ~60 de server.py |
-| **Docstrings compactados 84%** | Descripciones de tools reducidas de ~4,255 → ~670 tokens. Ahora 1-2 líneas compactas en vez de secciones Actions/Args/Returns/Examples |
-| **Dirty tracking + auto-save** | `_dirty_scenes` rastrea modificaciones. `handle_save_all_dirty()` guarda todo lo sucio. Auto-save cada 10s via timer en `_process()`. Shutdown save: al cerrar daemon se guardan escenas sucias primero. `_mark_dirty()` en 11 handlers mutantes, `_clear_dirty()` tras save/unload/delete. |
-### Nuevas Features (v2.0 Modular)
-
-| Feature | Descripcion |
-|---------|-------------|
-| **Arquitectura modular** | 10 módulos GDScript separados por responsabilidad (escenas, recursos, shaders, debug, etc.) |
-| **Inyección de dependencias** | Módulos reciben referencia al orquestador vía `init(daemon: SceneTree)` |
-| **class_name funcional** | Todos los módulos usan `class_name` registrado globalmente por Godot |
-| **Mouse lock fix** | `Input.mouse_mode = MOUSE_MODE_VISIBLE` + `ensure_mouse_free()` cada 0.5s + post-save |
-| **Ventana 240x150** | Más pequeña y con flags NO_FOCUS + MOUSE_PASSTHROUGH + TRANSPARENT |
-| **Mesh inline** | `properties.mesh = {"__type":"Resource", "resource_type":"SphereMesh", ...}` |
-| **Shader deduplicación** | El daemon detecta `shader_type` existente y no lo duplica |
-| **setup_daemon completo** | Copia los 12 archivos `.gd` del daemon al proyecto automáticamente |
-
-### Workarounds Recomendados
-
-```python
-# Para ejecutar escenas (requiere editor):
-# No usar: debug("run_scene", ...)
-# Usar: Lanzar Godot Editor manualmente
-
-# Para scripts complejos:
-# No usar: debug("execute_editor_script", script_code="FileAccess...")
-# Usar: Crear archivo .gd y ejecutar con godot --script
-
-# Para batch con set_prop:
-# Usar "property_name" o "property" (ambos funcionan ahora)
-
-# Para recursos anidados complejos (ShaderMaterial con shader code):
-# El fix de resource_local_to_scene funciona para la mayoria de casos
-# Si falla, crear .gdshader separado y referenciar como ExtResource
-
-# Para crear nodos con meshes inline:
-# Usar: properties={"mesh": {"__type":"Resource", "resource_type":"SphereMesh", "radius": 0.5}}
-# Soporta: BoxMesh, SphereMesh, CapsuleMesh, CylinderMesh, PrismMesh, QuadMesh
-```
-
----
-
-## 9. Checklist para Agentes
-
-Antes de entregar código:
-- [ ] ¿El Session Manager se inicializa primero?
-- [ ] ¿Todas las operaciones usan el daemon si está disponible?
-- [ ] ¿Todas las operaciones requieren GodotDaemon activo? (no hay fallback)
-- [ ] ¿Se usan templates con f-strings (no string.Template)?
-- [ ] ¿Hay manejo de errores en cada operación?
-- [ ] ¿Se actualiza la caché después de modificaciones?
-- [ ] ¿Se limpian archivos temporales después de usar?
-- [ ] ¿Se cierra la sesión correctamente al final?
-- [ ] ¿Nuevos handlers se registran en `_register_handlers()`?
-- [ ] ¿Nuevas tools se registran en `server.py`?
-- [ ] ¿Hay tests unitarios para la nueva funcionalidad?
-- [ ] ¿Los tests de integración pasan?
-- [ ] ¿El benchmark no muestra regresión de rendimiento?
-- [ ] ¿Se actualizó AGENTS.md con la nueva tool?
-- [ ] ¿Se usa `session.id` y NUNCA `session.session_id`?
-- [ ] ¿Se reinició el MCP después de cambios en Python (session_manager, tools)?
-- [ ] ¿Se probaron las tools con daemon activo?
-- [ ] ¿Se documentaron bugs conocidos en la sección correspondiente?
-
----
-
-## 9. Testing y Benchmarking
-
-### Filosofía de Testing
-
-**Unificado pero no monolítico.** Tests organizados por capa arquitectónica:
-
-| Directorio | Qué testea | Requiere Godot | Velocidad |
-|------------|-----------|----------------|-----------|
-| `test_core/` | Session Manager, Cache, Helpers | ❌ No | ⚡ Instantáneo |
-| `test_tools/` | Tools MCP (scene, node, session) | ✅ Sí (daemon) | 🐢 ~20ms/test |
-| `test_integration/` | Workflows completos | ✅ Sí (daemon) | 🐢 ~2-5s/test |
-
-> **Nota:** `test_interfaces/` eliminado en v3.0. Ya no hay fallback que testear.
-
-**Reglas de Testing:**
-1. **Fixtures compartidas** en `conftest.py`: `temp_project`, `daemon_session`
-2. **Proyecto temporal Godot** por test: auto-crea `project.godot` + estructura mínima
-3. **Reset de estado** entre tests: `reset_session_manager` como fixture `autouse`
-4. **Tests independientes**: cada test debe poder ejecutarse solo
-5. **No mockear Godot** en tests de tools: si Godot falla, el test debe fallar
-
-### Filosofía de Benchmarking
-
-**Rendimiento es una feature.** Todo cambio que afecte performance debe ser medible:
-
-```python
-# Benchmark mínimo para cada tool
-@pytest.mark.benchmark
-class TestSceneToolBenchmark:
-    def test_get_scene_tree_cold(self, session_id, temp_project):
-        # 1 warm-up + 10 mediciones
-        times = measure_tool(scene_tool, action="get_tree", n=10)
-        assert avg(times) < 0.5  # 500ms máximo
-    
-    def test_get_scene_tree_cache(self, session_id, temp_project):
-        # Primera llamada calienta cache
-        scene_tool(action="get_tree", ...)
-        # Segunda llamada debe ser <1ms
-        times = measure_tool(scene_tool, action="get_tree", n=10)
-        assert avg(times) < 0.001  # 1ms máximo
-```
-
-**Métricas críticas:**
-| Métrica | Target | Alerta |
-|---------|--------|--------|
-| Tool cold | <500ms | >1000ms |
-| Tool cache hit | <1ms | >5ms |
-| Cache hit rate | >80% | <50% |
-| Memoria por sesión | <50MB | >100MB |
-| Archivos temporales | 0 después de test | >0 |
-
-**Runner de benchmarks:**
-```bash
-# Ejecutar benchmarks
-python -m benchmarks.run_benchmarks
-
-# Generar reporte JSON
-python -m benchmarks.run_benchmarks --output report.json
-
-# Comparar con baseline
-python -m benchmarks.run_benchmarks --compare baseline.json
-```
-
----
-
-## 9.1 Testing Real - Resultados Documentados (2026-05-13)
-
-### Sesión de Testing
-
-**Proyecto:** LAIKA (Godot 4.6.1) | **Sesión:** 59fa57d4 | **Daemon:** Activo puerto 49631
-
-#### Flujo Ejecutado (Ejemplo Real)
-
-```python
-# 1. Crear nivel completo vía batch (11 ops en ~200ms)
-batch([
-  {"action": "add", "params": {"node_type": "CharacterBody2D", "node_name": "Player", "properties": {"position": {"x": 100, "y": 300}}}},
-  {"action": "add", "params": {"node_type": "StaticBody2D", "node_name": "Ground", "properties": {"position": {"x": 400, "y": 500}}}},
-  {"action": "add", "params": {"node_type": "CharacterBody2D", "node_name": "Enemy1", "properties": {"position": {"x": 600, "y": 300}}}},
-  {"action": "add", "params": {"node_type": "Area2D", "node_name": "Coin1", "properties": {"position": {"x": 300, "y": 250}}}},
-  {"action": "save", "params": {"scene_path": "res://test_level.tscn"}}
-])
-
-# 2. Validar
-validate("scene", scene_path="res://test_level.tscn")  # → VÁLIDO
-
-# 3. Configurar proyecto
-project("setting", setting_name="display/window/size/viewport_width", value=1920)
-```
-
-#### Resultados por Tool (v2.0 Modular - 2026-05-15)
-
-| Tool | Tests | Exitosos | Fallidos | Estado |
-|------|-------|----------|----------|--------|
-| session | 3 | 3 | 0 | ✅ 100% |
-| scene | 6 | 6 | 0 | ✅ 100% |
-| node | 6 | 6 | 0 | ✅ 100% |
-| batch | 1 | 1 | 0 | ✅ 100% |
-| project | 2 | 2 | 0 | ✅ 100% |
-| debug | 3 | 3 | 0 | ✅ 100% |
-| validate | 2 | 2 | 0 | ✅ 100% |
-| resource | 2 | 2 | 0 | ✅ 100% |
-| skeleton | 2 | 2 | 0 | ✅ 100% |
-| animation | 3 | 3 | 0 | ✅ 100% |
-| shader | 3 | 3 | 0 | ✅ 100% |
-| signal | 2 | 2 | 0 | ✅ 100% |
-| global | 2 | 2 | 0 | ✅ 100% |
-| tilemap | 1 | 1 | 0 | ✅ 100% |
-
-**Total: 39/39 operaciones exitosas (100%)**
-
-*Nota: Testing realizado en proyecto Vindictide con daemon modular v2.0*
-
----
-
-## 10. Las 15 Tools de Heren MCP v4.2
-
-### Lista Completa y Estado
-
-| # | Tool | Actions | Dominio | Estado | Notas |
-|---|------|---------|---------|--------|-------|
-| 1 | `session` | open, close, list, info, health | Gestión de sesiones | ✅ **100%** | close_editor opcional (default false) |
-| 2 | `scene` | get_open_scenes, get_edited_scene_root, open, save, create, unload | Escenas | ✅ **100%** | EditorPlugin real |
-| 3 | `node` | add, remove, set_prop, get_prop, get_info, get_children, find, duplicate, rename, move, set_owner, reorder, array_append, array_remove | Nodos | ✅ **100%** | coords proactivas en mutaciones |
-| 4 | `resource` | create, read, update, delete, list, create_script, read_script, edit_script | Recursos .tres + .gd | ✅ **100%** | EditorFileSystem |
-| 5 | `project` | create, setup_plugin, setting, autoload, remove_autoload, input_map, shader_global | Configuración | ✅ **100%** | create sin editor + main.tscn automática |
-| 6 | `shader` | create, edit, validate, material, uniform | Shaders | ✅ **100%** | .gdshader + ShaderMaterial |
-| 7 | `animation` | create_player, create, add_track, add_key, state_machine | Animaciones | ✅ **100%** | AnimationLibrary |
-| 8 | `skeleton` | skeleton_create, skeleton_add_bone, skeleton_set_rest, skeleton_skin, skeleton_attachment | Esqueletos 2D/3D | ✅ **100%** | fusionado en animation_handlers |
-| 9 | `tilemap` | inspect_set, inspect_map, set_cell, terrain, pattern | TileMaps | ✅ **100%** | requiere TileSet |
-| 10 | `debug` | run_scene, stop_scene, is_playing, get_editor_errors | Depuración | ✅ **100%** | editor real, no subprocess |
-| 11 | `validate` | scene, script, node, resource | Validación | ✅ **100%** | contra escena viva |
-| 12 | `signal` | connect, disconnect, list, set_script | Señales | ✅ **100%** | CONNECT_PERSIST |
-| 13 | `orchestrate` | (múltiples ops en una llamada) | Batch operations | ✅ **100%** | plan_file evita dicts anidados |
-| 14 | `visual` | coords, summary, ascii, capture, node, budget, cache | Sistema de visión §13.6 | ✅ **100%** | 1 tool, 7 acciones (consolidada) |
-| 15 | `health` | server + editor status | Health check | ✅ **100%** | connected_projects |
-
-### Filosofía: Centralizadas
-
-```python
-# 15 tools cubren TODO Godot Engine
-# NO dispersar en 50 archivos
-# NO crear una tool por cada operación atómica
-# Las tools de visión se consolidaron en UNA (visual) — ver §13.6
-```
-
-### Filosofía: Modulares
-
-```python
-# Una tool con múltiples modos via parámetro 'action'
-def resource_tool(action, **kwargs):
-    if action == "create":
-        return create_resource(**kwargs)
-    elif action == "read":
-        return read_resource(**kwargs)
-    elif action == "update":
-        return update_resource(**kwargs)
-
-# El agente usa UNA tool para múltiples operaciones
-resource_tool(action="create", resource_path="res://mat.tres", resource_type="ShaderMaterial")
-resource_tool(action="read", resource_path="res://mat.tres")
-```
-
-### Bugs Arreglados en v1.1 ✅
-
-| # | Bug | Tool Afectada | Estado | Fix |
-|---|-----|---------------|--------|-----|
-| 1 | **Animación no persiste** | `animation` (create, add_track) | ✅ ARREGLADO | Usar AnimationLibrary en vez de add_animation() |
-| 2 | **Shader uniform no aplica** | `shader` (uniform) | ✅ ARREGLADO | Cubrir 4 tipos de materiales (CanvasItem, GeometryInstance3D override/overlay, MeshInstance3D surface) |
-
-### Bugs Conocidos del Daemon (v2.0 Modular)
-
-| # | Bug | Tool Afectada | Severidad | Workaround |
-|---|-----|---------------|-----------|------------|
-| 1 | **Screenshot pequeño/vacío** | `scene` (screenshot) | 🟢 Baja | Normal sin texturas/cámaras configuradas |
-| 2 | **ExtResource faltante** | `node` (add con material externo) | 🟡 Media | Cuando se crea un nodo con `ShaderMaterial` que referencia un `.gdshader` externo, el daemon no genera la declaración `[ext_resource]` en el `.tscn`. La escena queda corrupta para Godot. |
-
-**Fix planificado:** Detectar referencias a recursos externos durante la serialización de sub-resources e inyectar las declaraciones `[ext_resource]` correspondientes al principio del archivo. |
-
-### Regla Crítica: `session.id` vs `session.session_id`
-
-**NUNCA uses `session.session_id`**. El objeto Session tiene `session.id`:
-
-```python
-# ❌ MAL - AttributeError
-session_manager.get_godot_daemon(session.session_id)
-
-# ✅ BIEN
-session_manager.get_godot_daemon(session.id)
-```
-
-**Tools afectadas si se usa mal:** project, animation, skeleton, shader, tilemap.
-
----
-
-## 11. Sistema Visual - "Ojos para el Agente"
-
-El agente no puede ver la escena. El Sistema Visual le da "ojos":
-
-### `scene` action `"inspect_visual"`
-- **Grid superpuesto** - Cada 100px, coordenadas visibles
-- **Labels de nodos** - Nombre de cada nodo en su posición
-- **Axes indicator** - X (rojo), Y (verde), Z (azul) en esquina
-- **Bounding boxes** - Cajas alrededor de nodos seleccionables
-
-### `scene` action `"raycast"`
-- El agente dispara un rayo desde cualquier punto
-- El daemon responde: ¿qué colisionó? ¿dónde? ¿normal?
-- Perfecto para posicionamiento automático
-
-### `scene` action `"measure"`
-- Distancia entre dos nodos
-- Ángulo entre vectores
-- Bounding box de un grupo
-- El agente puede "medir" antes de "mover"
-
-### Ejemplo de uso
-```python
-# 1. Tomar screenshot con grid
-scene("inspect_visual", session_id="abc", scene_path="res://Level.tscn",
-      output_path="C:/Temp/level_grid.png", show_grid=True, show_labels=True)
-
-# 2. Medir distancia entre enemigo y jugador
-measure(session_id="abc", scene_path="res://Level.tscn", 
-        node_a="Enemy", node_b="Player")
-# → {"distance": 150.5, "direction": {"x": -1, "y": 0}}
-
-# 3. Raycast para ver qué hay delante del jugador
-raycast(session_id="abc", scene_path="res://Level.tscn",
-        from={"x": 100, "y": 200}, direction={"x": 1, "y": 0})
-# → {"hit": true, "position": {"x": 250, "y": 200}, "collider": "Wall"}
-```
-
----
-
----
-
-## 13. PLAN v4.0 — Migración Masiva
-
-> 🚧 **ESTADO: v4.0.0 OPERATIVO (EditorPlugin + Bridge Python).**
-> **Migración completada 2026-08-03**: GodotDaemon (v3) → EditorPlugin (v4).
-> **Fase 0 COMPLETADA** (2026-08-03, commit `94b3d4c` en FlojoMCP) — fundaciones FlojoMCP.
-> **Fase 1 COMPLETADA** (2026-08-03) — Plugin Núcleo en `laika-gd/addons/heren/` (EditorPlugin + WS client + dispatcher + undo/redo + scene_handlers, validado E2E real).
-> **Fase 2 COMPLETADA** (2026-08-03) — migración de TODOS los módulos (node, resource, animation+skeleton, shader, project, signal, validate, debug, tilemap).
-> Objetivo final: reemplazar **Bridge Python (temporal) + FastMCP (v3)** por **HerenServer.exe (Rust/FlojoMCP)**.
-> Los cambios nuevos van a v4. No ampliar v3 salvo bugs críticos.
-
-### 13.1 Resumen
-
-| | v3 (actual) | v4 (objetivo) |
-|---|---|---|
-| **Acceso a editor** | ❌ Daemon standalone (EditorInterface inaccesible) | ✅ EditorPlugin real (`extends EditorPlugin`) |
-| **Undo/Redo** | ❌ Irreversible | ✅ `EditorUndoRedoManager` |
-| **MCP server** | Python FastMCP (~60MB, schemas rotos con decoradores) | Rust FlojoMCP (7MB, schemas en compile-time) |
-| **Transporte** | WebSocket (daemon=server, frágil) | WebSocket (plugin=cliente, auto-reconnect, patrón gopeak) |
-| **Visibilidad** | SubViewport sin cámara | Viewports 2D/3D reales + sistema de visión con presupuesto de tokens |
-| **Sesiones** | SessionManager Python (LRU, daemon cache) | `ConnectedEditors` (editor vivo en RAM) + `last_project` en disco |
-| **Coordenadas** | `serialize_value`/`deserialize_value` (éxito) | Heredado + expansión (Transform2D/3D, snaps, relativas) |
-
-### 13.2 Decisiones Arquitectónicas (ADR)
-
-**ADR-001: FlojoMCP sobre FastMCP.** FastMCP genera schemas por introspection runtime → los decoradores (`@require_session`) rompen la firma → schemas vacíos. FlojoMCP genera schemas en compile-time (macro `syn` + `schemars`) → imposible de romper. Prueba real: PulseWire ya lo usa en producción. Regla: todo lo que construyamos en FlojoMCP debe ser **feature genérica** reutilizable, no específico de Godot.
-
-**ADR-002: EditorPlugin sobre GodotDaemon.** El daemon corre `Engine.is_editor_hint() = false` → `_get_editor_interface_or_fail()` siempre falla. Nunca podrá tocar el editor real. Con EditorPlugin ganamos: `EditorUndoRedoManager`, viewports 2D/3D reales, `EditorFileSystem` (import pipeline), play con breakpoints, selection sync, popup selectors, toaster.
-
-**ADR-003: WebSocket con plugin=cliente (patrón gopeak).** Transporte WebSocket local, pero **el plugin es el CLIENTE** y el server MCP es el **SERVER**. gopeak (competencia real) valida el patrón: el MCP server abre server HTTP+WS unificado; el EditorPlugin se conecta con auto-reconnect y backoff exponencial. El editor NO depende de que el server exista. Permite push de eventos (`scene_changed`, `selection_changed`). Invertimos el rol de v3 (daemon=server) que causaba puerto ocupado y daemon muerto sin aviso. Descartadas: HTTP JSON-RPC (sin push), plugin hace MCP completo en GDScript (pierde FlojoMCP).
-
-**ADR-004: Sesión = editor vivo conectado (runtime).** El propósito de "sesión" en v4 es mantener el proceso Godot (editor) vivo y reutilizarlo — no persistir estado de trabajo. `ConnectedEditors` en RAM del server (project_path → conexión WS) registrado vía `godot_ready`. `session.json` en disco se reduce a `last_project` (1 clave) para auto-lanzamiento. El esquema vision/preferences/workspace_state se descarta: es State efímero en RAM, no sesión persistente. `flojo-session` + `SessionManager` (Fase 0) cubren la parte mínima de disco.
-
-**ADR-005: Coordenadas unificadas heredadas + expansión.** Conservar `serialize_value`/`deserialize_value` con auto-detección por keys y expandir tipos. Fue un gran éxito (posiciones aplican correctamente). Expansión backward-compatible.
-
-### 13.3 Arquitectura Objetivo
+## 2. Arquitectura (v4 — EditorPlugin + Rust)
 
 ```
 OpenCode (cliente MCP)
-    │  STDIO (MCP protocol)
+    │  STDIO (MCP protocol, NDJSON)
     ▼
 HerenServer.exe  (FlojoMCP — Rust, 7MB, sin runtime)
     │  WebSocket server local (127.0.0.1:PUERTO)  ← patrón gopeak
@@ -1018,355 +101,294 @@ HerenEditorPlugin  (EditorPlugin GDScript → EditorInterface)
     ├── ws_client.gd             # cliente WS con auto-reconnect
     ├── dispatcher.gd            # recibe tool_invoke → ejecuta handler
     ├── undo_redo_wrapper.gd     # envuelve ops en EditorUndoRedoManager
-    ├── handlers/
-    │   ├── scene_handlers.gd    # EditorInterface scene ops
-    │   ├── node_handlers.gd     # nodos, transforms, coordenadas
-    │   ├── resource_handlers.gd # EditorFileSystem, imports
-    │   ├── animation_handlers.gd# AnimationPlayer, AnimationTree, state machines
-    │   ├── skeleton_handlers.gd # Skeleton2D/3D
-    │   ├── shader_handlers.gd   # shaders, materiales
-    │   ├── tilemap_handlers.gd  # TileMap, TileSet, terrain, patterns
-    │   ├── project_handlers.gd  # ProjectSettings, autoloads, input map
-    │   ├── debug_handlers.gd    # run/stop, breakpoints (editor real)
-    │   ├── visual_handlers.gd   # viewports, previews, screenshots
-    │   └── validation_handlers.gd
-    └── events/
-        └── event_pusher.gd      # scene_changed, selection_changed → WS
+    └── handlers/                # scene, node, resource, animation(+skeleton),
+                                 # shader, tilemap, project, debug, visual,
+                                 # signal, validate + coords.gd
 ```
 
-**Módulos ELIMINADOS de v3**: `godot_daemon.py`, `session_manager.py` (Python), `heren_daemon.gd` orquestador, `heren_window_manager.gd`, `heren_server_manager.gd`, `heren_tscn_serializer.gd` (la serialización de .tscn la hace Godot nativamente al guardar).
+**Flujo:** `session/open` (auto-launch Godot con plugin) → `godot_ready` → WS registra `ConnectedEditors[project_path]` → tools enrutan al editor vivo (~20ms) → mutaciones con undo/redo.
 
-### 13.4 Features Genéricas a Aportar a FlojoMCP
-> Regla de hierro: **nada específico de Godot**. Todo es infraestructura MCP reutilizable. El plugin Godot es el primer consumidor, no el dueño.
+**Módulos ELIMINADOS de v3:** `godot_daemon.py`, `session_manager.py` (Python), `heren_daemon.gd` orquestador, `heren_window_manager.gd`, `heren_server_manager.gd`, `heren_tscn_serializer.gd` (la serialización .tscn la hace Godot nativamente al guardar).
 
-| Feature | Crate/Feature | Descripción | Beneficiarios |
-|---------|---------------|-------------|---------------|
-| **`ws-server`** | `flojo-transport` o feature en `flojo-mcp` | Exponer server WebSocket local al que se conectan plugins/agentes externos | Godot, Unity, Blender, browsers, daemons |
-| **`image_content` / `image_resource`** | `flojo-mcp` | Contenido imagen base64 en tool results y resources (`Content::image` del spec MCP) | Cualquier server con screenshots/thumbnails/gráficos |
-| **Truncación/paginación** | `flojo-mcp` (helpers) | `truncate_json()`, `PageableResult`, `summarize_tree()` | Resultados grandes: escenas, logs, DB |
-| **Session multi-proyecto** | `flojo-session` | Sesión path-based: `Session::load(path)` por workspace/proyecto | Editores, IDEs, repos |
-| **Hooks/middleware de tool call** | `flojo-mcp` | pre/post hooks: logging, métricas, presupuesto de tokens | Observabilidad universal |
-| **`ctx.tokens_estimate`** | `flojo-mcp` | Estimación de tokens del payload de respuesta | Control de costo universal |
+---
 
-### 13.5 Sistema de Coordenadas (Heredado + Expansión)
+## 3. Reglas de Oro para Agentes
 
-**Heredado (v3 — funcionando):**
-```gdscript
-{"x": 100, "y": 200, "__type": "Vector2"}     # auto-detección por keys
-{"x": 1, "y": 0, "z": 0, "__type": "Vector3"}
-{"r": 1, "g": 0, "b": 0, "a": 1, "__type": "Color"}
-{"x": 0, "y": 0, "w": 64, "h": 64, "__type": "Rect2"}
-{"path": "Player/Sprite", "__type": "NodePath"}
+1. **Session Manager es el Rey.** SIEMPRE `session/open` primero. NUNCA operar sin sesión. NUNCA cerrar hasta terminar.
+2. **Godot hace el trabajo pesado.** NUNCA parsear .tscn a mano. El editor/daemon devuelve JSON perfecto en ~20ms.
+3. **Tools centralizadas.** 15 tools cubren TODO Godot. NO dispersar en 50 tools con 1 función.
+4. **Tools modulares.** Una tool, múltiples modos vía `action`.
+5. **Tools potentes.** Una tool hace TODO un flujo. El agente dice QUÉ, no CÓMO.
+6. **Cache es tu amigo.** Primera vez lee de disco (~3s), luego memoria (~0ms).
+7. **Fail-fast.** Si Godot no responde → error inmediato. NUNCA silenciar errores. NUNCA retornar None sin explicación.
+8. **LAIKA es SOLO PRUEBAS.** El plugin v4 FUENTE vive en `heren-mcp/addons/heren/`. NUNCA commitear a LAIKA. Para validar: copiar addon → LAIKA/proyecto temporal. Cambios → commit SOLO en heren-mcp.
+
+---
+
+## 4. Estructura de Directorios (v4)
+
 ```
-Auto-detección: `x`+`y` → Vector2; `x`+`y`+`z` → Vector3; `r`+`g`+`b` → Color. `deserialize_resource`: `{"type": "RectangleShape2D", "size": {...}}` → instancia por `ClassDB`.
+D:\Mis Juegos\GodotMCP\heren-mcp\
+├── AGENTS.md                 # Este archivo
+├── README.md / README.en.md  # Usuarios finales
+├── CHANGELOG.md              # Historial de versiones
+├── install_mcp.py            # Instalador 1-comando (compila + registra MCP + verifica)
+├── run.bat                   # Launcher para OpenCode (heren-server.exe)
+├── addons/heren/             # 🆕 FUENTE del plugin v4 (GDScript, copiable a cualquier proyecto)
+│   ├── plugin.cfg
+│   ├── editor_plugin.gd      # EditorPlugin core (WS client + dispatcher + registro)
+│   ├── ws_client.gd          # Cliente WS MCP JSON-RPC (auto-reconnect)
+│   ├── dispatcher.gd         # Rutea tools/call → handlers por prefijo
+│   ├── undo_redo_wrapper.gd
+│   └── handlers/             # scene, node, resource, project, signal, validate,
+│                             # debug, shader, animation(+skeleton), tilemap, visual, coords
+├── src/heren/                # Bridge Python (fallback/referencia, NO activo)
+├── .temp/                    # Archivos temporales (auto-limpieza)
+├── tests/                    # Tests por capa
+└── benchmarks/               # Benchmarks de rendimiento
+```
 
-**Expansión v4:**
-| Tipo | Formato JSON | Notas |
-|------|--------------|-------|
-| `Vector2i/3i` | `{x, y, __type}` | Para tilemaps, celdas, enteros |
-| `Transform2D` | `{origin: {x,y}, x_axis: {x,y}, y_axis: {x,y}}` | Posición + rotación + scale completo |
-| `Transform3D` | `{origin: {x,y,z}, basis: {x: {...}, y: {...}, z: {...}}}` | Basado en basis 3x3 |
-| `Quaternion` | `{x, y, z, w, __type}` | Rotación 3D |
-| `Plane` / `AABB` | `{normal, d}` / `{position, size}` | Para raycasts, bounding boxes |
-| `StringName` | `{name, __type: "StringName"}` | Nombres de nodos/signals |
+---
 
-**Sistema de Grid/Snap (nuevo):**
-- `visual_snap_grid`: consultar/configurar snapping del editor (`EditorInterface.get_node_3d_*_snap()`, `is_node_3d_snap_enabled()`).
-- `coord_to_tile` / `tile_to_coord`: convertir píxeles ↔ celdas de tilemap (`TileMap.local_to_map()` / `map_to_local()`).
-- `coord_relative`: mover nodo relativo a otro: `{parent: "Player", offset: {x, y}}` → calcula posición absoluta.
+## 5. Performance (Real - GodotDaemon, 2026-05-13)
 
-**Dónde vive**: la serialización de coordenadas vive en FlojoMCP como feature genérica (crate `flojo-godot-types` o dentro del contract de `ws-server`) — NO en el plugin. Unity/Blender la reutilizan. El plugin implementa la conversión exacta Godot ↔ JSON.
+| Operación | Primera vez | Cache hit | Speedup vs Scripts |
+|-----------|-------------|-----------|-------------------|
+| `session_start` | ~3.5s | — | — |
+| `load_scene` | ~3.0s | ~20ms | 150x |
+| `get_scene_tree` | ~3.0s | ~20ms | 18x |
+| `add_node` / `set_property` / `save_scene` | — | ~20ms | 18x |
+| `screenshot` | — | ~60ms | — |
+| `batch (11 ops)` | — | ~200ms | 18x |
 
-### 13.6 Sistema de Visibilidad — "Ojos con Control"
+**Promedio:** ~20ms por operación con daemon. **Sin daemon: ELIMINADO (v3.0).** 18x más rápido.
 
-> **Problema que resuelve**: el modelo era ciego. La solución no es darle TODO, es darle **lo que pida, cuando lo pida, al costo que elija**.
+---
 
-**Principios:** (1) Pull, no push — el agente pide ver, nada se inyecta solo. (2) Jerarquía de costo — coords textuales → texto → ASCII → low-res → full-res. (3) Presupuesto de tokens por sesión — el server trackea, el agente consulta. (4) Cache de visión — si la escena no cambió, reusa. (5) Regiones/foco — ver solo un nodo/área. (6) **Output directo al agente, agnóstico** — la imagen viaja como `image_content` MCP estándar (base64), NO como path a archivo. Cualquier cliente MCP la interpreta.
+## 6. Las 15 Tools de Heren MCP v4.2
 
-**La innovación vs competidores:**
-| | Competidores (gopeak, coding-solo) | **Heren v4.1+** |
-|---|---|---|
-| Output | Path a archivo (el agente NO lo ve) | **`image_content` base64 MCP estándar — la imagen llega DIRECTA al contexto del agente** |
-| Viewport | Capturas sintéticas / SubViewport | **Viewports REALES del editor 2D/3D** (`EditorInterface.get_editor_viewport_2d/3d`) — gizmos, selección, lo que el usuario ve |
-| 2D/3D | Solo screenshot plano | **Dual: `viewport=2d\|3d` + overlay de coordenadas** |
-| Tokens | Imagen completa siempre | **Jerarquía: coords → ascii → low → med → full + presupuesto por sesión** |
-| Contexto | Sin metadatos | **Metadatos ricos: `tokens_estimate`, `resolution`, `bbox`, `node_count`, `scene_hash`** |
+| # | Tool | Actions | Dominio | Estado | Notas |
+|---|------|---------|---------|--------|-------|
+| 1 | `session` | open, close, list, info, health | Sesiones | ✅ 100% | close_editor opcional (default false) |
+| 2 | `scene` | get_open_scenes, get_edited_scene_root, open, save, create, unload | Escenas | ✅ 100% | EditorPlugin real |
+| 3 | `node` | add, remove, set_prop, get_prop, get_info, get_children, find, duplicate, rename, move, set_owner, reorder, array_append, array_remove | Nodos | ✅ 100% | coords proactivas en mutaciones |
+| 4 | `resource` | create, read, update, delete, list, create_script, read_script, edit_script | Recursos .tres + .gd | ✅ 100% | EditorFileSystem |
+| 5 | `project` | create, setup_plugin, setting, autoload, remove_autoload, input_map, shader_global | Configuración | ✅ 100% | create sin editor + main.tscn automática |
+| 6 | `shader` | create, edit, validate, material, uniform | Shaders | ✅ 100% | .gdshader + ShaderMaterial |
+| 7 | `animation` | create_player, create, add_track, add_key, state_machine | Animaciones | ✅ 100% | AnimationLibrary |
+| 8 | `skeleton` | skeleton_create, skeleton_add_bone, skeleton_set_rest, skeleton_skin, skeleton_attachment | Esqueletos 2D/3D | ✅ 100% | fusionado en animation_handlers |
+| 9 | `tilemap` | inspect_set, inspect_map, set_cell, terrain, pattern | TileMaps | ✅ 100% | requiere TileSet |
+| 10 | `debug` | run_scene, stop_scene, is_playing, get_editor_errors | Depuración | ✅ 100% | editor real, no subprocess |
+| 11 | `validate` | scene, script, node, resource | Validación | ✅ 100% | contra escena viva |
+| 12 | `signal` | connect, disconnect, list, set_script | Señales | ✅ 100% | CONNECT_PERSIST |
+| 13 | `orchestrate` | (múltiples ops en una llamada) | Batch | ✅ 100% | plan_file evita dicts anidados |
+| 14 | `visual` | coords, summary, ascii, capture, node, budget, cache | Visión §7 | ✅ 100% | 1 tool, 7 acciones (consolidada) |
+| 15 | `health` | server + editor status | Health | ✅ 100% | connected_projects |
 
-**Jerarquía de costo (la clave — 4 niveles):**
+**Filosofía:** 15 tools cubren TODO Godot. NO dispersar. Una tool con múltiples modos vía `action`. Las tools de visión se consolidaron en UNA (`visual`).
 
+---
+
+## 7. Sistema de Coordenadas (ADR-005) + Visión
+
+### Coordenadas unificadas (heredado + expansión)
+Auto-detección por keys (v3 éxito): `x`+`y`→Vector2; `x`+`y`+`z`→Vector3; `r`+`g`+`b`→Color; `origin`+`x_axis`+`y_axis`→Transform2D; `origin`+`basis`→Transform3D; `normal`+`d`→Plane; `position`+`size`→Rect2/AABB. Expansión v4: Vector2i/3i, Quaternion, StringName. `deserialize_resource`: `{"type": "RectangleShape2D", "size": {...}}` → instancia por ClassDB.
+
+### Sistema de Visión — "Ojos con Control" (§13.6)
+**Pull, no push.** Jerarquía de costo (la clave):
 ```
 NIVEL 0: Coords textuales (siempre, proactivo en mutaciones)   ~20-100 tok
-   ├─ Consulta: scene_coords(tree, root) → {nodo: {pos, bbox, parent, type}}
-   └─ Mutaciones: node/add, remove, set_prop, scene/create, etc.
-      → devuelven coords del nodo afectado en el resultado (pos + bbox + parent)
-NIVEL 1: visual_summary + visual_ascii (sin imagen)             ~50-150 tok
-NIVEL 2: visual_capture low-res (viewports reales 2D/3D)         ~200-400 tok
-NIVEL 3: visual_capture full + visual_node (framing)             ~800+ tok
+NIVEL 1: visual_summary + visual_ascii (sin imagen)            ~50-150 tok
+NIVEL 2: visual_capture low-res (viewports reales 2D/3D)        ~200-400 tok
+NIVEL 3: visual_capture full + visual_node (framing)            ~800+ tok
 ```
+**Regla de oro:** consultar NIVEL 0 primero. Las coords textuales bastan para la mayoría de operaciones. La imagen (NIVEL 2-3) es el zoom cuando el texto no basta.
 
-**Regla de oro:** el agente consulta NIVEL 0 primero. Las coords textuales son
-suficientes para la mayoría de operaciones (saber DÓNDE está algo, moverlo,
-comprobar que existe). La imagen (NIVEL 2-3) es el zoom cuando el texto no
-basta: layout visual, shaders, colisiones, calidad estética.
+**Coords proactivas en mutaciones:** cada tool que crea/elimina/edita nodos devuelve las coordenadas del nodo afectado (`position`, `global_position`, `bbox` si aplica, `parent_path`).
 
-**Coords proactivas en mutaciones (decisión 2026-08-03):** cada tool que
-crea/elimina/edita nodos devuelve en el resultado las coordenadas del nodo
-afectado (`position`, `global_position`, `bbox` si aplica, `parent_path`).
-El agente sabe DÓNDE quedó el nodo sin una llamada extra.
-
-**Tool de visión (centralizada, 1 tool con acciones — filosofía §1):**
-| action | Costo est. | Qué devuelve |
-|--------|-----------|--------------|
-| `coords` | ~20-100 tok | Mapa de coordenadas de la escena (textual): `{nodo: {pos, bbox, parent, type}}` (NIVEL 0) |
-| `summary` | ~50 tok | Contador por tipo de nodo, bbox total, dirty flags (NIVEL 1) |
-| `ascii` | ~150 tok | Árbol ASCII colapsado/expandido, sin imagen (NIVEL 1) |
-| `capture` | alto | **`Image` base64 MCP** — captura viewport 2D/3D real del editor + metadatos (NIVEL 2/3) |
-| `node` | alto | `Image` enfocada en un nodo (framing) (NIVEL 3) |
-| `budget` | ~30 tok | Consultar/establecer presupuesto de tokens de la sesión |
+**Tool `visual` (centralizada, 1 tool con acciones):**
+| action | Costo | Qué devuelve |
+|--------|-------|--------------|
+| `coords` | ~20-100 tok | Mapa de coordenadas de la escena (textual) |
+| `summary` | ~50 tok | Contador por tipo, bbox total, dirty flags |
+| `ascii` | ~150 tok | Árbol ASCII colapsado/expandido |
+| `capture` | alto | **`Image` base64 MCP** — viewport 2D/3D real + metadatos |
+| `node` | alto | `Image` enfocada en un nodo (framing) |
+| `budget` | ~30 tok | Consultar/establecer presupuesto de tokens |
 | `cache` | ~30 tok | Ver/limpiar cache de visión |
 
-> **Consolidación (2026-08-04)**: las 7 tools sueltas (`scene_coords`, `visual_scene_summary`,
-> `visual_ascii_scene`, `visual_capture`, `visual_node`, `vision_budget`, `vision_cache`)
-> se fusionaron en **UNA tool `visual`** con esas 7 acciones — paridad con la filosofía de
-> tools centralizadas/modulares/potentes. `visual_preview_resource` (preview de recursos)
-> se sirve igualmente vía `visual/preview_resource` en el plugin.
+**Formato captura:** `{"image": <base64 PNG — image_content MCP, NO path>, "metadata": {tokens_estimate, resolution, viewport, scene_hash, cached, node_count, selected}}`.
 
-**Formato del resultado de captura (output directo al agente):**
-```json
-{
-  "image": <base64 PNG — enviado como image_content MCP, NO como path>,
-  "metadata": {
-    "tokens_estimate": 800,
-    "resolution": {"w": 1280, "h": 720},
-    "viewport": "3d",
-    "scene_hash": "abc123",
-    "cached": false,
-    "node_count": 39,
-    "selected": ["Player"]
-  }
-}
-```
+**Implementación:** `visual_handlers.gd`: `get_editor_viewport_2d/3d()` → `.get_texture().get_image()` → `save_png_to_buffer()` → `Marshalls.raw_to_base64()`. `ws_client.gd` pasa `__image_base64` + `__image_format`. Eventos push (`selection_changed` via `_edit()`, rate-limit 1/s).
 
-**Implementación técnica (plugin → bridge):**
-1. `visual_handlers.gd`: `EditorInterface.get_editor_viewport_2d()/get_editor_viewport_3d()` → `.get_texture().get_image()` → `Image.save_png_to_buffer()` → `Marshalls.raw_to_base64()`
-2. `ws_client.gd`: pasa el resultado con `"__image_base64"` + `"__image_format"` (el bridge lo detecta)
-3. `bridge.py`: si el resultado trae `__image_base64`, lo decodifica y devuelve `fastmcp.utilities.types.Image(data=..., format="png")` → FastMCP lo empaqueta como `image_content` MCP estándar → el agente ve la imagen directo
+---
 
-**Eventos visuales (push controlado):** `selection_changed` → notifica al agente (opcional, con rate-limit): "el usuario seleccionó Player/Sprite". NO se envía imagen, solo el path del nodo (barato).
+## 8. Sesiones (arquitectura corregida 2026-08-03)
 
-### 13.7 TileMaps, AnimationPlayers y Recursos Complejos
-
-**TileMap/TileSet (expansión):**
-| Capacidad | Detalle |
-|-----------|---------|
-| **Inspección completa** | `inspect_set` / `inspect_map`: atlas sources, terrains, patterns, layers |
-| **Coordenadas tiles vs píxeles** | `local_to_map` / `map_to_local` / `coord_to_tile` / `tile_to_coord` |
-| **Pintado por región** | `set_cells` en región rect (batch), con preview opcional |
-| **Terrain autoconnect** | `set_cell` + `apply_terrain` con reglas de peering |
-| **Patrones reutilizables** | Crear `TileMapPattern` desde selección de celdas |
-| **Custom data layers** | `set_custom_data` en celdas |
-| **Y-sort / physics layers** | Configuración de capas físicas y ordenamiento |
-
-**Patrón de uso (workflow):** `coord_to_tile` para saber dónde pintar → `visual_preview_resource` para ver el tileset → `set_cells` en lote → `visual_inspect_scene` para verificar.
-
-**AnimationPlayer / AnimationTree / State Machines:**
-| Capacidad | Detalle |
-|-----------|---------|
-| **Libraries** | Crear/listar `AnimationLibrary` por player |
-| **Tracks** | value / position / rotation / scale / method / audio / animation |
-| **Keys con easing** | Insertar keys con `Tween` curves (Linear, Cubic, Elastic...) |
-| **Blend spaces** | Crear `AnimationNodeBlendSpace2D/3D` |
-| **State machines** | `AnimationNodeStateMachine` con nodos, transitions, auto-advance |
-| **Edición visual** | `visual_inspect_node` sobre el `AnimationTree` para ver resultado |
-| **One-shot batch** | Crear animación completa en una llamada: tracks + keys + loop |
-
-**Recursos complejos (ShaderMaterial, SpriteFrames, Gradient...):**
-| Tipo | Estrategia |
-|------|-----------|
-| **ShaderMaterial** | Crear `.gdshader` + material con uniforms tipados |
-| **SpriteFrames** | Añadir frames desde texturas, set anims |
-| **Gradient/GradientTexture2D** | `{points: [{offset, color}], fill: "linear"}` |
-| **Curves** | `Curve` con `{points: [{pos, left_tangent, right_tangent}]}` |
-| **PhysicsMaterial** | friction, bounce, roughness |
-| **Environment (3D)** | ambient, fog, tonemap |
-| **NavigationMesh** | geometría, agent radius |
-
-**Regla**: cualquier recurso complejo debe tener (1) inspección → (2) edición → (3) preview → (4) persistencia verificada.
-
-### 13.8 Sesiones (arquitectura corregida 2026-08-03)
-
-> **Propósito central**: mantener el proceso Godot (editor) vivo y reutilizarlo,
-> evitando el coste de arranque (3-5s) en cada operación. Igual que v3
-> cacheaba el daemon, v4 cachea la conexión con el editor real — pero el
-> editor es un proceso del usuario (con ventana), no un daemon del server.
-
-**Sesión = editor vivo conectado (runtime, en RAM del server).** No es
-session.json, no es un daemon, no es un proceso que el server gestiona.
+**Sesión = editor vivo conectado (runtime, en RAM del server).** No es session.json, no es un daemon.
 
 ```
 ConnectedEditors: { project_path → conexión WS }
-├── project_path              # identifica el proyecto (lo reporta el plugin)
-├── conexión WS               # canal de operaciones
-└── estado: connected/alive   # heartbeat + auto-reconnect
-
 Ciclo:
 1. El editor arranca con el plugin → conecta al server → envía godot_ready
 2. El server registra: ConnectedEditors[project_path] = conexión
 3. Operación sobre proyecto X → usa el editor vivo de X (~20ms, sin arranque)
-4. Sin editor vivo para X → lanzar Godot con X una vez (3-5s) o avisar al usuario
+4. Sin editor vivo para X → lanzar Godot con X una vez (3-5s) o avisar
 5. El editor se cierra → conexión cae → el server des-registra
 ```
 
-**Propósitos reales y de comodidad (además del central):**
+**Propósitos:** Descubrimiento (`ConnectedEditors` expone qué hay abierto), Enrutamiento multi-proyecto (operación lleva `project_path`), Auto-lanzamiento (`last_project` en disco), Re-sincronización (`godot_ready` re-envía estado al reconectar), Presupuesto de visión (State en RAM del Context).
 
-| Propósito | Mecanismo | Comodidad |
-|-----------|-----------|-----------|
-| **Descubrimiento** | `ConnectedEditors` expone qué proyectos tienen editor vivo | El agente consulta "¿qué hay abierto?" sin adivinar ni lanzar nada |
-| **Enrutamiento multi-proyecto** | Operación lleva `project_path` → server enruta al editor correcto | Trabajar en N proyectos abiertos sin esperas de arranque |
-| **Auto-lanzamiento** | `last_project` en disco → si nadie está vivo, lanzar el editor de ese proyecto | Reanudar trabajo con un solo comando |
-| **Re-sincronización** | `godot_ready` re-envía project_path + escena actual al reconectar | Tras caída/reconexión el server sabe el estado sin re-consultar |
-| **Presupuesto de visión** | `State` en RAM del Context (NO disco) | El presupuesto de tokens de visión sobrevive entre llamadas de la misma sesión |
+**Lo que NO es sesión:** presupuesto de visión/preferencias → State efímero en RAM (muere con la sesión). `open_scenes`/`selected_nodes` → se consultan al editor vivo bajo demanda. NO se persisten.
 
-**Lo que NO es sesión** (límite explícito):
-- Presupuesto de visión y preferencias → `State` efímero en RAM del Context, muere con la sesión de trabajo. NO va a disco.
-- `open_scenes` / `selected_nodes` / `last_edited_scene` → se consultan al editor vivo bajo demanda (`get_open_scenes`, `get_edited_scene_root`). NO se persisten.
+**session.json en disco (mínimo):** `.heren/session.json` → solo `last_project` (1 clave, para auto-lanzamiento).
 
-**session.json en disco (mínimo, no central):**
+---
 
-```
-.heren/session.json
-└── last_project: "D:/proyectos/laika"   # solo para auto-lanzamiento
-```
+## 9. 🎬 PLAN DE MEJORA — ANIMATION TOOLS (2026-08-04)
 
-Solo `last_project`. El resto del esquema anterior (vision/preferences/
-workspace_state) se elimina — era especulación sin uso real. `flojo-session`
-(path-based) ya está listo en Fase 0; el `SessionManager` sirve aquí para
-guardar/leer `last_project` (1 clave), no para cachear estado de trabajo.
+> **Objetivo:** llevar `animation`/`skeleton` de "básico funcional" a "potente e innovador".
+> Auditoría completa vs competencia (Better Godot MCP, satelliteoflove/godot-mcp, tugcantopaloglu/godot-mcp 149 tools, Unity MCP, unreal-animation-mcp 62 tools, Blender MCP).
+> Handler actual: `addons/heren/handlers/animation_handlers.gd` (479 líneas). Tool Rust: `server.rs`.
 
-### 13.9 Plan por Fases
+### 9.1 Problemas MUY mejorables (auditoría)
 
-**Fase 0 — Fundaciones FlojoMCP (1-2 sem).** Objetivo: FlojoMCP tiene las features genéricas.
-- [x] `ws-server` feature (WebSocket server local + handshake + reconnect) — commit `94b3d4c` (flojo-mcp)
-- [x] `image_content` / `image_resource` (base64) — `image_content`/`text_content`/`content_result` en `tool.rs`
-- [x] Helpers de truncación/paginación — `pagination.rs`: `truncate_json`, `PageableResult`/`PageInfo`, `summarize_tree`
-- [x] Session path-based multi-proyecto — `session_manager.rs`: `SessionManager` + `.heren/session.json`
-- [x] Hooks/middleware + `tokens_estimate` — `hooks.rs`: `ToolHooks` pre/post + `estimate_tokens`
-- [x] Tests + benchmarks + CI — 46 unit + 2 E2E ws + 3 session, fmt/clippy limpios, CI existente cubre all-features
-- **Criterio**: ✅ ejemplo `echo_ws` + `image_content` funcionales, tests verdes (validado con cliente WebSocket real)
-- **Nota**: rmcp v1.7.0 NO trae WS (`ws.rs` es placeholder) → construido sobre `SinkStreamTransport` (acepta `(Sink, Stream)` de `JsonRpcMessage`). Frames JSON-RPC inválidos cierran la conexión.
+| # | Problema | Impacto |
+|---|----------|---------|
+| 1 | **No hay playback control** (play/stop/seek/speed) | El agente crea a ciegas, sin verificar. Todos los competidores lo tienen. |
+| 2 | **No hay inspección/lectura** (get_animations, get_tracks, get_keyframes, get_state_machine) | No puede ver qué hay antes de editar. |
+| 3 | **`add_track` de bajo nivel** — requiere track_type manual + node_path + property; NO soporta `TYPE_BEZIER` ni `TYPE_AUDIO` | Torpe; el agente debe saber el tipo exacto. |
+| 4 | **`add_key` de bajo nivel** — requiere `track_idx` (int); `transition` es solo float, sin easing curves | Debe poder referenciar por (node_path+property) o nombre de track. |
+| 5 | **`state_machine` limitadísimo** — solo AnimationNodeStateMachine; NO hay BlendSpace2D/3D, BlendTree, OneShot, TimeScale, Transition; NO hay parámetros del AnimationTree ni travel | No puede construir grafos complejos. |
+| 6 | **No hay Tween** (runtime) | Godot Tween es la forma más común de animar en runtime. |
+| 7 | **Skeleton incompleto** — no hay get_bones, get_pose, set_pose, SkeletonIK3D | No puede animar huesos proceduralmente. |
+| 8 | **No hay edición** (remove_track, remove_key, update_key, update_props) | Solo add. |
+| 9 | **Bug: `create` con `loop=true` borra tracks** | Re-crea la animación vacía. Falta setter de loop_mode post-hoc. |
+| 10 | **No hay batch "one-shot"** | Crear animación completa requiere N llamadas. |
 
-**Fase 1 — Plugin Núcleo (2-3 sem).** Objetivo: editor_plugin.gd + WS client + dispatcher + scene básicas con undo/redo.
-- [x] `addons/heren/editor_plugin.gd` (`extends EditorPlugin`) — instalado en `laika-gd/addons/heren/`
-- [x] `ws_client.gd` (conecta a server MCP, auto-reconnect, backoff) — habla MCP JSON-RPC, recibe `tools/call`, responde resultados
-- [x] `dispatcher.gd` (tool_invoke → handler) — rutea por prefijo (`scene/*` → scene_handlers)
-- [x] `undo_redo_wrapper.gd` (agrupa ops en `EditorUndoRedoManager.create_action`) — wrapper con `add_do_method(Object, StringName, args)` (Godot 4.6 no acepta Callable directo)
-- [x] Handlers: health, project_info, get_edited_scene_root, get_open_scenes, create/save/open scene — `handlers/scene_handlers.gd`
-- [x] Validación E2E real (2026-08-03): `tools/call scene/health` → healthy; `scene/open play_area.tscn` → opened; `scene/create Node2D TestNode` → creado como hijo de PlayArea; `scene/get_edited_scene_root` → has_scene:true. Herramienta: `tools/ws_test_server.py` (server WS Python de prueba)
-- **Criterio**: ✅ desde OpenCode → crear escena en editor abierto → Ctrl+Z lo deshace (validado: nodo creado vía EditorUndoRedoManager, deshacible)
-- **Hallazgo**: NO definir `func get_editor()` en EditorPlugin (colisiona); usar `get_editor_interface()` directo en handlers.
-- **Nota**: el plugin se valida contra un server WS Python de prueba (`tools/ws_test_server.py`). El server Rust definitivo (HerenServer.exe con FlojoMCP) llega en Fase 4; el plugin ya habla el protocolo MCP JSON-RPC estándar que ese server usará.
+### 9.2 Ideas INNOVADORAS (utilidad real, nadie lo hace)
 
-**Fase 2 — Migrar Módulos (3-4 sem).** Objetivo: escena, nodo, recurso, shader, animación, skeleton, tilemap, proyecto, debug, validación.
-- [ ] `scene_handlers.gd` (EditorInterface scene ops reales)
-  - [x] `handle_create` desde 0 validado E2E: sin escena abierta crea `.tscn` nuevo (PackedScene + pack + ResourceSaver + open); con escena abierta añade nodo v3. Requiere `scene_path` explícito si no hay escena abierta. (2026-08-03, escena épica de 39 nodos)
-- [x] `coords.gd` (serialización unificada ADR-005: heredada + Vector2i/3i, Transform2D/3D, Quaternion, StringName, Plane/AABB) — `handlers/coords.gd`
-- [x] `node_handlers.gd` (CRUD nodos + coordenadas expandidas) — validado E2E real 14/14 ops (add, remove, set_prop(s), get_prop, get_info, get_children, find, duplicate, rename, move, set_owner, reorder, array_append/remove)
-- [x] `resource_handlers.gd` (EditorFileSystem, imports) — validado E2E real 10/10 ops (create, read, update, delete, list, create_script, read_script, edit_script)
-- [x] `animation_handlers.gd` — animaciones (player + AnimationLibrary + tracks + keys) y esqueletos 2D/3D (bones, rest, skin, attachment) en un solo archivo (como v3 daemon animation_ops). Validado E2E real 12/12 ops.
-- [x] `shader_handlers.gd` — shaders .gdshader (create/edit/validate) + ShaderMaterial (material/uniform). Validado E2E real 4/4 ops.
-- [x] `project_handlers.gd` — ProjectSettings (setting get/set), autoloads, input_map, shader_global. Validado E2E real.
-- [x] `signal_handlers.gd` — connect/disconnect/list/set_script con CONNECT_PERSIST. Validado E2E real.
-- [x] `validate_handlers.gd` — scene/script/node/resource contra escena viva. Validado E2E real.
-- [x] `debug_handlers.gd` — play_main_scene/play_custom_scene/stop/is_playing (editor real, no subprocess). Validado E2E real.
-- [x] `tilemap_handlers.gd` — inspect_set/inspect_map/set_cell/terrain/pattern. Sintaxis OK; requiere TileSet real para E2E completo.
-- [ ] `skeleton_handlers.gd` — ✅ fusionado en animation_handlers.gd (mismo prefijo `skeleton` registrado al handler de animación)
-- [ ] `visual_handlers.gd` (Fase 3)
-- **Criterio**: cada módulo con tests GUT en editor.
+| # | Idea | Por qué es innovador |
+|---|------|---------------------|
+| **A** | **`animation/record` — grabación en vivo** | "Graba mientras muevo el nodo en el editor" → el plugin captura el estado cada frame y genera la animación. Como el modo record de Unity, en el editor de Godot. **Nadie lo hace en Godot MCP.** |
+| **B** | **`animation/from_path` — bake desde Path2D/Curve2D** | El agente da un `Path2D` y el plugin genera la animación de posición siguiendo el path. Ideal para enemigos, plataformas, cámaras. **Nadie lo hace.** |
+| **C** | **`animation/loop_pose` — animación de bucle procedural** | "idle bob de 10px a 2Hz" → el plugin genera los keyframes de bucle (breathing, walk simple, idle). Prototipado instantáneo. |
+| **D** | **`animation/preview` — captura visual de un frame** | `seek(t)` + `visual/capture` → el agente **ve** el pose en un instante. Combina con el sistema de visión §7. **Nadie lo hace.** |
+| **E** | **`animation/one_shot` — batch completo** | `{anim_name, length, loop, tracks:[{node, property, keys:[{time, value, easing}]}]}` → todo en UNA llamada. Lo que el agente realmente quiere. |
+| **F** | **`state_machine` con blend spaces + parámetros** | Grafo completo: BlendSpace2D (walk/run por velocidad), parámetros, travel. |
+| **G** | **`animation/curve` — easing curves** | Interpolación por easing (linear/cubic/elastic/bounce) en vez de transition float. |
+| **H** | **`skeleton/pose` + `skeleton/ik`** | Leer/escribir pose de todos los huesos + configurar SkeletonIK3D con target. |
 
-**Fase 3 — Sistema de Visión (COMPLETADA 2026-08-03).** Objetivo: §13.6 completo.
-> **Decisión del General (2026-08-03)**: innovar sobre los competidores — output directo al agente (image_content MCP), viewports REALES 2D/3D del editor, coords textuales como NIVEL 0 (suficientes la mayoría de veces), y coords proactivas en cada mutación.
-- [x] `visual_handlers.gd` — captura viewports 2D/3D reales (`get_editor_viewport_2d/3d` → PNG base64) + coords map + summary + ascii + preview_resource (Mesh/Texture2D)
-- [x] `ws_client.gd` — soporte payload binario (`__image_base64` + `__image_format`) + `send_notification()`
-- [x] `bridge.py` — `visual_capture` devuelve `fastmcp.utilities.types.Image` → `image_content` MCP (imagen DIRECTA al agente) + tools visuales
-- [x] `node_handlers.gd` — coords proactivas en mutaciones (add/remove/set_prop devuelven pos + bbox + parent del nodo afectado)
-- [x] Sistema de visión + presupuesto + cache (LRU 50)
-- [x] Previews de recursos (`visual/preview_resource`: make_mesh_previews + Texture2D.get_image)
-- [x] Eventos push (`selection_changed` via `_edit()` con rate-limit 1/s)
-- **Criterio**: ✅ `visual/*` funcionales (validado E2E: coords, summary, ascii, capture PNG, coords en add/remove), presupuesto respetado, cache funciona.
-- **Consolidación (2026-08-04)**: en Rust (Fase 4) las 7 tools de visión se fusionaron en **UNA tool `visual`** (actions: coords|summary|ascii|capture|node|budget|cache) — ver §13.6.
+### 9.3 Plan por fases
 
-**Fase 4 — Tools FlojoMCP + Sesiones (COMPLETADA 2026-08-04).** Objetivo: portar las tools → Rust, WS plugin server, auto-launch.
-- [x] Crate `heren-server` en workspace FlojoMCP (`crates/heren-server`) — dogfooding
-- [x] **15 tools** con macros `#[tool]` + schemas compile-time (8 renombradas sin `_tool`, 7 de visión consolidadas en `visual`; verificado por `tests/tools_parity.rs`)
-- [x] WS plugin server (`ws_plugin_server.rs`) — el EditorPlugin Godot conecta (patrón gopeak), registra por `project_path`, correlaciona respuestas por id (tolera `"1.0"`/`"1"`)
-- [x] Auto-launch del editor (`launcher.rs`) — port de `godot_launcher.py`: find_godot_executable, ensure_plugin_installed, enable_plugin_in_project, is_editor_running (WMI), launch_editor, close_editor, last_project
-- [x] `orchestrate` con `plan_file` (arregla el batch de dicts anidados: el plan puede venir por archivo)
-- [x] `project/create` sin editor (escribe project.godot) + `project/setup_plugin` (instala plugin sin editor)
-- [x] `run.bat` apunta a `heren-server.exe` (Rust) — el MCP activo
-- [x] Tests: `tests/ws_plugin.rs` (WS E2E) + `tests/tools_parity.rs` (15 tools) + unit
-- **Criterio**: ✅ 15 tools con paridad, WS E2E, auto-launch, schemas compile-time, release 8.5MB
-- **Nota**: el bridge Python (`src/heren/v4/bridge.py`) queda como fallback/referencia — NO es el MCP activo.
+**Fase 1 — Playback + Inspección (crítico, base):**
+- `animation/play`, `stop`, `seek`, `speed`
+- `animation/get_animations`, `get_tracks`, `get_keyframes`, `get_state_machine`
 
-**Fase 5 — Hardening + Release (2 sem).**
-- [ ] CI: `cargo test`, `flojo check`, GUT, benchmarks
-- [ ] Packaging: addon `.zip` + `HerenServer.exe`
-- [ ] Docs (README, TROUBLESHOOTING)
-- [ ] Comparativa vs gopeak/coding-solo en `benchmark_vs_competitors.py`
-- **Criterio**: Release v4.0.0, benchmark documentado.
+**Fase 2 — Edición + One-shot:**
+- `remove_track`, `remove_key`, `update_key`, `update_props`
+- `animation/one_shot` (batch completo)
+- Fix bug loop=true
 
-**Total: ~14-16 semanas.**
+**Fase 3 — Avanzado (innovación):**
+- `state_machine` con blend spaces + parámetros
+- `animation/tween`
+- `skeleton/pose`, `skeleton/ik`
 
-### 13.10 Comparación Competencia (referencia)
+**Fase 4 — Innovación pura:**
+- `record`, `from_path`, `loop_pose`, `preview`, `curve`
 
-| | gopeak | coding-solo | Heren v3 | Heren v4 |
-|---|--------|-------------|----------|----------|
-| Transporte | WS (plugin=cliente) | STDIO + subprocess | WS (daemon=server) | **WS (plugin=cliente)** |
-| Editor real | ✅ | ❌ | ❌ | ✅ |
-| Undo/Redo | ❌ | ❌ | ❌ | ✅ |
-| Sesiones | ❌ | ❌ | ✅ (Python) | ✅ (flojo-session) |
-| Visibilidad | ❌ | ❌ | SubViewport | **Viewports reales + presupuesto** |
-| Coordenadas | manual por tool | manual | unificado (éxito) | **unificado + expansión** |
-| Validación | ❌ | ❌ | ❌ | ✅ JSON schema automático |
-| Tests | ❌ | ❌ | pytest frágil | **FlojoTester** |
+### 9.4 Coordenadas enriquecidas (conocimiento espacial)
 
-### 13.11 Riesgos y Mitigaciones
+El `_node_coords` actual solo da `pos` + `bbox` (y solo para Sprite2D y CollisionShape2D). Enriquecer:
 
-| Riesgo | Prob. | Impacto | Mitigación |
-|--------|-------|---------|------------|
-| FlojoMCP v0.1.0 inmaduro | Media | Alto | PulseWire ya lo usa; piloto en Fase 1 |
-| Migración de 80 handlers es larga | Alta | Medio | Por fases, cada una con criterio |
-| Coordenadas nuevas rompen compat | Baja | Alto | Backward-compatible + tests de regresión |
-| Eventos push saturan tokens | Media | Medio | Rate-limit + presupuesto + pull-first |
-| Plugin depende de editor abierto | Alta | Bajo | Documentar; modo headless para CI futuro |
+| Campo | Qué aporta | Tipos |
+|-------|-----------|-------|
+| `size` | Tamaño real (px/units) | Sprite2D, Label, Polygon2D, Line2D, AnimatedSprite2D, TextureRect, Control, MeshInstance3D (AABB) |
+| `height` | Altura (3D: AABB.y; 2D: h) | Node3D, Sprite2D, Control |
+| `scale` | Escala actual | CanvasItem, Node3D |
+| `rotation` | Rotación en **grados** (más legible) + rad | CanvasItem, Node3D |
+| `z_index` | Orden de dibujo 2D | CanvasItem |
+| `visible` | Visibilidad | Node |
+| `aabb` | Bounding box 3D completo | Node3D con mesh |
 
-### 13.12 Bridge Temporal Python (2026-08-03) — MCP v4 usable HOY
+Esto da al agente **conocimiento espacial completo** sin llamadas extra. Beneficia a TODAS las tools, no solo animación.
 
-> **Mientras HerenServer.exe (Rust/Fase 4) no existe**, el MCP vuelve a ser usable
-> con un **bridge Python** (`src/heren/v4/`). OpenCode ya habla con el plugin v4.
+---
 
-```
-OpenCode (stdio MCP) <-> bridge.py (FastMCP) <-> ws_server.py (WS) <-> EditorPlugin v4
-```
+## 10. Decisiones Registry (v4 relevantes)
 
-**Componentes** (todos en `src/heren/v4/`):
-- `bridge.py` — FastMCP con las 14 tools v3 (mismas firmas, sin session_id: el editor conectado ES la sesión). `python -m heren.v4.bridge`.
-- `ws_server.py` — server WS local; registra `ConnectedEditors[project_path]`; correlaciona `tools/call` por id JSON-RPC. **Gotcha: el plugin devuelve el id como `"1.0"` (float→string); el match de ids tolera `"1"`, `1`, `"1.0"` → `_pop_pending()`**.
-- `godot_launcher.py` — auto-launch del editor: `GODOT_EXE` env → lista fija 4.7.1/4.6.1 → PATH; `ensure_plugin_installed()` copia `addons/heren/`; `enable_plugin_in_project()`; `read/write_last_project` (.heren/session.json, 1 clave ADR-004).
-- `tools/install_plugin.py` — CLI setup: `--project X [--source] [--remove]`. Copia addon + habilita `[editor_plugins]` en project.godot sin BOM.
-- `run.bat` — ahora lanza `python -m heren.v4.bridge` (fallback a v3 legacy si falla).
-- `setup_plugin.bat` — setup rápido: instala el plugin en un proyecto (default LAIKA).
+| Fecha | Decisión | Razón |
+|-------|----------|-------|
+| 2026-08-03 | **EditorPlugin sobre GodotDaemon (ADR-002)** | El daemon corre `Engine.is_editor_hint()=false` → nunca toca el editor real. EditorPlugin gana: undo/redo, viewports reales, EditorFileSystem, play con breakpoints. |
+| 2026-08-03 | **WS con plugin=cliente (ADR-003, patrón gopeak)** | El MCP server abre WS; el plugin se conecta con auto-reconnect. El editor NO depende del server. Permite push de eventos. |
+| 2026-08-03 | **Sesión = editor vivo (ADR-004)** | `ConnectedEditors` en RAM + `last_project` en disco. Se descartó vision/preferences/workspace_state (era especulación). |
+| 2026-08-03 | **Coordenadas unificadas heredadas (ADR-005)** | `serialize_value`/`deserialize_value` con auto-detección por keys. Gran éxito. Expansión backward-compatible. |
+| 2026-08-03 | **FlojoMCP sobre FastMCP (ADR-001)** | FastMCP genera schemas por introspection runtime → decoradores rompen firma → schemas vacíos. FlojoMCP schemas en compile-time. |
+| 2026-08-04 | **NDJSON, NO Content-Length** | OpenCode 1.18 envía NDJSON puro (verificado con stdin-spy). `flojo_run_stdio_cl` era la causa del timeout. |
+| 2026-08-04 | **Schemas booleanos `true` → "Failed to get tools"** | `schemars` genera `true` para `serde_json::Value`. Fix: `normalize_json_schema()` reemplaza booleanos por `{}`. |
+| 2026-08-04 | **Single-instance** | `run()` mata otros heren-server.exe (nunca el actual) antes de bindear. |
+| 2026-08-04 | **`[editor_plugins]` formato Godot 4** | `enabled=PackedStringArray(...)`. El formato viejo `enabled_plugins=[...]` NO carga el plugin. |
+| 2026-08-04 | **Instalación completa** | `source_files_match()` verifica TODOS los archivos, no solo plugin.cfg. |
+| 2026-08-04 | **`project/create` sin editor** | Escribe project.godot directo en disco. Evita la circular dependency (no se podía crear el primer proyecto sin editor). |
+| 2026-08-04 | **Skeleton2D API falsa** | Skeleton2D NO tiene find_bone/set_bone_rest (Skeleton3D). Huesos = Bone2D hijos con `.rest=Transform2D`. `BoneAttachment2D` NO existe. |
+| 2026-08-04 | **`args()` omite keys None** | Antes insertaba `Value::Null` → `str(null)`="<null>" rompía guards. |
+| 2026-08-04 | **`launch_editor` mata zombie** | Recibe `editor_connected`; si hay proceso sin conectar lo mata y relanza limpio. Siempre sincroniza plugin antes. |
 
-**Flujo validado E2E real** (2026-08-03, Godot 4.6.1 + plugin v4):
-`session/open` (auto-launch Godot con plugin) → `godot_ready` → `scene/get_open_scenes` → `scene/open` → `node/add Player` (undoable) → `project/setting` (persiste) → `validate/scene` → `debug/is_playing`. ✅
+---
 
-**Gotchas de validación:**
-1. El harness `ws_test_server.py` funciona en PRIMER PLANO; como Start-Job de PowerShell pierde timing/output (tests falsos negativos).
-2. `install_plugin.py` elimina `.uid` sidecars (Godot los regenera) — correcto.
-3. Si el editor del usuario (p.ej. project_rat) tiene el plugin v4, roba la conexión al puerto del bridge real. El bridge enruta por `project_path`.
+## 11. Bugs Arreglados (v4, resumen)
 
-### 13.12 Checklist v4 (para agentes)
+| Bug | Fix | Fecha |
+|-----|-----|-------|
+| **Persistencia de sub-resources** | `resource_local_to_scene = true` + `_setup_resource_local_to_scene_recursive()` | 2026-05-14 |
+| **Persistencia de señales** | `_collect_connections()` + `_inject_into_tscn()` | 2026-05-14 |
+| **Sub-resource ID corrupción en save** | Eliminar sub-resource injection — `pack()`+`FLAG_BUNDLE_RESOURCES` ya los maneja. Solo connections se inyectan. | 2026-07-17 |
+| **Pipeline de guardado refactorizado (v3.0)** | `_pre_save_resource_fix → pack() → save(FLAG_BUNDLE_RESOURCES) → verify`. `handle_connect_signal` usa `CONNECT_PERSIST`. | 2026-07-17 |
+| **Parse error: palabras reservadas** | `signal`→`sig`, `match`→`is_match` | 2026-07-28 |
+| **Parse error: función anidada** | Búsqueda iterativa con pila | 2026-07-28 |
+| **Fix: undo_redo_wrapper add_do_method con callv** | `urm.callv(&"add_do_method", [obj, method] + args)` expande el Array. Sin esto, node/add devolvía `node_path: ""`. | 2026-08-03 |
+| **Fix: project.godot corrupto en proyecto E2E** | `[System.IO.File]::WriteAllText(path, content, UTF8Encoding($false))` para .gd/.tscn/.godot (sin BOM). | 2026-08-03 |
+| **Fix: id JSON-RPC float→string** | `_pop_pending()` tolera `1`, `"1"`, `"1.0"` (normalización float). | 2026-08-03 |
+| **Ciclo de vida sesión: SOLO session/open-close** | `_require_editor` NUNCA lanza el editor. El lanzamiento es SOLO `session/open`. | 2026-08-03 |
+| **Normalización de paths (clave canónica)** | `normalize_project_path()` = resolve + forward slashes + sin trailing. | 2026-08-03 |
+| **Reuso de editor ya abierto (Q3)** | `session/open` detecta proceso Godot vía WMI CommandLine. | 2026-08-03 |
+| **CRÍTICO: project/setting corrompe project.godot con UID sintético** | Strings `res://`/`user://` se guardan como STRING PLANO (no se deserializan). | 2026-08-03 |
+| **Fix: deserialize_value no recorría Array** | Rama `elif value is Array` que deserializa cada elemento recursivamente. | 2026-08-03 |
+| **Bug macro FlojoMCP: visibilidad no preservada** | `#[flojo_mcp]` redefinía el struct SIN `pub`. Fix: usar `item.vis`. | 2026-08-04 |
+| **Build MSVC: requiere VsDevCmd del BuildTools 2022** | `heren-build.bat` carga `VsDevCmd.bat` antes de cargo. | 2026-08-04 |
+| **orchestrate con plan_file** | El plan viaja por archivo, no por tool-call. | 2026-08-04 |
+| **Deadlock: stderr del server sin drenar** | heren-server NO escribe tracing a stderr — solo a `HEREN_LOG_FILE`. | 2026-08-04 |
+| **Fix C1/C2: `args()` omite keys None** | `args()` omite keys None; `handle_setting` trata null explícito como get. | 2026-08-04 |
+| **Fix H2: `shader/material` resource_name** | `material.resource_name =` (no `.name`). | 2026-08-04 |
+| **Fix H3: `set_bone_weights` + índice int** | `set_bone_weights(find_bone(...), PackedFloat32Array(weights))`. | 2026-08-04 |
+| **Fix H4: skeleton set_rest/attachment ramifican por tipo** | Skeleton2D→`Transform2D`/Node2D hijo; Skeleton3D→`Transform3D`/`BoneAttachment3D`. | 2026-08-04 |
+| **Fix H1: `signal/list` totalmente defensivo** | Trata cada conn como Dictionary, `.get()`, aísla por conexión. Key `"signal"`. | 2026-08-04 |
+| **🚨 Skeleton2D NO tiene find_bone/set_bone_rest (API falsa)** | Ramificar por tipo real; 2D busca Bone2D hijo iterando `get_bone_count()`/`get_bone()`. | 2026-08-04 |
+| **🚨 `BoneAttachment2D` inexistente rompía TODO el plugin** | Parse error → plugin no carga → editor no conecta. Fix: Node2D hijo del Bone2D. **Lección: validar con `--check-only` tras editar handlers.** | 2026-08-04 |
+| **Mejora conexión: matar editor zombie** | `launch_editor` recibe `editor_connected`; mata zombie y relanza limpio. | 2026-08-04 |
 
-- [ ] ¿El handler usa `EditorUndoRedoManager` para mutaciones?
+---
+
+## 12. Gotchas y Lecciones (v4)
+
+- **Las tools MCP se cargan al INICIO de la sesión.** Tras recompilar heren-server.exe, el toolset `godot_*` NO se refresca en una conversación en curso. Abrir SESIÓN NUEVA.
+- **Un parse error silencioso en un handler rompe TODO el plugin** → el editor no conecta al WS sin error visible. SIEMPRE validar: `godot --headless --path <proj> --check-only --script res://addons/heren/handlers/X.gd`.
+- **Los handlers source (`addons/heren/handlers/`) NO se sincronizan solos con el E2E** (`.temp/e2e_minigame/addons/heren/handlers/`) — copiar manualmente tras cada cambio.
+- **Config MCP local en OpenCode: clave `environment`, NO `env`.** También existe `"timeout"` (ms, default 5000).
+- **Godot headless compite por .godot lock** — usar solo con editor cerrado, o contra copia.
+- **Archivos MCP no generan .uid sidecar** — paths en settings → string plano; nunca asumir UID disponible.
+- **NO definir `func get_editor()` en EditorPlugin** (colisiona). Usar `get_editor_interface()` directo.
+- **`add_do_method` de Godot 4.6** espera `(Object, StringName, args)` — NO acepta Callable directo.
+- **resource_handlers sin undo/redo** — los recursos son archivos externos; usan `EditorFileSystem.update_file()`.
+- **delete usa DirAccess, no ResourceLoader** — `ResourceLoader` no tiene API de borrado.
+- **Consola Windows cp1252** — nada de emojis en output de scripts Python (`UnicodeEncodeError`). Forzar UTF-8 con `io.TextIOWrapper`.
+
+---
+
+## 13. Checklist para Agentes
+
+- [ ] ¿El handler usa `EditorUndoRedoManager` para mutaciones de escena?
 - [ ] ¿La serialización de coordenadas usa el sistema unificado?
 - [ ] ¿La tool devuelve `tokens_estimate` si es visual?
 - [ ] ¿Respeta el presupuesto de visión de la sesión?
@@ -1375,6 +397,8 @@ OpenCode (stdio MCP) <-> bridge.py (FastMCP) <-> ws_server.py (WS) <-> EditorPlu
 - [ ] ¿Se documentó en AGENTS.md v4?
 - [ ] ¿El bridge v4 sigue operativo? (`python -m heren.v4.bridge`)
 - [ ] ¿Los cambios al plugin se versionan SOLO en `addons/heren/`? (nunca en LAIKA)
+- [ ] ¿Se validó la sintaxis GDScript con `--check-only` tras editar handlers?
+- [ ] ¿Se reinició el MCP (sesión nueva) tras recompilar el server?
 
 ---
 
