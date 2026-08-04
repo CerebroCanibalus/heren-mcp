@@ -5,18 +5,18 @@
 
 Biblia para agentes que operan Heren MCP. Léelo antes de tocar código.
 
-> 🚧 **ESTADO: v4.2.0 OPERATIVO (EditorPlugin + heren-server.exe Rust/FlojoMCP).**
+> 🚧 **ESTADO: v4.3.0 OPERATIVO (EditorPlugin + heren-server.exe Rust/FlojoMCP).**
 > Migración GodotDaemon(v3)→EditorPlugin(v4) completada 2026-08-03. Fase 4 (Rust) 2026-08-04.
 > **15 tools centralizadas**, WS plugin server (patrón gopeak), auto-launch del editor.
 > El .exe habla **NDJSON** por stdio (framing real de OpenCode, verificado con stdin-spy).
 > Bridge Python (`python -m heren.v4.bridge`) = fallback/referencia, NO el MCP activo.
 > **Los cambios nuevos van a v4/Rust. No ampliar v3 salvo bugs críticos.**
 >
-> **v4.2 (2026-08-04)**: 15 tools (8 sin `_tool`, 7 visión→`visual`), single-instance (`run()` mata viejos),
-> `[editor_plugins]` normalizado a `enabled=PackedStringArray(...)`, instalación completa (verifica TODOS los archivos),
-> `project/create` sin editor + main.tscn automática, `project/setup_plugin`, `session.close_editor` opcional (default false).
-> **C1/C2 + H1-H4 RESUELTOS Y VALIDADOS E2E EN VIVO** (setting get, signal/list, shader/material, skeleton 2D rest/attachment/skin).
-> **Mejora conexión**: `launch_editor` mata editor zombie sin conectar y relanza limpio.
+> **v4.3 (2026-08-04)**: `setting` con `op` get/set/list/delete/set_multi + `restart_required`/`applied_runtime`;
+> `input_map` con **persistencia REAL** (`input/<action>` en project.godot, tipos add/get/list/add_event/set_events/remove_event/set_deadzone);
+> `session/reopen` (mata + relanza limpio sin repetir path); `node/instantiate` (escena .tscn como hijo ExtResource);
+> `ensure_plugin_installed` SIEMPRE reemplaza el plugin (el source es la única verdad, nunca "already installed").
+> **C1/C2 + H1-H4 + S1-S6 RESUELTOS Y VALIDADOS E2E EN VIVO.**
 
 ---
 
@@ -171,7 +171,7 @@ D:\Mis Juegos\GodotMCP\heren-mcp\
 
 ---
 
-## 6. Las 15 Tools de Heren MCP v4.2
+## 6. Las 15 Tools de Heren MCP v4.3
 
 | # | Tool | Actions | Dominio | Estado | Notas |
 |---|------|---------|---------|--------|-------|
@@ -192,6 +192,8 @@ D:\Mis Juegos\GodotMCP\heren-mcp\
 | 15 | `health` | server + editor status | Health | ✅ 100% | connected_projects |
 
 **Filosofía:** 15 tools cubren TODO Godot. NO dispersar. Una tool con múltiples modos vía `action`. Las tools de visión se consolidaron en UNA (`visual`).
+
+**Comparativa vs competidores (README §"Frente a otros MCPs")**: basada en datos VERIFICADOS de `.competitors/` (coding-solo, gopeak). Reglas: (1) NUNCA marcar ❌ una capacidad que el competidor SÍ tiene (ej: GoPeak tiene editor bridge, Coding-Solo tiene auto-launch/run); (2) usar sus propios análisis (gopeak `ANALYSIS.md` documenta sus GAPS: animación, señales, tilemap) en vez de asumir; (3) al actualizar, re-verificar contra los repos en `.competitors/`, no copiar la tabla vieja. Si un competidor añade algo, actualizar la tabla.
 
 ---
 
