@@ -144,37 +144,6 @@ func handle_create(args: Dictionary) -> Dictionary:
 	}
 
 
-func handle_add_track(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
-	if root == null:
-		return {"ok": false, "error": "no scene open in editor"}
-
-	var player: AnimationPlayer = _get_animation_player(root, args.get("player_path", ""))
-	if player == null:
-		return {"ok": false, "error": "animation_player_not_found"}
-	var anim_name: String = str(args.get("anim_name", ""))
-	var track_type: String = str(args.get("track_type", "value"))
-	var node_path: String = str(args.get("node_path", ""))
-	var property: String = str(args.get("property", ""))
-
-	var anim: Animation = player.get_animation(anim_name) if player.has_animation(anim_name) else null
-	if anim == null:
-		return {"ok": false, "error": "animation_not_found: " + anim_name}
-
-	var track_idx := -1
-	match track_type:
-		"value":
-			track_idx = anim.add_track(Animation.TYPE_VALUE)
-			anim.track_set_path(track_idx, node_path + ":" + property)
-		"position_3d", "rotation_3d", "scale_3d", "method":
-			track_idx = anim.add_track(Animation.TYPE_POSITION_3D if track_type == "position_3d" else Animation.TYPE_ROTATION_3D if track_type == "rotation_3d" else Animation.TYPE_SCALE_3D if track_type == "scale_3d" else Animation.TYPE_METHOD)
-			anim.track_set_path(track_idx, node_path)
-		_:
-			return {"ok": false, "error": "invalid_track_type: " + track_type}
-
-	return {"ok": true, "track_idx": track_idx, "track_type": track_type, "anim_name": anim_name}
-
-
 func handle_add_key(args: Dictionary) -> Dictionary:
 	var root := _scene_root()
 	if root == null:
@@ -681,22 +650,49 @@ func handle_skeleton_get_pose(args: Dictionary) -> Dictionary:
 		return {"ok": false, "error": "skeleton_not_found"}
 
 	var pose: Array = []
+	var world_positions: Array = []
 	if node is Skeleton2D:
 		var skel2d := node as Skeleton2D
 		for i in skel2d.get_bone_count():
 			var b := skel2d.get_bone(i)
-			pose.append({"name": b.name, "transform": HerenCoordsScript.serialize_value(b.transform)})
+			pose.append({
+				"name": b.name,
+				"transform": HerenCoordsScript.serialize_value(b.transform),
+				"global": HerenCoordsScript.serialize_value(b.global_position),
+				"parent": b.get_parent().name if b.get_parent() is Bone2D else "",
+			})
+			world_positions.append(b.global_position)
 	elif node is Skeleton3D:
 		var skel3d := node as Skeleton3D
 		for i in skel3d.get_bone_count():
+			var bone_name: String = skel3d.get_bone_name(i)
+			var global_pose: Transform3D = skel3d.get_bone_global_pose(i)
 			pose.append({
-				"name": skel3d.get_bone_name(i),
+				"name": bone_name,
 				"pose": HerenCoordsScript.serialize_value(skel3d.get_bone_pose(i)),
+				"global": HerenCoordsScript.serialize_value(global_pose.origin),
+				"global_transform": HerenCoordsScript.serialize_value(global_pose),
+				"parent": skel3d.get_bone_parent(i),
 			})
+			world_positions.append(global_pose.origin)
 	else:
 		return {"ok": false, "error": "invalid_skeleton_type"}
 
-	return {"ok": true, "skeleton_path": _node_path_relative(node, root), "pose": pose}
+	# AABB de la pose actual (bounding box de las posiciones mundiales de los huesos).
+	var aabb := {}
+	if not world_positions.is_empty():
+		var min_x := INF; var min_y := INF; var min_z := INF
+		var max_x := -INF; var max_y := -INF; var max_z := -INF
+		for p in world_positions:
+			min_x = min(min_x, p.x); min_y = min(min_y, p.y); min_z = min(min_z, p.z)
+			max_x = max(max_x, p.x); max_y = max(max_y, p.y); max_z = max(max_z, p.z)
+		aabb = {
+			"min": {"x": min_x, "y": min_y, "z": min_z},
+			"max": {"x": max_x, "y": max_y, "z": max_z},
+			"size": {"x": max_x - min_x, "y": max_y - min_y, "z": max_z - min_z},
+		}
+
+	return {"ok": true, "skeleton_path": _node_path_relative(node, root), "pose": pose, "aabb": aabb}
 
 
 func handle_skeleton_set_pose(args: Dictionary) -> Dictionary:
@@ -735,46 +731,6 @@ func handle_skeleton_set_pose(args: Dictionary) -> Dictionary:
 		skel3d.set_bone_pose(bone_idx, Transform3D(basis, origin))
 		return {"ok": true, "bone_name": bone_name, "bone_idx": bone_idx, "type": "Skeleton3D"}
 	return {"ok": false, "error": "invalid_skeleton_type"}
-
-
-func handle_skeleton_ik(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
-	if root == null:
-		return {"ok": false, "error": "no scene open in editor"}
-	var skeleton := _resolve_node(root, args.get("skeleton_path", "")) as Skeleton3D
-	if skeleton == null:
-		return {"ok": false, "error": "skeleton3d_not_found"}
-
-	var ik_name: String = str(args.get("ik_name", "SkeletonIK3D"))
-	var ik := SkeletonIK3D.new()
-	ik.name = ik_name
-	ik.skeleton = skeleton.get_path()
-	ik.root_bone = str(args.get("root_bone", ""))
-	ik.tip_bone = str(args.get("tip_bone", ""))
-	ik.interpolation = float(args.get("interpolation", 1.0))
-	ik.max_iterations = int(args.get("max_iterations", 10))
-	ik.override_tip_basis = bool(args.get("override_tip_basis", false))
-
-	var target_path: String = str(args.get("target_path", ""))
-	if target_path != "":
-		var target := _resolve_node(root, target_path)
-		if target != null:
-			ik.target_node = target.get_path()
-
-	skeleton.add_child(ik)
-	ik.owner = root
-
-	if bool(args.get("start", true)):
-		ik.start()
-
-	return {
-		"ok": true,
-		"ik_name": ik_name,
-		"skeleton_path": _node_path_relative(skeleton, root),
-		"root_bone": ik.root_bone,
-		"tip_bone": ik.tip_bone,
-		"running": ik.running,
-	}
 
 
 # ---------------------------------------------------------------- innovación (Fase 4)
@@ -974,34 +930,6 @@ func handle_loop_pose(args: Dictionary) -> Dictionary:
 		"frequency": frequency,
 		"axis": axis,
 		"keys": steps + 1,
-	}
-
-
-func handle_preview(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
-	if root == null:
-		return {"ok": false, "error": "no scene open in editor"}
-	var resolved := _player_or_error(root, args)
-	if not resolved.ok:
-		return resolved
-	var player: AnimationPlayer = resolved.player
-	var anim_name: String = str(args.get("anim_name", ""))
-	if anim_name == "":
-		return {"ok": false, "error": "anim_name required"}
-	if not player.has_animation(anim_name):
-		return {"ok": false, "error": "animation_not_found: " + anim_name}
-
-	# Busca el AnimationPlayer en el árbol para poder seek.
-	var time: float = float(args.get("time", 0.0))
-	player.seek(time, true)
-	player.pause()
-
-	return {
-		"ok": true,
-		"anim_name": anim_name,
-		"time": time,
-		"position": player.current_animation_position,
-		"hint": "usa visual/capture para ver el frame",
 	}
 
 
@@ -1596,3 +1524,524 @@ func handle_skeleton_attachment(args: Dictionary) -> Dictionary:
 	attachment.owner = root
 
 	return {"ok": true, "attachment": attachment.name, "bone": bone_name, "bone_idx": bone_idx, "type": "BoneAttachment3D"}
+
+
+# ---------------------------------------------------------------- P1: capture_pose + bone tracks + tree control
+
+## Resuelve los huesos a capturar: bones (lista exacta) → chain (cadena ordenada)
+## → from_bone+depth (desde un hueso hacia abajo) → todos si nada se especifica.
+func _resolve_capture_bones(args: Dictionary, skeleton: Node) -> Array:
+	var names: Array = []
+	if args.has("bones"):
+		var raw: Variant = args.get("bones", [])
+		if raw is Array:
+			for b in raw:
+				names.append(str(b))
+	if names.is_empty() and args.has("chain"):
+		var raw_chain: Variant = args.get("chain", [])
+		if raw_chain is Array:
+			for b in raw_chain:
+				names.append(str(b))
+	if names.is_empty() and args.has("from_bone"):
+		var start_name: String = str(args.get("from_bone", ""))
+		var depth: int = int(args.get("depth", -1))
+		names = _bone_chain_from(skeleton, start_name, depth)
+	if names.is_empty():
+		# Todos los huesos en orden jerárquico (padre→hijo).
+		if skeleton is Skeleton2D:
+			for i in (skeleton as Skeleton2D).get_bone_count():
+				names.append(str((skeleton as Skeleton2D).get_bone(i).name))
+		elif skeleton is Skeleton3D:
+			for i in (skeleton as Skeleton3D).get_bone_count():
+				names.append((skeleton as Skeleton3D).get_bone_name(i))
+	return names
+
+
+## Cadena de huesos desde un hueso raíz hacia abajo (BFS, parent→child).
+func _bone_chain_from(skeleton: Node, start_name: String, depth: int) -> Array:
+	var all_bones: Array = []
+	var children_of := {}
+	var root_bone_idx := -1
+	if skeleton is Skeleton3D:
+		var skel := skeleton as Skeleton3D
+		for i in skel.get_bone_count():
+			var n := skel.get_bone_name(i)
+			all_bones.append(n)
+			var parent := skel.get_bone_parent(i)
+			if parent >= 0:
+				children_of[skel.get_bone_name(parent)] = (children_of.get(skel.get_bone_name(parent), []) as Array) + [n]
+			if n == start_name:
+				root_bone_idx = i
+		if root_bone_idx < 0:
+			return []
+	elif skeleton is Skeleton2D:
+		var skel := skeleton as Skeleton2D
+		for i in skel.get_bone_count():
+			var b := skel.get_bone(i)
+			all_bones.append(str(b.name))
+			if b.get_parent() is Bone2D:
+				children_of[str(b.get_parent().name)] = (children_of.get(str(b.get_parent().name), []) as Array) + [str(b.name)]
+		if not all_bones.has(start_name):
+			return []
+
+	var result: Array = [start_name]
+	var frontier: Array = [start_name]
+	var visited := {start_name: true}
+	var level := 0
+	while not frontier.is_empty() and (depth < 0 or level < depth):
+		var next: Array = []
+		for f in frontier:
+			var kids: Array = children_of.get(f, [])
+			for k in kids:
+				if not visited.has(k):
+					visited[k] = true
+					result.append(k)
+					next.append(k)
+		frontier = next
+		level += 1
+	return result
+
+
+## Inserta (o reusa) un track de pose de hueso en la animación.
+## 3D: track TYPE_VALUE con path "Skeleton:bones/<idx>/pose" y valor Transform3D.
+## 2D: track TYPE_VALUE con path "Bone2D:rotation" o "Bone2D:position".
+func _ensure_bone_track(anim: Animation, skeleton: Node, bone_name: String, dim: String) -> int:
+	var track_idx := -1
+	if skeleton is Skeleton3D:
+		var skel := skeleton as Skeleton3D
+		var idx: int = skel.find_bone(bone_name)
+		if idx < 0:
+			return -1
+		var path := str(skeleton.get_path()) + ":bones/" + str(idx) + "/pose"
+		for i in anim.get_track_count():
+			if str(anim.track_get_path(i)) == path:
+				return i
+		track_idx = anim.add_track(Animation.TYPE_VALUE)
+		anim.track_set_path(track_idx, path)
+	elif skeleton is Skeleton2D:
+		var skel := skeleton as Skeleton2D
+		var bone: Bone2D = null
+		for i in skel.get_bone_count():
+			if skel.get_bone(i).name == bone_name:
+				bone = skel.get_bone(i)
+				break
+		if bone == null:
+			return -1
+		var prop: String = "rotation" if dim == "2d_rotation" else "position"
+		var path := str(bone.get_path()) + ":" + prop
+		for i in anim.get_track_count():
+			if str(anim.track_get_path(i)) == path:
+				return i
+		track_idx = anim.add_track(Animation.TYPE_VALUE)
+		anim.track_set_path(track_idx, path)
+	return track_idx
+
+
+## P1: snapshot de la pose actual del esqueleto como keyframes en un tiempo dado.
+## Captura "en cadena" soportada: bones|chain|from_bone+depth.
+func handle_capture_pose(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	var skeleton := _resolve_node(root, args.get("skeleton_path", ""))
+	if skeleton == null:
+		return {"ok": false, "error": "skeleton_not_found"}
+	var anim_name: String = str(args.get("anim_name", ""))
+	if anim_name == "":
+		return {"ok": false, "error": "anim_name required"}
+	if not player.has_animation(anim_name):
+		return {"ok": false, "error": "animation_not_found: " + anim_name}
+	var anim: Animation = player.get_animation(anim_name)
+	var time: float = float(args.get("time", 0.0))
+	var dim: String = str(args.get("dim", "3d"))
+	if skeleton is Skeleton2D:
+		dim = "2d"
+
+	var bone_names: Array = _resolve_capture_bones(args, skeleton)
+	if bone_names.is_empty():
+		return {"ok": false, "error": "no_bones_resolved"}
+	var keys_inserted := 0
+
+	for bone_name in bone_names:
+		if skeleton is Skeleton3D:
+			var skel := skeleton as Skeleton3D
+			var idx: int = skel.find_bone(str(bone_name))
+			if idx < 0:
+				continue
+			var track_idx := _ensure_bone_track(anim, skeleton, str(bone_name), "3d")
+			if track_idx < 0:
+				continue
+			var pose: Transform3D = skel.get_bone_pose(idx)
+			anim.track_insert_key(track_idx, time, pose, 1.0)
+			keys_inserted += 1
+		elif skeleton is Skeleton2D:
+			var skel := skeleton as Skeleton2D
+			var bone: Bone2D = null
+			for i in skel.get_bone_count():
+				if skel.get_bone(i).name == bone_name:
+					bone = skel.get_bone(i)
+					break
+			if bone == null:
+				continue
+			# Captura rotación y posición del Bone2D.
+			var rot_track := _ensure_bone_track(anim, skeleton, str(bone_name), "2d_rotation")
+			if rot_track >= 0:
+				anim.track_insert_key(rot_track, time, bone.rotation, 1.0)
+				keys_inserted += 1
+			var pos_track := _ensure_bone_track(anim, skeleton, str(bone_name), "2d_position")
+			if pos_track >= 0:
+				anim.track_insert_key(pos_track, time, bone.position, 1.0)
+				keys_inserted += 1
+
+	return {
+		"ok": true,
+		"anim_name": anim_name,
+		"time": time,
+		"bones_captured": bone_names.size(),
+		"keys_inserted": keys_inserted,
+		"bones": bone_names,
+	}
+
+
+## Amplía add_track para soportar track_type="bone" (resuelve path por nombre).
+func handle_add_track(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+
+	var player: AnimationPlayer = _get_animation_player(root, args.get("player_path", ""))
+	if player == null:
+		return {"ok": false, "error": "animation_player_not_found"}
+	var anim_name: String = str(args.get("anim_name", ""))
+	var track_type: String = str(args.get("track_type", "value"))
+	var node_path: String = str(args.get("node_path", ""))
+	var property: String = str(args.get("property", ""))
+
+	var anim: Animation = player.get_animation(anim_name) if player.has_animation(anim_name) else null
+	if anim == null:
+		return {"ok": false, "error": "animation_not_found: " + anim_name}
+
+	# P1: track_type="bone" — resuelve el path del hueso por nombre.
+	if track_type == "bone":
+		var skeleton_path: Variant = args.get("skeleton_path", "")
+		var skeleton := _resolve_node(root, skeleton_path)
+		if skeleton == null:
+			return {"ok": false, "error": "skeleton_not_found"}
+		if skeleton is Skeleton3D:
+			var skel := skeleton as Skeleton3D
+			var idx: int = skel.find_bone(node_path)
+			if idx < 0:
+				return {"ok": false, "error": "bone_not_found: " + node_path}
+			var track_idx := anim.add_track(Animation.TYPE_VALUE)
+			anim.track_set_path(track_idx, str(skeleton.get_path()) + ":bones/" + str(idx) + "/pose")
+			return {"ok": true, "track_idx": track_idx, "track_type": "bone", "bone": node_path, "bone_idx": idx, "anim_name": anim_name}
+		elif skeleton is Skeleton2D:
+			var skel := skeleton as Skeleton2D
+			var bone: Bone2D = null
+			for i in skel.get_bone_count():
+				if skel.get_bone(i).name == node_path:
+					bone = skel.get_bone(i)
+					break
+			if bone == null:
+				return {"ok": false, "error": "bone_not_found: " + node_path}
+			var bone_prop: String = property if property != "" else "rotation"
+			var track_idx := anim.add_track(Animation.TYPE_VALUE)
+			anim.track_set_path(track_idx, str(bone.get_path()) + ":" + bone_prop)
+			return {"ok": true, "track_idx": track_idx, "track_type": "bone", "bone": node_path, "bone_prop": bone_prop, "anim_name": anim_name}
+		return {"ok": false, "error": "invalid_skeleton_type"}
+
+	var track_idx := -1
+	match track_type:
+		"value":
+			track_idx = anim.add_track(Animation.TYPE_VALUE)
+			anim.track_set_path(track_idx, node_path + ":" + property)
+		"position_3d", "rotation_3d", "scale_3d", "method":
+			track_idx = anim.add_track(Animation.TYPE_POSITION_3D if track_type == "position_3d" else Animation.TYPE_ROTATION_3D if track_type == "rotation_3d" else Animation.TYPE_SCALE_3D if track_type == "scale_3d" else Animation.TYPE_METHOD)
+			anim.track_set_path(track_idx, node_path)
+		"bezier":
+			track_idx = anim.add_track(Animation.TYPE_BEZIER)
+			anim.track_set_path(track_idx, node_path + ":" + property)
+		"audio":
+			track_idx = anim.add_track(Animation.TYPE_AUDIO)
+			anim.track_set_path(track_idx, node_path)
+		_:
+			return {"ok": false, "error": "invalid_track_type: " + track_type}
+
+	return {"ok": true, "track_idx": track_idx, "track_type": track_type, "anim_name": anim_name}
+
+
+# ---------------------------------------------------------------- P1: AnimationTree runtime control
+
+func _resolve_tree(root: Node, args: Dictionary) -> AnimationTree:
+	var tree_path: Variant = args.get("tree_path", "")
+	if tree_path != null and str(tree_path) != "":
+		return _resolve_node(root, tree_path) as AnimationTree
+	# Buscar cualquier AnimationTree del root.
+	for child in root.get_children():
+		if child is AnimationTree:
+			return child as AnimationTree
+	return null
+
+
+func handle_tree_activate(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var tree := _resolve_tree(root, args)
+	if tree == null:
+		return {"ok": false, "error": "animation_tree_not_found"}
+	tree.active = bool(args.get("active", true))
+	# Si se pide reproducir un estado concreto, travel.
+	if args.has("state") and str(args.get("state", "")) != "":
+		var playback: Variant = tree.get("parameters/playback")
+		if playback != null and playback is AnimationNodeStateMachinePlayback:
+			playback.travel(str(args.get("state")))
+	return {
+		"ok": true,
+		"active": tree.active,
+		"tree_path": _node_path_relative(tree, root),
+	}
+
+
+func handle_tree_travel(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var tree := _resolve_tree(root, args)
+	if tree == null:
+		return {"ok": false, "error": "animation_tree_not_found"}
+	var state: String = str(args.get("state", ""))
+	if state == "":
+		return {"ok": false, "error": "state required"}
+	var playback: Variant = tree.get("parameters/playback")
+	if playback == null or not playback is AnimationNodeStateMachinePlayback:
+		return {"ok": false, "error": "no state_machine_playback (graph_type debe ser state_machine)"}
+	playback.travel(state)
+	return {"ok": true, "traveled_to": state, "current_state": str(playback.get_current_node())}
+
+
+func handle_tree_set_param(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var tree := _resolve_tree(root, args)
+	if tree == null:
+		return {"ok": false, "error": "animation_tree_not_found"}
+	var name: String = str(args.get("name", ""))
+	if name == "":
+		return {"ok": false, "error": "name required"}
+	var param_name := "parameters/" + name
+	if tree.get(param_name) == null:
+		return {"ok": false, "error": "parameter_not_found: " + param_name}
+	tree.set(param_name, HerenCoordsScript.deserialize_value(args.get("value")))
+	return {"ok": true, "parameter": param_name, "value": HerenCoordsScript.serialize_value(tree.get(param_name))}
+
+
+func handle_tree_get_param(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var tree := _resolve_tree(root, args)
+	if tree == null:
+		return {"ok": false, "error": "animation_tree_not_found"}
+	var name: String = str(args.get("name", ""))
+	if name == "":
+		# Devuelve todos los parámetros.
+		var all := {}
+		for p in tree.get_parameter_list():
+			all[str(p)] = HerenCoordsScript.serialize_value(tree.get(str(p)))
+		return {"ok": true, "parameters": all}
+	var param_name := "parameters/" + name
+	if tree.get(param_name) == null:
+		return {"ok": false, "error": "parameter_not_found: " + param_name}
+	return {"ok": true, "parameter": param_name, "value": HerenCoordsScript.serialize_value(tree.get(param_name))}
+
+
+# ---------------------------------------------------------------- P1: IK a profundidad (procedural)
+
+## Amplía skeleton_ik con magnet/influence y soporta "weights" por hueso.
+func handle_skeleton_ik(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var skeleton := _resolve_node(root, args.get("skeleton_path", "")) as Skeleton3D
+	if skeleton == null:
+		return {"ok": false, "error": "skeleton3d_not_found"}
+
+	var ik_name: String = str(args.get("ik_name", "SkeletonIK3D"))
+	var ik := SkeletonIK3D.new()
+	ik.name = ik_name
+	ik.skeleton = skeleton.get_path()
+	ik.root_bone = str(args.get("root_bone", ""))
+	ik.tip_bone = str(args.get("tip_bone", ""))
+	ik.interpolation = float(args.get("interpolation", 1.0))
+	ik.max_iterations = int(args.get("max_iterations", 10))
+	ik.override_tip_basis = bool(args.get("override_tip_basis", false))
+	ik.influence = float(args.get("influence", 1.0))
+	ik.min_distance = float(args.get("min_distance", 0.001))
+	ik.use_magnet = bool(args.get("use_magnet", false))
+	if args.has("magnet"):
+		var magnet_dict: Dictionary = _args_dict(args, "magnet")
+		ik.magnet = Vector3(float(magnet_dict.get("x", 0)), float(magnet_dict.get("y", 0)), float(magnet_dict.get("z", 0)))
+
+	var target_path: String = str(args.get("target_path", ""))
+	if target_path != "":
+		var target := _resolve_node(root, target_path)
+		if target != null:
+			ik.target_node = target.get_path()
+	# target_position alternativo (sin nodo target, usa posición absoluta).
+	elif args.has("target_position"):
+		var tp: Dictionary = _args_dict(args, "target_position")
+		var target := Node3D.new()
+		target.name = ik_name + "_Target"
+		target.position = Vector3(float(tp.get("x", 0)), float(tp.get("y", 0)), float(tp.get("z", 0)))
+		skeleton.add_child(target)
+		target.owner = root
+		ik.target_node = target.get_path()
+
+	skeleton.add_child(ik)
+	ik.owner = root
+
+	if bool(args.get("start", true)):
+		ik.start()
+
+	return {
+		"ok": true,
+		"ik_name": ik_name,
+		"skeleton_path": _node_path_relative(skeleton, root),
+		"root_bone": ik.root_bone,
+		"tip_bone": ik.tip_bone,
+		"influence": ik.influence,
+		"running": ik.running,
+	}
+
+
+## P1: FABRIK 2D procedural — resuelve una cadena de Bone2D hacia un objetivo.
+## Útil para animación procedural (brazos/piernas siguiendo un punto).
+func handle_skeleton_fabrik(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var skeleton := _resolve_node(root, args.get("skeleton_path", "")) as Skeleton2D
+	if skeleton == null:
+		return {"ok": false, "error": "skeleton2d_not_found"}
+
+	var target_pos := Vector2(float(args.get("target_x", 0)), float(args.get("target_y", 0)))
+	var chain_names: Array = args.get("chain", [])
+	if chain_names.is_empty():
+		return {"ok": false, "error": "chain required (lista de nombres de hueso en orden)"}
+	var max_iterations: int = int(args.get("max_iterations", 10))
+	var tolerance: float = float(args.get("tolerance", 1.0))
+	var weights: Dictionary = _args_dict(args, "weights")
+
+	# Colectar huesos de la cadena.
+	var bones: Array[Bone2D] = []
+	for name in chain_names:
+		var found: Bone2D = null
+		for i in skeleton.get_bone_count():
+			var b := skeleton.get_bone(i)
+			if b.name == name:
+				found = b
+				break
+		if found == null:
+			return {"ok": false, "error": "bone_not_found: " + str(name)}
+		bones.append(found)
+	if bones.size() < 2:
+		return {"ok": false, "error": "chain needs at least 2 bones"}
+
+	# Guardar poses originales para restaurar en undo.
+	var original_rests := {}
+	for b in bones:
+		original_rests[b.get_instance_id()] = b.transform
+
+	# Posiciones globales de los pivotes (FABRIK clásico).
+	var pts: Array[Vector2] = []
+	for b in bones:
+		pts.append(b.global_position)
+	pts.append(target_pos)
+
+	var converged := false
+	for _it in max_iterations:
+		# Backward (desde el final hacia la raíz).
+		pts[pts.size() - 1] = target_pos
+		for i in range(pts.size() - 2, -1, -1):
+			var seg_len := (pts[i] - pts[i + 1]).length()
+			var weight: float = float(weights.get(str(bones[i].name), 1.0))
+			pts[i] = pts[i + 1] + (pts[i] - pts[i + 1]).normalized() * seg_len * weight
+		# Forward (desde la raíz hacia el final).
+		pts[0] = bones[0].global_position
+		for i in range(1, pts.size()):
+			var seg_len := (pts[i - 1] - pts[i]).length()
+			var weight: float = float(weights.get(str(bones[i - 1].name), 1.0))
+			pts[i] = pts[i - 1] + (pts[i] - pts[i - 1]).normalized() * seg_len * weight
+		if (pts[pts.size() - 1] - target_pos).length() < tolerance:
+			converged = true
+			break
+
+	# Aplicar: cada hueso apunta al siguiente punto (su rotación local).
+	for i in bones.size():
+		var b: Bone2D = bones[i]
+		var p_cur: Vector2 = pts[i]
+		var p_next: Vector2 = pts[i + 1]
+		var parent_rot: float = b.get_parent().global_rotation if b.get_parent() is Node2D else 0.0
+		var target_angle: float = (p_next - p_cur).angle()
+		b.transform = Transform2D(target_angle - parent_rot, b.position)
+
+	return {
+		"ok": true,
+		"skeleton_path": _node_path_relative(skeleton, root),
+		"chain": chain_names,
+		"target": {"x": target_pos.x, "y": target_pos.y},
+		"iterations": max_iterations,
+		"converged": converged,
+	}
+
+
+## P1: preview con imagen — seek + captura del viewport (agente VE el frame).
+func handle_preview(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	var anim_name: String = str(args.get("anim_name", ""))
+	if anim_name == "":
+		return {"ok": false, "error": "anim_name required"}
+	if not player.has_animation(anim_name):
+		return {"ok": false, "error": "animation_not_found: " + anim_name}
+
+	var time: float = float(args.get("time", 0.0))
+	player.seek(time, true)
+	player.pause()
+	RenderingServer.force_draw(true)
+
+	var out := {
+		"ok": true,
+		"anim_name": anim_name,
+		"time": time,
+		"position": player.current_animation_position,
+	}
+
+	# Si pide imagen, captura el viewport activo.
+	if bool(args.get("with_image", false)):
+		var ei := _editor_interface()
+		if ei != null:
+			var viewport: Viewport = ei.get_editor_viewport_3d() if str(args.get("viewport", "2d")) == "3d" else ei.get_editor_viewport_2d()
+			if viewport != null:
+				RenderingServer.force_draw(true)
+				var img: Image = viewport.get_texture().get_image()
+				if img != null:
+					img.flip_y()
+					var png := img.save_png_to_buffer()
+					if not png.is_empty():
+						out["__image_base64"] = Marshalls.raw_to_base64(png)
+						out["__image_format"] = "png"
+						out["__image_w"] = img.get_width()
+						out["__image_h"] = img.get_height()
+	return out

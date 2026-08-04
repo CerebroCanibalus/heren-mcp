@@ -204,6 +204,21 @@ func handle_capture(args: Dictionary) -> Dictionary:
 	if viewport == null:
 		return {"ok": false, "error": "viewport not available: " + mode}
 
+	# P1: si se pasa `animation` {player_path, anim_name, time}, hacer seek
+	# ANTES de capturar — el agente ve un frame concreto sin llamadas extra.
+	var anim_info: Dictionary = _args_dict(args, "animation")
+	if not anim_info.is_empty():
+		var root := ei.get_edited_scene_root()
+		if root != null:
+			var player := _resolve_animation_player(root, anim_info.get("player_path", ""))
+			if player != null:
+				var anim_name: String = str(anim_info.get("anim_name", ""))
+				if anim_name == "" or player.has_animation(anim_name):
+					if anim_name != "":
+						player.current_animation = anim_name
+					player.seek(float(anim_info.get("time", 0.0)), true)
+					player.pause()
+
 	# Forzar sync de rendering antes de capturar.
 	RenderingServer.force_draw(true)
 
@@ -217,7 +232,7 @@ func handle_capture(args: Dictionary) -> Dictionary:
 	if png.is_empty():
 		return {"ok": false, "error": "capture failed: png encode"}
 	var root := ei.get_edited_scene_root()
-	return {
+	var out := {
 		"ok": true,
 		"viewport": mode,
 		"__image_base64": Marshalls.raw_to_base64(png),
@@ -227,6 +242,28 @@ func handle_capture(args: Dictionary) -> Dictionary:
 		"scene": root.name if root else "",
 		"node_count": root.get_child_count() + 1 if root else 0,
 	}
+	if not anim_info.is_empty():
+		out["animation"] = {
+			"player_path": anim_info.get("player_path", ""),
+			"anim_name": anim_info.get("anim_name", ""),
+			"time": anim_info.get("time", 0.0),
+		}
+	return out
+
+
+func _resolve_animation_player(root: Node, player_path: Variant) -> AnimationPlayer:
+	if player_path == null or str(player_path) == "":
+		# Buscar el primer AnimationPlayer del root.
+		for child in root.get_children():
+			if child is AnimationPlayer:
+				return child as AnimationPlayer
+		return null
+	var normalized := HerenCoordsScript.normalize_node_path(player_path, root)
+	if normalized == ".":
+		return root as AnimationPlayer
+	if normalized == "":
+		return null
+	return root.get_node_or_null(NodePath(normalized)) as AnimationPlayer
 
 
 func handle_capture_node(args: Dictionary) -> Dictionary:

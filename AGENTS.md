@@ -175,8 +175,8 @@ D:\Mis Juegos\GodotMCP\heren-mcp\
 | 4 | `resource` | create, read, update, delete, list, create_script, read_script, edit_script | Recursos .tres + .gd | ✅ 100% | EditorFileSystem |
 | 5 | `project` | create, setup_plugin, setting, autoload, remove_autoload, input_map, shader_global | Configuración | ✅ 100% | create sin editor + main.tscn automática |
 | 6 | `shader` | create, edit, validate, material, uniform | Shaders | ✅ 100% | .gdshader + ShaderMaterial |
-| 7 | `animation` | create_player, create, add_track, add_key, state_machine, play, stop, seek, speed, get_animations, get_tracks, get_keyframes, get_state_machine, remove_track, remove_key, update_key, update_props, one_shot, tween, record, from_path, loop_pose, preview, curve | Animaciones | ✅ 100% | AnimationLibrary + playback + edición + procedural (§9) |
-| 8 | `skeleton` | skeleton_create, skeleton_add_bone, skeleton_set_rest, skeleton_skin, skeleton_attachment, skeleton_get_bones, skeleton_get_pose, skeleton_set_pose, skeleton_ik | Esqueletos 2D/3D | ✅ 100% | fusionado en animation_handlers |
+| 7 | `animation` | create_player, create, add_track, add_key, state_machine, play, stop, seek, speed, get_animations, get_tracks, get_keyframes, get_state_machine, remove_track, remove_key, update_key, update_props, one_shot, tween, record, from_path, loop_pose, preview, curve, capture_pose, tree_activate, tree_travel, tree_set_param, tree_get_param | Animaciones | ✅ 100% | AnimationLibrary + playback + edición + procedural + tree control (§9) |
+| 8 | `skeleton` | skeleton_create, skeleton_add_bone, skeleton_set_rest, skeleton_skin, skeleton_attachment, skeleton_get_bones, skeleton_get_pose, skeleton_set_pose, skeleton_ik, skeleton_fabrik, capture_pose | Esqueletos 2D/3D | ✅ 100% | fusionado en animation_handlers; IK 2D FABRIK + IK 3D |
 | 9 | `tilemap` | inspect_set, inspect_map, set_cell, terrain, pattern | TileMaps | ✅ 100% | requiere TileSet |
 | 10 | `debug` | run_scene, stop_scene, is_playing, get_editor_errors | Depuración | ✅ 100% | editor real, no subprocess |
 | 11 | `validate` | scene, script, node, resource | Validación | ✅ 100% | contra escena viva |
@@ -253,6 +253,11 @@ Ciclo:
 >
 > **ESTADO 2026-08-04**: **Fases 1-4 IMPLEMENTADAS** (playback, inspección, edición, one_shot, tween,
 > skeleton pose/ik, state_machine ampliado, record/from_path/loop_pose/preview/curve).
+> **P1 COMPLETADA**: `capture_pose` (con captura en cadena bones/chain/from_bone+depth), `bone` tracks por nombre,
+> `tree_travel`/`tree_set_param`/`tree_get_param`/`tree_activate` (control AnimationTree runtime),
+> `skeleton_fabrik` (IK 2D procedural FABRIK con pesos), IK 3D ampliado (magnet/influence/target_position),
+> `visual/capture` con seek automático (`animation:{player_path,anim_name,time}`), `preview` devuelve imagen,
+> `skeleton_get_pose` con `global` + AABB de la pose.
 > 12/12 handlers `--check-only` OK. Binario release compilado con todas las acciones.
 > **PENDIENTE: validación E2E en vivo** (requiere sesión MCP nueva).
 
@@ -303,6 +308,16 @@ Ciclo:
 **Fase 4 — Innovación pura (✅ IMPLEMENTADA):**
 - ✅ `record`, `from_path`, `loop_pose`, `preview`, `curve`
 
+**P1 — Flujo "personaje entero" + IK profundo (✅ IMPLEMENTADA):**
+- ✅ `skeleton/capture_pose` — snapshot de pose completa en keyframe, con **captura en cadena** (`bones` exacta | `chain` ordenada | `from_bone`+`depth` | todos)
+- ✅ `bone` track en `add_track`/`one_shot` — animar hueso por NOMBRE (3D: `bones/<idx>/pose`; 2D: Bone2D `rotation`/`position`)
+- ✅ `tree_travel`/`tree_set_param`/`tree_get_param`/`tree_activate` — control runtime del AnimationTree (blend positions, travel entre estados)
+- ✅ `skeleton_fabrik` — IK 2D procedural FABRIK (cadena de Bone2D → objetivo, con `weights` por hueso)
+- ✅ `skeleton_ik` ampliado — `target_position` (sin nodo target), `use_magnet`/`magnet`, `influence`, `min_distance`
+- ✅ `visual/capture` con `animation:{player_path,anim_name,time}` — seek automático antes de capturar
+- ✅ `preview` con `with_image:true` — devuelve la imagen del frame directamente
+- ✅ `skeleton_get_pose` con `global` (posición mundial por hueso) + `aabb` de la pose
+
 **Coordenadas enriquecidas (§9.4) — ✅ IMPLEMENTADA en `node_handlers.gd _node_coords()`.**
 
 > ⚠️ Nota API descubierta: `AnimationNodeBlendSpace3D` NO existe en Godot 4.7 (solo 1D/2D).
@@ -345,6 +360,10 @@ Esto da al agente **conocimiento espacial completo** sin llamadas extra. Benefic
 | 2026-08-04 | **Skeleton2D API falsa** | Skeleton2D NO tiene find_bone/set_bone_rest (Skeleton3D). Huesos = Bone2D hijos con `.rest=Transform2D`. `BoneAttachment2D` NO existe. |
 | 2026-08-04 | **`args()` omite keys None** | Antes insertaba `Value::Null` → `str(null)`="<null>" rompía guards. |
 | 2026-08-04 | **`launch_editor` mata zombie** | Recibe `editor_connected`; si hay proceso sin conectar lo mata y relanza limpio. Siempre sincroniza plugin antes. |
+| 2026-08-04 | **`AnimationNodeBlendSpace3D` NO existe en Godot 4.7** | Solo 1D/2D. Verificado con `ClassDB.get_class_list()`. Usar BlendSpace2D o BlendTree. |
+| 2026-08-04 | **`SkeletonIK3D.magnet` es Vector3, `target_node` es NodePath** | `magnet` es el punto de magnet (no float); `target` es el Transform heredado (no usar). `target_node` recibe NODE PATH. |
+| 2026-08-04 | **`AnimationNodeBlendTree.connect_node(input, input_index, output)`** | 3 args en Godot 4.7 (input_node, input_index, output_node) — NO (from, from_port, to, to_port). |
+| 2026-08-04 | **IK 2D = FABRIK propio** | Godot no tiene IK nativo 2D. `skeleton_fabrik` implementa FABRIK sobre Bone2D con pesos por hueso. |
 
 ---
 
