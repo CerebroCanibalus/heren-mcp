@@ -100,9 +100,11 @@ func handle_create(args: Dictionary) -> Dictionary:
 		return {"ok": false, "error": "shader_exists: " + shader_path}
 
 	# v3 fix heredado: no duplicar shader_type si el usuario ya lo incluyó.
+	# Template: si el agente no da código, generar boilerplate según tipo
+	# (el agente escribe la lógica, no la estructura).
 	var full_code := code
 	if not code.strip_edges().begins_with("shader_type"):
-		full_code = "shader_type " + shader_type + ";\n\n" + code
+		full_code = "shader_type " + shader_type + ";\n\n" + _shader_template_body(shader_type, code)
 
 	_ensure_parent_dir(shader_path)
 	var file := FileAccess.open(shader_path, FileAccess.WRITE)
@@ -116,6 +118,28 @@ func handle_create(args: Dictionary) -> Dictionary:
 		efs.update_file(shader_path)
 
 	return {"ok": true, "shader_path": shader_path, "shader_type": shader_type}
+
+
+## Template body: retorna el cuerpo base según tipo cuando el agente no da
+## código. Si code viene, solo retorna ese código (el "shader_type X;" ya se
+## añadió arriba).
+func _shader_template_body(shader_type: String, code: String) -> String:
+	if code.strip_edges() != "":
+		return code
+	match shader_type.strip_edges():
+		"spatial", "world":
+			return """uniform vec3 color : source_color = vec3(1.0, 1.0, 1.0);
+
+void fragment() {
+	ALBEDO = color;
+}"""
+		_:
+			return """uniform float intensity : hint_range(0.0, 10.0, 0.1) = 1.0;
+
+void fragment() {
+	// Lógica del shader aquí
+	COLOR = vec4(1.0);
+}"""
 
 
 func handle_edit(args: Dictionary) -> Dictionary:
@@ -157,7 +181,157 @@ func handle_validate(args: Dictionary) -> Dictionary:
 	var shader: Resource = load(shader_path)
 	if shader == null or not shader is Shader:
 		return {"ok": false, "error": "invalid_shader: " + shader_path}
-	return {"ok": true, "valid": true, "shader_path": shader_path}
+	var sh := shader as Shader
+	# Validate real: errores de compilación, no solo "es un Shader".
+	var errors := sh.get_errors()
+	if not errors.is_empty():
+		return {
+			"ok": false,
+			"valid": false,
+			"shader_path": shader_path,
+			"error_count": errors.size(),
+			"errors": errors,
+		}
+	return {"ok": true, "valid": true, "shader_path": shader_path, "error_count": 0}
+
+
+func handle_get(args: Dictionary) -> Dictionary:
+	var shader_path: String = _ensure_gdshader_ext(str(args.get("shader_path", "")))
+	if shader_path == "" or shader_path == ".gdshader":
+		return {"ok": false, "error": "shader_path required"}
+	if not FileAccess.file_exists(shader_path):
+		return {"ok": false, "error": "shader_not_found: " + shader_path}
+
+	var file := FileAccess.open(shader_path, FileAccess.READ)
+	if file == null:
+		return {"ok": false, "error": "cannot_open: " + shader_path}
+	var content := file.get_as_text()
+	file = null
+
+	# Uniforms: mejor vía load() (lista real del compilador); fallback parseo.
+	var shader_type := _parse_shader_type(content)
+	var uniforms: Array = []
+	var shader: Resource = load(shader_path)
+	if shader is Shader:
+		uniforms = _shader_uniforms_to_json(shader as Shader)
+	return {
+		"ok": true,
+		"shader_path": shader_path,
+		"shader_type": shader_type,
+		"content": content,
+		"uniforms": uniforms,
+		"uniform_count": uniforms.size(),
+	}
+
+
+func handle_inspect(args: Dictionary) -> Dictionary:
+	var shader_path: String = _ensure_gdshader_ext(str(args.get("shader_path", "")))
+	# Inspección por nodo: {node_path} → material del nodo → su shader.
+	if shader_path == "" or shader_path == ".gdshader":
+		var node_path: Variant = args.get("node_path", "")
+		if node_path == "":
+			return {"ok": false, "error": "shader_path or node_path required"}
+		var root := _scene_root(args)
+		if root == null:
+			return {"ok": false, "error": "no scene open in editor"}
+		var node: Node = _resolve_node(root, node_path)
+		if node == null:
+			return {"ok": false, "error": "node_not_found: " + str(node_path)}
+		var material := _find_shader_material(node)
+		if material == null or material.shader == null:
+			return {"ok": false, "error": "no shader on node", "node_path": str(node_path)}
+		shader_path = material.shader.resource_path
+		if shader_path == "":
+			return {"ok": false, "error": "shader has no resource_path (builtin/visual)", "node_path": str(node_path)}
+
+	if not FileAccess.file_exists(shader_path):
+		return {"ok": false, "error": "shader_not_found: " + shader_path}
+
+	var shader: Resource = load(shader_path)
+	if shader == null or not shader is Shader:
+		return {"ok": false, "error": "invalid_shader: " + shader_path}
+	var sh := shader as Shader
+	var uniforms := _shader_uniforms_to_json(sh)
+	var errors := sh.get_errors()
+	return {
+		"ok": true,
+		"shader_path": shader_path,
+		"shader_type": _mode_to_str(sh.mode),
+		"uniforms": uniforms,
+		"uniform_count": uniforms.size(),
+		"errors": errors,
+		"valid": errors.is_empty(),
+	}
+
+
+## One-shot: crea shader (si code) + material + asigna al nodo + uniforms en UNA
+## llamada. Devuelve también la lista de uniforms disponibles para iterar.
+func handle_apply(args: Dictionary) -> Dictionary:
+	var root := _scene_root(args)
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+
+	var node_path: Variant = args.get("node_path", "")
+	if node_path == "":
+		return {"ok": false, "error": "node_path required"}
+	var node: Node = _resolve_node(root, node_path)
+	if node == null:
+		return {"ok": false, "error": "node_not_found: " + str(node_path)}
+
+	# 1) Shader: o path existente, o crear desde code/template.
+	var shader_path: String = str(args.get("shader_path", ""))
+	var shader: Shader = null
+	if shader_path != "":
+		shader_path = _ensure_gdshader_ext(shader_path)
+		if ResourceLoader.exists(shader_path):
+			shader = load(shader_path) as Shader
+		elif str(args.get("code", "")) != "" or true:
+			# crear: shader_path + code (con template si code vacío)
+			var code: String = str(args.get("code", ""))
+			var st: String = str(args.get("shader_type", "canvas_item"))
+			_ensure_parent_dir(shader_path)
+			var full_code := code
+			if not code.strip_edges().begins_with("shader_type"):
+				full_code = "shader_type " + st + ";\n\n" + _shader_template_body(st, code)
+			var f := FileAccess.open(shader_path, FileAccess.WRITE)
+			if f == null:
+				return {"ok": false, "error": "write_failed: " + shader_path}
+			f.store_string(full_code)
+			f = null
+			var efs: EditorFileSystem = _editor_interface().get_resource_filesystem()
+			if efs:
+				efs.update_file(shader_path)
+			shader = load(shader_path) as Shader
+	if shader == null:
+		return {"ok": false, "error": "shader_load_failed", "shader_path": shader_path}
+
+	# 2) Material + asignación al nodo (misma cascada que handle_material).
+	var material := ShaderMaterial.new()
+	var material_name: String = str(args.get("material_name", ""))
+	if material_name != "":
+		material.resource_name = material_name
+	material.shader = shader
+
+	var uniforms := _args_dict(args, "uniforms")
+	for uniform_name in uniforms.keys():
+		material.set_shader_parameter(uniform_name, HerenCoordsScript.deserialize_value(uniforms[uniform_name]))
+
+	var assigned := _assign_material(node, material)
+	if not assigned:
+		material.free()
+		return {
+			"ok": false,
+			"error": "material_assignment_failed",
+			"node_type": node.get_class(),
+		}
+
+	return {
+		"ok": true,
+		"node_path": _node_path_relative(node, root),
+		"shader_path": shader_path,
+		"applied_uniforms": uniforms.keys(),
+		"available_uniforms": _shader_uniforms_to_json(shader),
+	}
 
 
 func handle_material(args: Dictionary) -> Dictionary:
@@ -188,33 +362,10 @@ func handle_material(args: Dictionary) -> Dictionary:
 		material.set_shader_parameter(uniform_name, HerenCoordsScript.deserialize_value(uniforms[uniform_name]))
 
 	# B9 fix heredado de v3: asignar a TODOS los tipos de nodos.
-	var assigned := false
-	if node.has_method("set_material"):
-		node.set_material(material)
-		assigned = true
-	elif "material" in node:
-		node.material = material
-		assigned = true
-
-	if not assigned and node is MeshInstance3D:
-		node.set_surface_override_material(0, material)
-		assigned = true
-
-	if not assigned and node.has_method("set_material_override"):
-		node.set_material_override(material)
-		assigned = true
-	elif not assigned and "material_override" in node:
-		node.material_override = material
-		assigned = true
-
-	if not assigned and node.has_method("set_material_overlay"):
-		node.set_material_overlay(material)
-		assigned = true
-	elif not assigned and "material_overlay" in node:
-		node.material_overlay = material
-		assigned = true
+	var assigned := _assign_material(node, material)
 
 	if not assigned:
+		material.free()
 		return {
 			"ok": false,
 			"error": "material_assignment_failed",
@@ -242,22 +393,114 @@ func handle_uniform(args: Dictionary) -> Dictionary:
 	if node == null:
 		return {"ok": false, "error": "node_not_found: " + str(node_path)}
 
-	var material: ShaderMaterial = null
-	if "material" in node and node.material is ShaderMaterial:
-		material = node.material
-	if material == null and "material_override" in node and node.material_override is ShaderMaterial:
-		material = node.material_override
-	if material == null and "material_overlay" in node and node.material_overlay is ShaderMaterial:
-		material = node.material_overlay
-	if material == null and node is MeshInstance3D:
-		for i in range((node as MeshInstance3D).get_surface_override_material_count()):
-			var surf_mat = (node as MeshInstance3D).get_surface_override_material(i)
-			if surf_mat is ShaderMaterial:
-				material = surf_mat
-				break
-
+	var material: ShaderMaterial = _find_shader_material(node)
 	if material == null:
 		return {"ok": false, "error": "no_shader_material", "message": "no ShaderMaterial found on node"}
 
 	material.set_shader_parameter(uniform_name, HerenCoordsScript.deserialize_value(args.get("value")))
 	return {"ok": true, "uniform": uniform_name, "node_path": _node_path_relative(node, root)}
+
+
+## Busca el primer ShaderMaterial en el nodo (material / override / overlay /
+## superficie). Compartido por uniform, inspect y apply.
+func _find_shader_material(node: Node) -> ShaderMaterial:
+	if "material" in node and node.material is ShaderMaterial:
+		return node.material
+	if "material_override" in node and node.material_override is ShaderMaterial:
+		return node.material_override
+	if "material_overlay" in node and node.material_overlay is ShaderMaterial:
+		return node.material_overlay
+	if node is MeshInstance3D:
+		for i in range((node as MeshInstance3D).get_surface_override_material_count()):
+			var surf_mat = (node as MeshInstance3D).get_surface_override_material(i)
+			if surf_mat is ShaderMaterial:
+				return surf_mat
+	return null
+
+
+## Cascada de asignación de material a nodo (B9): cubre CanvasItem,
+## GeometryInstance3D (override/overlay) y MeshInstance3D (superficie).
+func _assign_material(node: Node, material: ShaderMaterial) -> bool:
+	if node.has_method("set_material"):
+		node.set_material(material)
+		return true
+	elif "material" in node:
+		node.material = material
+		return true
+	if node is MeshInstance3D:
+		node.set_surface_override_material(0, material)
+		return true
+	if node.has_method("set_material_override"):
+		node.set_material_override(material)
+		return true
+	elif "material_override" in node:
+		node.material_override = material
+		return true
+	if node.has_method("set_material_overlay"):
+		node.set_material_overlay(material)
+		return true
+	elif "material_overlay" in node:
+		node.material_overlay = material
+		return true
+	return false
+
+
+## Convierte get_shader_uniform_list() a JSON serializable con nombres
+## legibles. Cada dict: {name, type, default, hint, range}.
+func _shader_uniforms_to_json(shader: Shader) -> Array:
+	var out: Array = []
+	for u in shader.get_shader_uniform_list():
+		var d: Dictionary = {}
+		for key in ["name", "type", "default_value", "hint", "hint_range", "group", "subgroup"]:
+			if key in u:
+				d[key] = u[key]
+		var entry := {
+			"name": str(d.get("name", "")),
+			"type": _uniform_type_str(int(d.get("type", 0))),
+			"hint": _hint_str(int(d.get("hint", 0))),
+		}
+		if d.has("default_value"):
+			entry["default"] = d["default_value"]
+		if d.has("hint_range") and d["hint_range"] is Vector3:
+			var r: Vector3 = d["hint_range"]
+			entry["range"] = {"min": r.x, "max": r.y, "step": r.z}
+		out.append(entry)
+	return out
+
+
+## RenderingDevice.DataType → string legible.
+func _uniform_type_str(t: int) -> String:
+	var names := {
+		1: "bool", 2: "bvec2", 3: "bvec3", 4: "bvec4",
+		5: "int", 6: "ivec2", 7: "ivec3", 8: "ivec4",
+		9: "uint", 10: "uvec2", 11: "uvec3", 12: "uvec4",
+		13: "float", 14: "vec2", 15: "vec3", 16: "vec4",
+		17: "mat2", 18: "mat3", 19: "mat4",
+		20: "sampler2D", 21: "samplerCube", 22: "samplerExternal", 23: "sampler3D",
+	}
+	return str(names.get(t, "type_%d" % t))
+
+
+## RenderingDevice.ShaderUniformHint → string legible.
+func _hint_str(h: int) -> String:
+	var names := {
+		1: "range", 2: "default_white", 3: "default_black", 4: "albedo",
+		5: "normal", 6: "anisotropy", 7: "screen_texture", 8: "depth_texture",
+		9: "normal_roughness_texture", 10: "default_black_albedo",
+		11: "default_normal", 12: "default_anisotropy", 13: "default_gray",
+		15: "max", 16: "compare", 17: "instance_id", 18: "default_transparent",
+	}
+	return str(names.get(h, "none"))
+
+
+func _mode_to_str(mode: int) -> String:
+	var names := {0: "spatial", 1: "canvas_item", 2: "particles", 3: "sky", 4: "fog", 5: "texture_blit"}
+	return str(names.get(mode, "mode_%d" % mode))
+
+
+func _parse_shader_type(content: String) -> String:
+	var m := RegEx.create_from_string("shader_type\\s+([a-z_0-9]+)")
+	var res := m.search(content)
+	if res:
+		return res.get_string(1)
+	return "unknown"
