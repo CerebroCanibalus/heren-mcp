@@ -211,3 +211,19 @@ static func normalize_node_path(node_path: Variant, root: Node) -> String:
 	if path_str == "":
 		return "."
 	return path_str
+
+
+## Asegura que root y TODOS sus descendientes tengan owner = root.
+## CRÍTICO: PackedScene.pack() omite nodos sin owner → una escena construida
+## por MCP (add_child por script NO setea owner) se guardaría vacía o incompleta.
+static func ensure_owner_recursive(root: Node) -> void:
+	if root == null:
+		return
+	root.owner = root
+	_ensure_owner_child(root, root)
+
+
+static func _ensure_owner_child(node: Node, owner: Node) -> void:
+	for child in node.get_children():
+		child.owner = owner
+		_ensure_owner_child(child, owner)

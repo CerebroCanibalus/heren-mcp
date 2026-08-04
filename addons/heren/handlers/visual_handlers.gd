@@ -15,6 +15,7 @@ extends Node
 # Cualquier cliente MCP (OpenCode, Claude Desktop...) la interpreta.
 
 const HerenCoordsScript := preload("coords.gd")
+const HerenSceneRegistryScript := preload("../scene_registry.gd")
 
 var _editor_plugin: EditorPlugin
 
@@ -53,14 +54,8 @@ func _scene_root(args: Dictionary = {}) -> Node:
 	var ei := _editor_interface()
 	if ei == null:
 		return null
-	var scene_path: String = str(args.get("scene_path", ""))
-	if scene_path != "":
-		var active := ei.get_edited_scene_root()
-		if active == null or active.scene_file_path != scene_path:
-			if not ResourceLoader.exists(scene_path):
-				return null
-			ei.open_scene_from_path(scene_path)
-	return ei.get_edited_scene_root()
+	# Registry (escena creada por MCP en memoria) → pestaña → disco.
+	return HerenSceneRegistryScript.resolve_root(ei, str(args.get("scene_path", "")))
 
 
 func _node_pos(node: Node) -> Dictionary:

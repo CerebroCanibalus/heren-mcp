@@ -13,6 +13,7 @@ extends Node
 #   uniform  -> set_shader_parameter en el material del nodo
 
 const HerenCoordsScript := preload("coords.gd")
+const HerenSceneRegistryScript := preload("../scene_registry.gd")
 
 var _editor_plugin: EditorPlugin
 
@@ -31,16 +32,8 @@ func _scene_root(args: Dictionary = {}) -> Node:
 	var ei := _editor_interface()
 	if ei == null:
 		return null
-	# Contexto de escena explícito: si se pide scene_path y no es la activa,
-	# activarla. Así el contexto NO cambia impredeciblemente con la pestaña.
-	var scene_path: String = str(args.get("scene_path", ""))
-	if scene_path != "":
-		var active := ei.get_edited_scene_root()
-		if active == null or active.scene_file_path != scene_path:
-			if not ResourceLoader.exists(scene_path):
-				return null
-			ei.open_scene_from_path(scene_path)
-	return ei.get_edited_scene_root()
+	# Registry (escena creada por MCP en memoria) → pestaña → disco.
+	return HerenSceneRegistryScript.resolve_root(ei, str(args.get("scene_path", "")))
 
 
 func _resolve_node(root: Node, node_path: Variant) -> Node:
