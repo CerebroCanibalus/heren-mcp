@@ -1029,18 +1029,22 @@ crea/elimina/edita nodos devuelve en el resultado las coordenadas del nodo
 afectado (`position`, `global_position`, `bbox` si aplica, `parent_path`).
 El agente sabe DÓNDE quedó el nodo sin una llamada extra.
 
-**Tools de visión:**
-| Tool | Costo est. | Qué devuelve |
-|------|-----------|--------------|
-| `scene_coords` | ~20-100 tok | Mapa de coordenadas de la escena (textual): `{nodo: {pos, bbox, parent, type}}` |
-| `visual_scene_summary` | ~50 tok | Contador por tipo de nodo, bbox total, dirty flags |
-| `visual_ascii_scene` | ~150 tok | Árbol ASCII colapsado/expandido (no imagen) |
-| `visual_inspect_scene` | alto | **`Image` base64 MCP** — captura viewport 2D/3D real del editor (cámaras + gizmos) + metadatos |
-| `visual_inspect_node` | alto | `Image` enfocada en un nodo (framing) |
-| `visual_preview_resource` | bajo | Thumbnail vía `EditorResourcePreview` / `make_mesh_previews` |
-| `visual_diff` | bajo | Diff textual antes/después (ver cambio sin 2 imágenes) |
-| `vision_budget` | ~30 tok | Consultar/establecer presupuesto de la sesión |
-| `vision_cache` | ~30 tok | Ver/limpiar cache de visión |
+**Tool de visión (centralizada, 1 tool con acciones — filosofía §1):**
+| action | Costo est. | Qué devuelve |
+|--------|-----------|--------------|
+| `coords` | ~20-100 tok | Mapa de coordenadas de la escena (textual): `{nodo: {pos, bbox, parent, type}}` (NIVEL 0) |
+| `summary` | ~50 tok | Contador por tipo de nodo, bbox total, dirty flags (NIVEL 1) |
+| `ascii` | ~150 tok | Árbol ASCII colapsado/expandido, sin imagen (NIVEL 1) |
+| `capture` | alto | **`Image` base64 MCP** — captura viewport 2D/3D real del editor + metadatos (NIVEL 2/3) |
+| `node` | alto | `Image` enfocada en un nodo (framing) (NIVEL 3) |
+| `budget` | ~30 tok | Consultar/establecer presupuesto de tokens de la sesión |
+| `cache` | ~30 tok | Ver/limpiar cache de visión |
+
+> **Consolidación (2026-08-04)**: las 7 tools sueltas (`scene_coords`, `visual_scene_summary`,
+> `visual_ascii_scene`, `visual_capture`, `visual_node`, `vision_budget`, `vision_cache`)
+> se fusionaron en **UNA tool `visual`** con esas 7 acciones — paridad con la filosofía de
+> tools centralizadas/modulares/potentes. `visual_preview_resource` (preview de recursos)
+> se sirve igualmente vía `visual/preview_resource` en el plugin.
 
 **Formato del resultado de captura (output directo al agente):**
 ```json
@@ -1198,12 +1202,13 @@ guardar/leer `last_project` (1 clave), no para cachear estado de trabajo.
 > **Decisión del General (2026-08-03)**: innovar sobre los competidores — output directo al agente (image_content MCP), viewports REALES 2D/3D del editor, coords textuales como NIVEL 0 (suficientes la mayoría de veces), y coords proactivas en cada mutación.
 - [x] `visual_handlers.gd` — captura viewports 2D/3D reales (`get_editor_viewport_2d/3d` → PNG base64) + coords map + summary + ascii + preview_resource (Mesh/Texture2D)
 - [x] `ws_client.gd` — soporte payload binario (`__image_base64` + `__image_format`) + `send_notification()`
-- [x] `bridge.py` — `visual_capture` devuelve `fastmcp.utilities.types.Image` → `image_content` MCP (imagen DIRECTA al agente) + 7 tools visuales
+- [x] `bridge.py` — `visual_capture` devuelve `fastmcp.utilities.types.Image` → `image_content` MCP (imagen DIRECTA al agente) + tools visuales
 - [x] `node_handlers.gd` — coords proactivas en mutaciones (add/remove/set_prop devuelven pos + bbox + parent del nodo afectado)
-- [x] 8 tools de visión + presupuesto (`vision_budget`) + cache (`vision_cache` LRU 50)
+- [x] Sistema de visión + presupuesto + cache (LRU 50)
 - [x] Previews de recursos (`visual/preview_resource`: make_mesh_previews + Texture2D.get_image)
 - [x] Eventos push (`selection_changed` via `_edit()` con rate-limit 1/s)
-- **Criterio**: ✅ `visual_*` funcionales (validado E2E: coords, summary, ascii, capture PNG 400x197, coords en add/remove), presupuesto respetado, cache funciona.
+- **Criterio**: ✅ `visual/*` funcionales (validado E2E: coords, summary, ascii, capture PNG, coords en add/remove), presupuesto respetado, cache funciona.
+- **Consolidación (2026-08-04)**: en Rust (Fase 4) las 7 tools de visión se fusionaron en **UNA tool `visual`** (actions: coords|summary|ascii|capture|node|budget|cache) — ver §13.6.
 
 **Fase 4 — Tools FlojoMCP + Sesiones (COMPLETADA 2026-08-04).** Objetivo: portar las tools → Rust, WS plugin server, auto-launch.
 - [x] Crate `heren-server` en workspace FlojoMCP (`crates/heren-server`) — dogfooding
