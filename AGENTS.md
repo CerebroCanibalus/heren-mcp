@@ -25,31 +25,32 @@ Este documento es la biblia para agentes que operan Heren MCP. Lee esto antes de
 > - **`project/setup_plugin`**: instalación como tool que el agente puede llamar.
 > - **`session.close_editor`** ahora opcional (default false).
 > - Herramienta de diagnóstico: `.temp/probe_tools.py` (probe stdio NDJSON del .exe).
-> - **E2E minijuego 2026-08-04**: ~44 nodos funcionales. 10/15 tools impecables; 8 bugs + 3 gaps documentados en **§0 PRIORIDAD INMEDIATA** (C1/C2 sistémicos, H1-H4, M1-M3, visual roto). Pendiente de fix.
+> - **E2E minijuego 2026-08-04**: ~44 nodos funcionales. 10/15 tools impecables; 8 bugs + 3 gaps documentados en **§0 PRIORIDAD INMEDIATA**. **C1/C2 + H1-H4 RESUELTOS** (server recompilado + handlers .gd corregidos + editor reconectado); pendientes M1-M3, visual 4/7, gaps.
+> - **Fix C1/C2**: `server.rs args()` omite keys None; `handle_setting` trata null explícito como get. **Fix H1**: signal/list defensivo + key `"signal"`. **Fix H2**: `resource_name` (no `name`). **Fix H3**: `set_bone_weights` + índice int. **Fix H4**: skeleton set_rest/attachment ramifican por tipo.
 
 ---
 
 ## 0. 🚨 PRIORIDAD INMEDIATA — Bugs/mejoras del E2E (minijuego platformer, 2026-08-04)
 
 > Hallazgos de la prueba E2E completa (`.temp/e2e_minigame`, ~44 nodos, juego funcional).
-> **CRÍTICO C1/C2 primero** (sistémico, rompen `setting`/`autoload`/`input_map` en modo list).
+> **Estado 2026-08-04 (sesión de fixes)**: C1/C2, H1-H4 **RESUELTOS** (compilado + validado sintaxis, editor reconectado). Pendientes: M1-M3, visual 4/7, gaps.
 > Archivos fuente: `crates/heren-server/src/server.rs` (args) + `addons/heren/handlers/*.gd`.
 
-### Bugs críticos (rompen datos)
-| # | Tool | Bug | Causa raíz / Fix |
-|---|------|-----|------------------|
-| **C1** | `project/setting` get | **Borra el setting** (responde op:"set", value:null). Borró `application/config/name`. | `args()` de server.rs inserta `"value":null` para todo param opcional; `handle_setting` usa `args.has("value")` como set. **Fix**: `args()` debe **omitir** keys None; y/o `handle_setting` trata value=null como get. |
-| **C2** | Sistémico | `str(null)` = `"<null>"` rompe los guards `if x == ""` de TODOS los handlers. `autoload` list trató "<null>" como nombre. | Server inyecta `null` en args opcionales. **Fix**: `args()` omitir keys None (misma raíz que C1). |
+### Bugs críticos (rompen datos) — ✅ RESUELTOS
+| # | Tool | Bug | Fix aplicado |
+|---|------|-----|--------------|
+| **C1** | `project/setting` get | **Borraba el setting** (op:"set", value:null). | `server.rs args()` **omite keys None** (antes insertaba `Value::Null`). + `project_handlers.gd`: guard `if args.has("value") and args.get("value") != null` → null explícito = get. |
+| **C2** | Sistémico | `str(null)`="<null>" rompía guards `if x == ""`. | Misma raíz C1: keys None ya no se inyectan. |
 
-### Bugs altos (crashes)
-| # | Tool | Bug | Causa raíz / Fix |
-|---|------|-----|------------------|
-| **H1** | `signal/list` | Crash "Unknown error" en nodos con conexiones entrantes (OK sin ellas). | Bucle `get_incoming_connections()` en `signal_handlers.gd` — acceso defensivo. |
-| **H2** | `shader/material` | "Unknown error" siempre (asignar material a cualquier nodo). | falla al aplicar material; diagnosticar. |
-| **H3** | `skeleton/skin` | Crash. | **typo `set_bone_weigths`** en `animation_handlers.gd` → `set_bone_weights`. |
-| **H4** | `skeleton` 2D | `set_rest`/`attachment` exigen Skeleton3D siempre. | `as Skeleton3D` fijo; ignora `is_3d=false`. Fix: ramificar por `is_3d`. |
+### Bugs altos (crashes) — ✅ RESUELTOS
+| # | Tool | Bug | Fix aplicado |
+|---|------|-----|--------------|
+| **H1** | `signal/list` | Crash "Unknown error" con conexiones entrantes. | `signal_handlers.gd`: loop totalmente defensivo (`.get()`, aísla por conexión, try-safe). **Bonus**: key correcta `"signal"` (no `"signal_name"` que daba `""`). |
+| **H2** | `shader/material` | "Unknown error" siempre. | **CAUSA RAÍZ**: `material.name =` (ShaderMaterial es Resource, no tiene `name`). Fix: `material.resource_name =`. |
+| **H3** | `skeleton/skin` | Crash. | `set_bone_weigths` → `set_bone_weights` + pasa **índice int** (`find_bone`), no nombre. |
+| **H4** | `skeleton` 2D | set_rest/attachment exigían Skeleton3D. | Ramificar por tipo: Skeleton2D→`Transform2D`/`BoneAttachment2D`, Skeleton3D→`Transform3D`/`BoneAttachment3D`. |
 
-### Bugs medios
+### Bugs medios — ⚠️ PENDIENTES
 | # | Tool | Bug | Causa raíz / Fix |
 |---|------|-----|------------------|
 | **M1** | `node/array_remove` | Elimina el primer elemento, no el `value` pedido (int vs float en `find`). | `current.find(deserialize_value(value))` — tipar/normalizar. |
@@ -644,6 +645,12 @@ session("open", project_path="D:/MiProyectoExistente")
 | **E2E: `resource` no crea directorios padre (gap)** | `create`/`create_script` fallan con "save_failed: Can't open"/"cannot_open" si la carpeta no existe; no hay tool de mkdir. Fix: crear dirs en create/create_script o exponer mkdir. Ver §0. | 2026-08-04 |
 | **E2E: visual 4/7 acciones rotas (coords/capture/node/budget/cache)** | `visual/coords` devuelve solo 3 nodos con paths ".." (incompleto); `capture`/`node` imagen 2×2 px (viewport 2D no renderiza) + pos (0,0); `budget`/`cache` fallan porque `handle_vision_budget`/`handle_vision_cache` **no existen** en `visual_handlers.gd` (el server los mapea pero el plugin no). Solo `ascii` y `summary.by_type` funcionan. Ver §0. | 2026-08-04 |
 | **E2E: `validate/node` script_cannot_instantiate (M3)** | Scripts creados por MCP no se compilan: `efs.update_file()` no basta, falta re-import/scan del editor para que `can_instance` sea true. Ver §0. | 2026-08-04 |
+| **Fix C1/C2: `args()` omite keys None** | server.rs `args()` insertaba `Value::Null` para todo param opcional → `project/setting` get se leía como set (borraba el setting) y `str(null)`="<null>" rompía guards `if x == ""` en todos los handlers. **FIX**: `args()` ahora OMITE keys None; además `handle_setting` (project_handlers.gd) trata value null explícito como get. `heren-check` y `heren-build` (release) verdes. | 2026-08-04 |
+| **Fix H2: `shader/material` resource_name** | CAUSA RAÍZ: `material.name =` en shader_handlers.gd — ShaderMaterial es un Resource que NO tiene propiedad `name` (tiene `resource_name`); asignar `.name` lanzaba runtime error GDScript → "Unknown error" siempre. **FIX**: `material.resource_name =`. | 2026-08-04 |
+| **Fix H3: `set_bone_weights` + índice int** | `animation_handlers.gd handle_skeleton_skin` llamaba `polygon.set_bone_weigths(bone_name, ...)` (typo + nombre en vez de índice). **FIX**: `set_bone_weights(find_bone(str(bone_name)), PackedFloat32Array(weights))` con guard `bone_not_found`. | 2026-08-04 |
+| **Fix H4: skeleton set_rest/attachment ramifican por tipo** | Ambos handlers hacían `as Skeleton3D` fijo → fallaban en Skeleton2D aunque `is_3d=false`. **FIX**: si `node is Skeleton2D` → `Transform2D(angle, origin)` / `BoneAttachment2D`; else Skeleton3D → `Transform3D`/`BoneAttachment3D`. Paridad con `handle_skeleton_add_bone` (que ya ramificaba bien). | 2026-08-04 |
+| **Fix H1: `signal/list` totalmente defensivo** | Loop de `get_incoming_connections()` accedía a conn como objeto (`conn.source`) → crash "Unknown error" en nodos con conexiones. **FIX**: trata cada conn como Dictionary, acceso `.get()`, aísla por conexión. **Bonus**: key correcta `"signal"` (no `"signal_name"` — que devolvía siempre `""`). | 2026-08-04 |
+| **Gotcha: las tools MCP se cargan al INICIO de la sesión** | Tras recompilar heren-server.exe, el toolset MCP de OpenCode (`godot_*`) NO se refresca en una conversación en curso — quedó fijado a la instancia MCP anterior. Para usar el binario nuevo con los fixes, abrir una SESIÓN/CONVERSACIÓN NUEVA de OpenCode (arranca el MCP con el binario actualizado). Validación manual E2E post-fix requiere esa sesión nueva. | 2026-08-04 |
 
  ### Nuevas Features (v3.0)
 

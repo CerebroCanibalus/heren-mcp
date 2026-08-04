@@ -62,7 +62,9 @@ func handle_setting(args: Dictionary) -> Dictionary:
 	if setting_name == "":
 		return {"ok": false, "error": "setting_name required"}
 
-	if args.has("value"):
+	# Get mode: no value, or explicit null value -> read (never set).
+	# Fix C1: server now omits None keys, but guard explicit null too.
+	if args.has("value") and args.get("value") != null:
 		var raw: Variant = args.get("value")
 		# IMPORTANT: path strings (res://...) stay as PLAIN strings.
 		# deserialize_value() would load() them into a Resource, and

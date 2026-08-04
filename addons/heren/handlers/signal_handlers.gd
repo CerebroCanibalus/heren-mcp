@@ -144,13 +144,28 @@ func handle_list(args: Dictionary) -> Dictionary:
 	for sig in node.get_signal_list():
 		signals.append({"name": str(sig.name), "args": sig.args.size()})
 
+	# Fix H1: fully defensive — each connection is a Dictionary; access via
+	# .get() and isolate per-connection so a malformed/odd entry can never
+	# crash the whole handler into "Unknown error".
 	var connections: Array = []
-	for conn in node.get_incoming_connections():
-		connections.append({
-			"from": _node_path_relative(conn.source as Node, root) if conn.source is Node else str(conn.source),
-			"signal": str(conn.signal_name),
-			"to_method": str(conn.callable.get_method()) if conn.callable is Callable and conn.callable.get_object() != null else "",
-		})
+	for conn_raw in node.get_incoming_connections():
+		var conn: Dictionary = conn_raw as Dictionary if conn_raw is Dictionary else {}
+		var from_desc: String = ""
+		var src: Variant = conn.get("source", null)
+		if src is Node:
+			from_desc = _node_path_relative(src as Node, root)
+		else:
+			from_desc = str(src)
+		var to_method: String = ""
+		var callable: Variant = conn.get("callable", null)
+		if callable is Callable and (callable as Callable).get_object() != null:
+			to_method = str((callable as Callable).get_method())
+		var conn_entry: Dictionary = {
+			"from": from_desc,
+			"signal": str(conn.get("signal", "")),
+			"to_method": to_method,
+		}
+		connections.append(conn_entry)
 
 	return {
 		"ok": true,

@@ -160,8 +160,10 @@ func handle_material(args: Dictionary) -> Dictionary:
 	var material_name: String = str(args.get("material_name", ""))
 
 	var material := ShaderMaterial.new()
+	# Fix H2: a ShaderMaterial is a Resource, so it has `resource_name`, NOT
+	# `name`. Assigning `material.name` threw a runtime error (→ "Unknown error").
 	if material_name != "":
-		material.name = material_name
+		material.resource_name = material_name
 	if shader_path != "" and ResourceLoader.exists(shader_path):
 		material.shader = load(shader_path)
 
