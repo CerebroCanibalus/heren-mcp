@@ -31,10 +31,19 @@ func _editor_interface() -> EditorInterface:
 	return _editor_plugin.get_editor_interface()
 
 
-func _scene_root() -> Node:
+func _scene_root(args: Dictionary = {}) -> Node:
 	var ei := _editor_interface()
 	if ei == null:
 		return null
+	# Contexto de escena explícito: si se pide scene_path y no es la activa,
+	# activarla. Así el contexto NO cambia impredeciblemente con la pestaña.
+	var scene_path: String = str(args.get("scene_path", ""))
+	if scene_path != "":
+		var active := ei.get_edited_scene_root()
+		if active == null or active.scene_file_path != scene_path:
+			if not ResourceLoader.exists(scene_path):
+				return null
+			ei.open_scene_from_path(scene_path)
 	return ei.get_edited_scene_root()
 
 
@@ -96,7 +105,7 @@ func _get_children_list(root: Node, node: Node, recursive: bool, out: Array, dep
 # ---------------------------------------------------------------- handlers
 
 func handle_add(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 
@@ -272,7 +281,7 @@ func _count_scene_nodes(node: Node) -> int:
 
 
 func handle_remove(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var node_path: Variant = args.get("node_path", "")
@@ -308,7 +317,7 @@ func handle_remove(args: Dictionary) -> Dictionary:
 
 
 func handle_set_prop(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var node_path: Variant = args.get("node_path", "")
@@ -341,7 +350,7 @@ func handle_set_prop(args: Dictionary) -> Dictionary:
 
 
 func handle_set_props(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var node_path: Variant = args.get("node_path", "")
@@ -373,7 +382,7 @@ func handle_set_props(args: Dictionary) -> Dictionary:
 
 
 func handle_get_prop(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var node_path: Variant = args.get("node_path", "")
@@ -396,7 +405,7 @@ func handle_get_prop(args: Dictionary) -> Dictionary:
 
 
 func handle_get_info(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var node_path: Variant = args.get("node_path", "")
@@ -424,7 +433,7 @@ func handle_get_info(args: Dictionary) -> Dictionary:
 
 
 func handle_get_children(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var node_path: Variant = args.get("node_path", ".")
@@ -446,7 +455,7 @@ func handle_get_children(args: Dictionary) -> Dictionary:
 
 
 func handle_find(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var query: String = str(args.get("query", ""))
@@ -492,7 +501,7 @@ func handle_find(args: Dictionary) -> Dictionary:
 
 
 func handle_duplicate(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var node_path: Variant = args.get("node_path", "")
@@ -530,7 +539,7 @@ func handle_duplicate(args: Dictionary) -> Dictionary:
 
 
 func handle_rename(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var node_path: Variant = args.get("node_path", "")
@@ -557,7 +566,7 @@ func handle_rename(args: Dictionary) -> Dictionary:
 
 
 func handle_move(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var node_path: Variant = args.get("node_path", "")
@@ -597,7 +606,7 @@ func handle_move(args: Dictionary) -> Dictionary:
 
 
 func handle_set_owner(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var node_path: Variant = args.get("node_path", "")
@@ -626,7 +635,7 @@ func handle_set_owner(args: Dictionary) -> Dictionary:
 
 
 func handle_reorder(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var node_path: Variant = args.get("node_path", "")
@@ -658,7 +667,7 @@ func handle_reorder(args: Dictionary) -> Dictionary:
 
 
 func handle_array_append(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var node_path: Variant = args.get("node_path", "")
@@ -691,7 +700,7 @@ func handle_array_append(args: Dictionary) -> Dictionary:
 
 
 func handle_array_remove(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var node_path: Variant = args.get("node_path", "")

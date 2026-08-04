@@ -49,6 +49,20 @@ func _root_node() -> Node:
 	return ei.get_edited_scene_root()
 
 
+func _scene_root(args: Dictionary = {}) -> Node:
+	var ei := _editor_interface()
+	if ei == null:
+		return null
+	var scene_path: String = str(args.get("scene_path", ""))
+	if scene_path != "":
+		var active := ei.get_edited_scene_root()
+		if active == null or active.scene_file_path != scene_path:
+			if not ResourceLoader.exists(scene_path):
+				return null
+			ei.open_scene_from_path(scene_path)
+	return ei.get_edited_scene_root()
+
+
 func _node_pos(node: Node) -> Dictionary:
 	if node is CanvasItem:
 		return HerenCoordsScript.serialize_value((node as CanvasItem).global_position)
@@ -208,7 +222,7 @@ func handle_capture(args: Dictionary) -> Dictionary:
 	# ANTES de capturar — el agente ve un frame concreto sin llamadas extra.
 	var anim_info: Dictionary = _args_dict(args, "animation")
 	if not anim_info.is_empty():
-		var root := ei.get_edited_scene_root()
+		var root := _scene_root(args)
 		if root != null:
 			var player := _resolve_animation_player(root, anim_info.get("player_path", ""))
 			if player != null:
@@ -231,7 +245,7 @@ func handle_capture(args: Dictionary) -> Dictionary:
 	var png := img.save_png_to_buffer()
 	if png.is_empty():
 		return {"ok": false, "error": "capture failed: png encode"}
-	var root := ei.get_edited_scene_root()
+	var root := _scene_root(args)
 	var out := {
 		"ok": true,
 		"viewport": mode,
@@ -270,7 +284,7 @@ func handle_capture_node(args: Dictionary) -> Dictionary:
 	var ei := _editor_interface()
 	if ei == null:
 		return {"ok": false, "error": "no editor interface"}
-	var root := ei.get_edited_scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var node_path: String = str(args.get("node_path", ""))

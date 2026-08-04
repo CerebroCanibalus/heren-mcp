@@ -39,6 +39,11 @@ Biblia para agentes que operan Heren MCP. Léelo antes de tocar código.
 | **H2** | `shader/material` | "Unknown error" siempre. | **CAUSA RAÍZ**: `material.name =` (Resource no tiene `name`). Fix: `material.resource_name =`. |
 | **H3** | `skeleton/skin` | Crash. | `set_bone_weigths`→`set_bone_weights` + **índice int** (`find_bone`), no nombre. |
 | **H4** | `skeleton` 2D | set_rest/attachment exigían Skeleton3D. | Ramificar por tipo: Skeleton2D→`Transform2D`/Node2D hijo, Skeleton3D→`Transform3D`/`BoneAttachment3D`. |
+| **S1** | `scene/create` | Ignoraba `scene_path`: inyectaba en la pestaña activa (rama de archivo solo corría sin escena abierta). | `scene_path` explícito → **SIEMPRE** crea archivo (`_create_scene_file`), pestaña activa o no. |
+| **S2** | `scene/save` | Éxito falso: guardaba la pestaña activa, nunca el path pedido (no-op silencioso). | `scene_path` opcional → pack+save del root actual a ese path. |
+| **S3** | **Contexto de escena inestable** | 86 call sites en 8 handlers resolvían contra `get_edited_scene_root()` (pestaña activa) — cambiaba sola entre llamadas. | `apply_scene_context` (server, por proyecto) + `_scene_root(args)` (plugin) activa la escena objetivo. VER §10 decisión. |
+| **S4** | `orchestrate` | "Unknown error" genérico. | (a) `tool:"node/add"` ahora se normaliza a tool+action; (b) errores por op en `results` (no abortan el batch), con `errors` count. |
+| **S5** | `shader/resource/scene create` | `write_failed` si la carpeta no existe. | `_ensure_parent_dir()` (DirAccess.make_dir_recursive) antes de escribir. |
 
 ### Bugs medios — ⚠️ PENDIENTES
 | # | Tool | Bug | Causa raíz / Fix |
@@ -373,6 +378,7 @@ Esto da al agente **conocimiento espacial completo** sin llamadas extra. Benefic
 | 2026-08-04 | **`SkeletonIK3D.magnet` es Vector3, `target_node` es NodePath** | `magnet` es el punto de magnet (no float); `target` es el Transform heredado (no usar). `target_node` recibe NODE PATH. |
 | 2026-08-04 | **`AnimationNodeBlendTree.connect_node(input, input_index, output)`** | 3 args en Godot 4.7 (input_node, input_index, output_node) — NO (from, from_port, to, to_port). |
 | 2026-08-04 | **IK 2D = FABRIK propio** | Godot no tiene IK nativo 2D. `skeleton_fabrik` implementa FABRIK sobre Bone2D con pesos por hueso. |
+| 2026-08-04 | **Contexto de escena estable (S3)** | `apply_scene_context` en server.rs guarda el último `scene_path` por proyecto en RAM y lo inyecta en llamadas de node/animation/shader/signal/tilemap/visual (nunca sobreescribe si ya viene explícito). En el plugin, `_scene_root(args)` activa la escena pedida con `open_scene_from_path`. El agente fija la escena UNA vez (`scene_path` en una llamada) y el resto de la sesión opera contra ella — adiós a los `node_not_found` intermitentes por cambio de pestaña. `validate` NO usa este contexto (su `scene_path` es el archivo a validar). |
 
 ---
 

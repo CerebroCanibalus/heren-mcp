@@ -27,10 +27,19 @@ func _editor_interface() -> EditorInterface:
 	return _editor_plugin.get_editor_interface()
 
 
-func _scene_root() -> Node:
+func _scene_root(args: Dictionary = {}) -> Node:
 	var ei := _editor_interface()
 	if ei == null:
 		return null
+	# Contexto de escena explícito: si se pide scene_path y no es la activa,
+	# activarla. Así el contexto NO cambia impredeciblemente con la pestaña.
+	var scene_path: String = str(args.get("scene_path", ""))
+	if scene_path != "":
+		var active := ei.get_edited_scene_root()
+		if active == null or active.scene_file_path != scene_path:
+			if not ResourceLoader.exists(scene_path):
+				return null
+			ei.open_scene_from_path(scene_path)
 	return ei.get_edited_scene_root()
 
 
@@ -88,7 +97,7 @@ func handle_script(args: Dictionary) -> Dictionary:
 
 
 func handle_node(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 

@@ -36,6 +36,12 @@ func _editor_interface() -> EditorInterface:
 	return _editor_plugin.get_editor_interface()
 
 
+func _ensure_parent_dir(path: String) -> void:
+	var dir_path := path.get_base_dir()
+	if dir_path != "" and not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(dir_path)):
+		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir_path))
+
+
 ## Accepts a Dictionary directly, or a JSON string (clients may send either).
 func _args_dict(args: Dictionary, key: String) -> Dictionary:
 	var raw: Variant = args.get(key, {})
@@ -131,6 +137,7 @@ func handle_create(args: Dictionary) -> Dictionary:
 		if key in res:
 			res.set(key, HerenCoordsScript.deserialize_value(properties[key]))
 
+	_ensure_parent_dir(resource_path)
 	var err := ResourceSaver.save(res, resource_path)
 	if err != OK:
 		return {"ok": false, "error": "save_failed: " + error_string(err)}
@@ -182,6 +189,7 @@ func handle_update(args: Dictionary) -> Dictionary:
 			res.set(key, HerenCoordsScript.deserialize_value(properties[key]))
 			applied.append(key)
 
+	_ensure_parent_dir(resource_path)
 	var err := ResourceSaver.save(res, resource_path)
 	if err != OK:
 		return {"ok": false, "error": "save_failed: " + error_string(err)}
@@ -235,6 +243,7 @@ func handle_create_script(args: Dictionary) -> Dictionary:
 		var template: String = str(args.get("template", "Node"))
 		content = _script_template(template)
 
+	_ensure_parent_dir(script_path)
 	var file := FileAccess.open(script_path, FileAccess.WRITE)
 	if file == null:
 		return {"ok": false, "error": "cannot_open: " + script_path + " (" + str(FileAccess.get_open_error()) + ")"}

@@ -70,7 +70,15 @@ func handle_create(args: Dictionary) -> Dictionary:
 		return {"ok": false, "error": "unknown root_type: " + root_type}
 	new_node.name = root_name
 
-	# If there's an existing edited scene, add the node to it (v3 behavior).
+	# scene_path explícito → SIEMPRE crear archivo nuevo (independiente de la
+	# pestaña activa). El path es el destino del archivo, no la escena activa.
+	if scene_path != "":
+		if ResourceLoader.exists(scene_path):
+			new_node.free()
+			return {"ok": false, "error": "scene_exists: " + scene_path}
+		return _create_scene_file(ei, new_node, scene_path, root_type, root_name)
+
+	# Sin scene_path: si hay escena abierta, inyectar el nodo (v3 behavior).
 	var scene_root := ei.get_edited_scene_root()
 	if scene_root != null:
 		_undo_redo.begin_action("Heren Create Node: %s" % root_name)
@@ -88,11 +96,20 @@ func handle_create(args: Dictionary) -> Dictionary:
 	var packed := PackedScene.new()
 	new_node.owner = new_node
 	packed.pack(new_node)
-	if scene_path == "":
-		scene_path = "res://%s.tscn" % root_name
+	scene_path = "res://%s.tscn" % root_name
 	if ResourceLoader.exists(scene_path):
 		new_node.free()
 		return {"ok": false, "error": "scene_exists: " + scene_path}
+	return _create_scene_file(ei, new_node, scene_path, root_type, root_name)
+
+
+func _create_scene_file(ei: EditorInterface, new_node: Node, scene_path: String,
+		root_type: String, root_name: String) -> Dictionary:
+	# Asegurar directorio padre (misma carencia que shader/resource).
+	_ensure_parent_dir(scene_path)
+	var packed := PackedScene.new()
+	new_node.owner = new_node
+	packed.pack(new_node)
 	var err := ResourceSaver.save(packed, scene_path)
 	new_node.free()
 	if err != OK:
@@ -118,6 +135,22 @@ func handle_save(args: Dictionary) -> Dictionary:
 	var root := ei.get_edited_scene_root()
 	if root == null:
 		return {"ok": false, "error": "no scene to save"}
+
+	# scene_path explícito → guardar la escena actual A ESE PATH (pack+save).
+	# Sin path → guardar la pestaña activa (comportamiento histórico).
+	var scene_path: String = str(args.get("scene_path", ""))
+	if scene_path != "":
+		_ensure_parent_dir(scene_path)
+		var packed := PackedScene.new()
+		packed.pack(root)
+		var err := ResourceSaver.save(packed, scene_path)
+		if err != OK:
+			return {"ok": false, "error": "save_failed: " + error_string(err)}
+		var efs: EditorFileSystem = ei.get_resource_filesystem()
+		if efs:
+			efs.update_file(scene_path)
+		return {"ok": true, "saved": true, "saved_to": scene_path}
+
 	var err := ei.save_scene()
 	if err != OK:
 		return {"ok": false, "error": "save failed: %d" % err}
@@ -143,3 +176,9 @@ func _editor_interface() -> EditorInterface:
 	if ei == null:
 		print("[HEREN] get_editor_interface() returned NULL")
 	return ei
+
+
+func _ensure_parent_dir(path: String) -> void:
+	var dir_path := path.get_base_dir()
+	if dir_path != "" and not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(dir_path)):
+		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir_path))

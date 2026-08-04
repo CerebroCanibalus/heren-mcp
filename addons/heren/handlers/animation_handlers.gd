@@ -35,10 +35,19 @@ func _editor_interface() -> EditorInterface:
 	return _editor_plugin.get_editor_interface()
 
 
-func _scene_root() -> Node:
+func _scene_root(args: Dictionary = {}) -> Node:
 	var ei := _editor_interface()
 	if ei == null:
 		return null
+	# Contexto de escena explícito: si se pide scene_path y no es la activa,
+	# activarla. Así el contexto NO cambia impredeciblemente con la pestaña.
+	var scene_path: String = str(args.get("scene_path", ""))
+	if scene_path != "":
+		var active := ei.get_edited_scene_root()
+		if active == null or active.scene_file_path != scene_path:
+			if not ResourceLoader.exists(scene_path):
+				return null
+			ei.open_scene_from_path(scene_path)
 	return ei.get_edited_scene_root()
 
 
@@ -84,7 +93,7 @@ func _args_dict(args: Dictionary, key: String) -> Dictionary:
 # ---------------------------------------------------------------- animation
 
 func handle_create_player(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 
@@ -115,7 +124,7 @@ func handle_create_player(args: Dictionary) -> Dictionary:
 
 
 func handle_create(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 
@@ -145,7 +154,7 @@ func handle_create(args: Dictionary) -> Dictionary:
 
 
 func handle_add_key(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 
@@ -170,7 +179,7 @@ func handle_add_key(args: Dictionary) -> Dictionary:
 
 
 func handle_state_machine(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 
@@ -343,7 +352,7 @@ func _build_blend_space_2d(args: Dictionary) -> AnimationNodeBlendSpace2D:
 # ---------------------------------------------------------------- edición (Fase 2)
 
 func handle_remove_track(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)
@@ -364,7 +373,7 @@ func handle_remove_track(args: Dictionary) -> Dictionary:
 
 
 func handle_remove_key(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)
@@ -388,7 +397,7 @@ func handle_remove_key(args: Dictionary) -> Dictionary:
 
 
 func handle_update_key(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)
@@ -419,7 +428,7 @@ func handle_update_key(args: Dictionary) -> Dictionary:
 
 
 func handle_update_props(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)
@@ -452,7 +461,7 @@ func handle_update_props(args: Dictionary) -> Dictionary:
 # ---------------------------------------------------------------- one_shot (Fase 2)
 
 func handle_one_shot(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)
@@ -543,7 +552,7 @@ func handle_one_shot(args: Dictionary) -> Dictionary:
 # ---------------------------------------------------------------- tween (Fase 3)
 
 func handle_tween(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var node := _resolve_node(root, args.get("node_path", ""))
@@ -608,7 +617,7 @@ func _tween_ease(name: String) -> int:
 # ---------------------------------------------------------------- skeleton pose/ik (Fase 3)
 
 func handle_skeleton_get_bones(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var node := _resolve_node(root, args.get("skeleton_path", ""))
@@ -642,7 +651,7 @@ func handle_skeleton_get_bones(args: Dictionary) -> Dictionary:
 
 
 func handle_skeleton_get_pose(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var node := _resolve_node(root, args.get("skeleton_path", ""))
@@ -696,7 +705,7 @@ func handle_skeleton_get_pose(args: Dictionary) -> Dictionary:
 
 
 func handle_skeleton_set_pose(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var node := _resolve_node(root, args.get("skeleton_path", ""))
@@ -736,7 +745,7 @@ func handle_skeleton_set_pose(args: Dictionary) -> Dictionary:
 # ---------------------------------------------------------------- innovación (Fase 4)
 
 func handle_record(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)
@@ -790,7 +799,7 @@ func handle_record(args: Dictionary) -> Dictionary:
 
 
 func handle_from_path(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)
@@ -856,7 +865,7 @@ func handle_from_path(args: Dictionary) -> Dictionary:
 
 
 func handle_loop_pose(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)
@@ -934,7 +943,7 @@ func handle_loop_pose(args: Dictionary) -> Dictionary:
 
 
 func handle_curve(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)
@@ -989,7 +998,7 @@ func _player_or_error(root: Node, args: Dictionary) -> Dictionary:
 
 
 func handle_play(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)
@@ -1020,7 +1029,7 @@ func handle_play(args: Dictionary) -> Dictionary:
 
 
 func handle_stop(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)
@@ -1036,7 +1045,7 @@ func handle_stop(args: Dictionary) -> Dictionary:
 
 
 func handle_seek(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)
@@ -1053,7 +1062,7 @@ func handle_seek(args: Dictionary) -> Dictionary:
 
 
 func handle_speed(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)
@@ -1070,7 +1079,7 @@ func handle_speed(args: Dictionary) -> Dictionary:
 
 
 func handle_get_animations(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)
@@ -1103,7 +1112,7 @@ func handle_get_animations(args: Dictionary) -> Dictionary:
 
 
 func handle_get_tracks(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)
@@ -1139,7 +1148,7 @@ func handle_get_tracks(args: Dictionary) -> Dictionary:
 
 
 func handle_get_keyframes(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)
@@ -1182,7 +1191,7 @@ func handle_get_keyframes(args: Dictionary) -> Dictionary:
 
 
 func handle_get_state_machine(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 
@@ -1296,7 +1305,7 @@ func _track_type_str(type_id: int) -> String:
 # ---------------------------------------------------------------- skeleton
 
 func handle_skeleton_create(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 
@@ -1332,7 +1341,7 @@ func handle_skeleton_create(args: Dictionary) -> Dictionary:
 
 
 func handle_skeleton_add_bone(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 
@@ -1384,7 +1393,7 @@ func handle_skeleton_add_bone(args: Dictionary) -> Dictionary:
 
 
 func handle_skeleton_set_rest(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 
@@ -1444,7 +1453,7 @@ func handle_skeleton_set_rest(args: Dictionary) -> Dictionary:
 
 
 func handle_skeleton_skin(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 
@@ -1480,7 +1489,7 @@ func handle_skeleton_skin(args: Dictionary) -> Dictionary:
 
 
 func handle_skeleton_attachment(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 
@@ -1640,7 +1649,7 @@ func _ensure_bone_track(anim: Animation, skeleton: Node, bone_name: String, dim:
 ## P1: snapshot de la pose actual del esqueleto como keyframes en un tiempo dado.
 ## Captura "en cadena" soportada: bones|chain|from_bone+depth.
 func handle_capture_pose(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)
@@ -1709,7 +1718,7 @@ func handle_capture_pose(args: Dictionary) -> Dictionary:
 
 ## Amplía add_track para soportar track_type="bone" (resuelve path por nombre).
 func handle_add_track(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 
@@ -1788,7 +1797,7 @@ func _resolve_tree(root: Node, args: Dictionary) -> AnimationTree:
 
 
 func handle_tree_activate(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var tree := _resolve_tree(root, args)
@@ -1808,7 +1817,7 @@ func handle_tree_activate(args: Dictionary) -> Dictionary:
 
 
 func handle_tree_travel(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var tree := _resolve_tree(root, args)
@@ -1825,7 +1834,7 @@ func handle_tree_travel(args: Dictionary) -> Dictionary:
 
 
 func handle_tree_set_param(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var tree := _resolve_tree(root, args)
@@ -1842,7 +1851,7 @@ func handle_tree_set_param(args: Dictionary) -> Dictionary:
 
 
 func handle_tree_get_param(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var tree := _resolve_tree(root, args)
@@ -1865,7 +1874,7 @@ func handle_tree_get_param(args: Dictionary) -> Dictionary:
 
 ## Amplía skeleton_ik con magnet/influence y soporta "weights" por hueso.
 func handle_skeleton_ik(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var skeleton := _resolve_node(root, args.get("skeleton_path", "")) as Skeleton3D
@@ -1923,7 +1932,7 @@ func handle_skeleton_ik(args: Dictionary) -> Dictionary:
 ## P1: FABRIK 2D procedural — resuelve una cadena de Bone2D hacia un objetivo.
 ## Útil para animación procedural (brazos/piernas siguiendo un punto).
 func handle_skeleton_fabrik(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var skeleton := _resolve_node(root, args.get("skeleton_path", "")) as Skeleton2D
@@ -2003,7 +2012,7 @@ func handle_skeleton_fabrik(args: Dictionary) -> Dictionary:
 
 ## P1: preview con imagen — seek + captura del viewport (agente VE el frame).
 func handle_preview(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)
@@ -2058,7 +2067,7 @@ func _get_library(player: AnimationPlayer, library: String) -> AnimationLibrary:
 
 
 func handle_duplicate(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)
@@ -2096,7 +2105,7 @@ func handle_duplicate(args: Dictionary) -> Dictionary:
 
 
 func handle_delete(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)
@@ -2123,7 +2132,7 @@ func handle_delete(args: Dictionary) -> Dictionary:
 
 
 func handle_rename(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)
@@ -2156,7 +2165,7 @@ func handle_rename(args: Dictionary) -> Dictionary:
 
 ## Crea una copia invertida de la animación (walk → walk_rev). Util para ciclos.
 func handle_reverse(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)
@@ -2206,7 +2215,7 @@ func handle_reverse(args: Dictionary) -> Dictionary:
 ## P3: blend procedural — interpola la pose actual del skeleton hacia una pose
 ## objetivo por hueso con factor t (0..1). Útil para transiciones suaves.
 func handle_blend_pose(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var skeleton := _resolve_node(root, args.get("skeleton_path", ""))
@@ -2261,7 +2270,7 @@ func handle_blend_pose(args: Dictionary) -> Dictionary:
 ## mapeando por NOMBRE de hueso (3D). Reutiliza animaciones entre personajes
 ## que comparten rig (hips, spine, upper_arm_L...).
 func handle_retarget(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var resolved := _player_or_error(root, args)

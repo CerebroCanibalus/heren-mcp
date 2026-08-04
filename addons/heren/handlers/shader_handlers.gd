@@ -27,10 +27,19 @@ func _editor_interface() -> EditorInterface:
 	return _editor_plugin.get_editor_interface()
 
 
-func _scene_root() -> Node:
+func _scene_root(args: Dictionary = {}) -> Node:
 	var ei := _editor_interface()
 	if ei == null:
 		return null
+	# Contexto de escena explícito: si se pide scene_path y no es la activa,
+	# activarla. Así el contexto NO cambia impredeciblemente con la pestaña.
+	var scene_path: String = str(args.get("scene_path", ""))
+	if scene_path != "":
+		var active := ei.get_edited_scene_root()
+		if active == null or active.scene_file_path != scene_path:
+			if not ResourceLoader.exists(scene_path):
+				return null
+			ei.open_scene_from_path(scene_path)
 	return ei.get_edited_scene_root()
 
 
@@ -73,6 +82,12 @@ func _ensure_gdshader_ext(shader_path: String) -> String:
 	return shader_path + ".gdshader"
 
 
+func _ensure_parent_dir(path: String) -> void:
+	var dir_path := path.get_base_dir()
+	if dir_path != "" and not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(dir_path)):
+		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir_path))
+
+
 # ---------------------------------------------------------------- handlers
 
 func handle_create(args: Dictionary) -> Dictionary:
@@ -89,6 +104,7 @@ func handle_create(args: Dictionary) -> Dictionary:
 	if not code.strip_edges().begins_with("shader_type"):
 		full_code = "shader_type " + shader_type + ";\n\n" + code
 
+	_ensure_parent_dir(shader_path)
 	var file := FileAccess.open(shader_path, FileAccess.WRITE)
 	if file == null:
 		return {"ok": false, "error": "write_failed: " + shader_path}
@@ -145,7 +161,7 @@ func handle_validate(args: Dictionary) -> Dictionary:
 
 
 func handle_material(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 
@@ -214,7 +230,7 @@ func handle_material(args: Dictionary) -> Dictionary:
 
 
 func handle_uniform(args: Dictionary) -> Dictionary:
-	var root := _scene_root()
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 
