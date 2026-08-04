@@ -25,6 +25,56 @@ Este documento es la biblia para agentes que operan Heren MCP. Lee esto antes de
 > - **`project/setup_plugin`**: instalación como tool que el agente puede llamar.
 > - **`session.close_editor`** ahora opcional (default false).
 > - Herramienta de diagnóstico: `.temp/probe_tools.py` (probe stdio NDJSON del .exe).
+> - **E2E minijuego 2026-08-04**: ~44 nodos funcionales. 10/15 tools impecables; 8 bugs + 3 gaps documentados en **§0 PRIORIDAD INMEDIATA** (C1/C2 sistémicos, H1-H4, M1-M3, visual roto). Pendiente de fix.
+
+---
+
+## 0. 🚨 PRIORIDAD INMEDIATA — Bugs/mejoras del E2E (minijuego platformer, 2026-08-04)
+
+> Hallazgos de la prueba E2E completa (`.temp/e2e_minigame`, ~44 nodos, juego funcional).
+> **CRÍTICO C1/C2 primero** (sistémico, rompen `setting`/`autoload`/`input_map` en modo list).
+> Archivos fuente: `crates/heren-server/src/server.rs` (args) + `addons/heren/handlers/*.gd`.
+
+### Bugs críticos (rompen datos)
+| # | Tool | Bug | Causa raíz / Fix |
+|---|------|-----|------------------|
+| **C1** | `project/setting` get | **Borra el setting** (responde op:"set", value:null). Borró `application/config/name`. | `args()` de server.rs inserta `"value":null` para todo param opcional; `handle_setting` usa `args.has("value")` como set. **Fix**: `args()` debe **omitir** keys None; y/o `handle_setting` trata value=null como get. |
+| **C2** | Sistémico | `str(null)` = `"<null>"` rompe los guards `if x == ""` de TODOS los handlers. `autoload` list trató "<null>" como nombre. | Server inyecta `null` en args opcionales. **Fix**: `args()` omitir keys None (misma raíz que C1). |
+
+### Bugs altos (crashes)
+| # | Tool | Bug | Causa raíz / Fix |
+|---|------|-----|------------------|
+| **H1** | `signal/list` | Crash "Unknown error" en nodos con conexiones entrantes (OK sin ellas). | Bucle `get_incoming_connections()` en `signal_handlers.gd` — acceso defensivo. |
+| **H2** | `shader/material` | "Unknown error" siempre (asignar material a cualquier nodo). | falla al aplicar material; diagnosticar. |
+| **H3** | `skeleton/skin` | Crash. | **typo `set_bone_weigths`** en `animation_handlers.gd` → `set_bone_weights`. |
+| **H4** | `skeleton` 2D | `set_rest`/`attachment` exigen Skeleton3D siempre. | `as Skeleton3D` fijo; ignora `is_3d=false`. Fix: ramificar por `is_3d`. |
+
+### Bugs medios
+| # | Tool | Bug | Causa raíz / Fix |
+|---|------|-----|------------------|
+| **M1** | `node/array_remove` | Elimina el primer elemento, no el `value` pedido (int vs float en `find`). | `current.find(deserialize_value(value))` — tipar/normalizar. |
+| **M2** | `visual/summary` | `node_count:0` inconsistente (by_type sí correcto). | handler cuenta mal. |
+| **M3** | `validate/node` | `script_cannot_instantiate` — scripts creados por MCP no se compilan. | `efs.update_file()` no basta; falta re-import/scan. |
+
+### Visual roto (4/7 acciones)
+| Acción | Estado |
+|--------|--------|
+| `ascii` | ✅ árbol completo |
+| `summary` | ⚠️ by_type OK, node_count:0 |
+| `coords` | ❌ solo 3 nodos, paths ".." (incompleto) |
+| `capture` | ❌ imagen **2×2 px** (viewport 2D no renderiza la escena) |
+| `node` | ❌ 2×2 px + pos (0,0) incorrecta |
+| `budget` | ❌ **handler `handle_vision_budget` NO existe** en el plugin |
+| `cache` | ❌ **handler `handle_vision_cache` NO existe** en el plugin |
+
+### Gaps de exposición (tool vs handler)
+- Tool `node` **no expone** `query`, `by`, `recursive`, `owner_path`, `script` → `find`, `get_children(recursive)`, `set_owner`, `add(script)` solo funcionan vía `orchestrate` (args crudos). Fix: añadir params al schema.
+- Tool `resource` **no crea directorios padre** → "save_failed: Can't open"/"cannot_open" si la carpeta no existe; no hay tool de mkdir. Fix: crear dirs en create/create_script o exponer mkdir.
+- Tool `resource` exige params **required irrelevantes** (append/directory/extension/recursive/resource_type/template) en create_script/edit_script. Fix: hacerlos opcionales.
+
+### Workaround actual
+- Para `find`/`set_owner`/`get_children(recursive)`/`add(script)`: usar `orchestrate` con args crudos (funciona perfecto).
+- Para carpetas: crear los dirs antes (`resource/create` también falla sin dir). Setup manual.
 
 ---
 
@@ -584,6 +634,16 @@ session("open", project_path="D:/MiProyectoExistente")
 | **🚨 Instalación parcial del plugin (solo plugin.cfg)** | `ensure_plugin_installed` (launcher.rs) e `install_plugin.py` verificaban SOLO `plugin.cfg` → si existía pero faltaban handlers (copia rota), decían "already installed" sin re-copiar. **FIX**: `source_files_match()` verifica que TODOS los archivos fuente existan en el destino; si falta algo, borra y re-copia. | 2026-08-04 |
 | **🚨 `project/create` perdido en migración a Rust + circular dependency** | El bridge Python tenía `project("create")`; en `server.rs` solo existían setting|autoload|input_map|shader_global. Además `resolve_project` exigía editor conectado → **circular**: no se podía crear el PRIMER proyecto sin editor. **FIX**: action `create` escribe `project.godot` directo en disco sin editor. También se añadió `setup_plugin` (instala el plugin sin editor). | 2026-08-04 |
 | **Tools sin sufijo `_tool` + create con configurabilidad** | Renombradas: `resource_tool→resource`, `project_tool→project`, `shader_tool→shader`, `animation_tool→animation`, `skeleton_tool→skeleton`, `tilemap_tool→tilemap`, `debug_tool→debug`, `validate_tool→validate` (el reenvío al plugin no cambia: el prefijo del handler es el mismo). `project/create` ahora genera la escena main (root type/name configurables) conectada a `run/main_scene`, y acepta `project_name`, `renderer` (type), `main_scene`, `root_type`, `root_name`, `viewport_width`, `viewport_height`, `stretch_mode`. Nueva action `project/setup_plugin`: instala el plugin v4 + normaliza `[editor_plugins]` sin editor (la puede llamar el agente). | 2026-08-04 |
+| **E2E: `args()` inyecta null en params opcionales → rompe guards (C1/C2)** | server.rs `args()` inserta `Value::Null` para todo param None. Los handlers usan `args.get("key","")` (que devuelve null si la key existe) y `str(null)` = `"<null>"` → los guards `if x == ""` fallan. `project/setting` get **borra** el setting (responde op:"set", value:null); `autoload` list trata "<null>" como nombre; `input_map` sin `type` explícito cae a `unknown_type: <null>`. **FIX (pendiente)**: `args()` debe OMITIR keys None en vez de insertar null; y `handle_setting` trata value=null como get. Ver §0. | 2026-08-04 |
+| **E2E: `signal/list` crashea con conexiones entrantes (H1)** | En nodos SIN conexiones funciona; en nodos CON conexiones (p.ej. Player tras `signal/connect`) devuelve "Unknown error" (editor_plugin.gd:280). Causa probable: acceso en el bucle `get_incoming_connections()` de `signal_handlers.gd`. Fix: acceso defensivo (conn es Dictionary; usar `.get()`). Ver §0. | 2026-08-04 |
+| **E2E: `shader/material` "Unknown error" siempre (H2)** | Asignar un ShaderMaterial a cualquier nodo (`.`, Player/Visual) falla con "Unknown error". El handler `handle_material` de `shader_handlers.gd` parece correcto; diagnosticar el error GDScript real. Ver §0. | 2026-08-04 |
+| **E2E: typo `set_bone_weigths` en skeleton_skin (H3)** | `animation_handlers.gd handle_skeleton_skin` llama `polygon.set_bone_weigths(...)` → método inexistente → "Unknown error". Fix: `set_bone_weights`. Ver §0. | 2026-08-04 |
+| **E2E: `skeleton_set_rest`/`skeleton_attachment` exigen Skeleton3D (H4)** | `as Skeleton3D` fijo en ambos handlers → fallan en Skeleton2D aunque `is_3d=false`. El skeleton 2D completo (create/add_bone) funciona; set_rest/attachment solo en 3D. Fix: ramificar por `is_3d`. Ver §0. | 2026-08-04 |
+| **E2E: `node/array_remove` elimina el primer elemento (M1)** | Con `value=20` en `[10,20,30,40]` removió el 10 (find devolvió 0). `current.find(deserialize_value(value))` — posible int vs float. Fix: normalizar tipos antes de find. Ver §0. | 2026-08-04 |
+| **E2E: tool `node` no expone query/by/recursive/owner_path/script (gap)** | Los handlers `find`, `set_owner`, `get_children(recursive)`, `add(script)` funcionan pero la tool directa no los expone → solo accesibles vía `orchestrate` (args crudos). Fix: añadir params al schema de la tool `node`. Ver §0. | 2026-08-04 |
+| **E2E: `resource` no crea directorios padre (gap)** | `create`/`create_script` fallan con "save_failed: Can't open"/"cannot_open" si la carpeta no existe; no hay tool de mkdir. Fix: crear dirs en create/create_script o exponer mkdir. Ver §0. | 2026-08-04 |
+| **E2E: visual 4/7 acciones rotas (coords/capture/node/budget/cache)** | `visual/coords` devuelve solo 3 nodos con paths ".." (incompleto); `capture`/`node` imagen 2×2 px (viewport 2D no renderiza) + pos (0,0); `budget`/`cache` fallan porque `handle_vision_budget`/`handle_vision_cache` **no existen** en `visual_handlers.gd` (el server los mapea pero el plugin no). Solo `ascii` y `summary.by_type` funcionan. Ver §0. | 2026-08-04 |
+| **E2E: `validate/node` script_cannot_instantiate (M3)** | Scripts creados por MCP no se compilan: `efs.update_file()` no basta, falta re-import/scan del editor para que `can_instance` sea true. Ver §0. | 2026-08-04 |
 
  ### Nuevas Features (v3.0)
 
