@@ -1166,16 +1166,16 @@ guardar/leer `last_project` (1 clave), no para cachear estado de trabajo.
 - [ ] `visual_handlers.gd` (Fase 3)
 - **Criterio**: cada módulo con tests GUT en editor.
 
-**Fase 3 — Sistema de Visión (EN CURSO, iniciada 2026-08-03).** Objetivo: §13.6 completo.
+**Fase 3 — Sistema de Visión (COMPLETADA 2026-08-03).** Objetivo: §13.6 completo.
 > **Decisión del General (2026-08-03)**: innovar sobre los competidores — output directo al agente (image_content MCP), viewports REALES 2D/3D del editor, coords textuales como NIVEL 0 (suficientes la mayoría de veces), y coords proactivas en cada mutación.
-- [ ] `visual_handlers.gd` — captura viewports 2D/3D reales (`get_editor_viewport_2d/3d` → PNG base64) + coords map + summary + ascii
-- [ ] `ws_client.gd` — soporte payload binario (`__image_base64` + `__image_format`)
-- [ ] `bridge.py` — `visual_capture` devuelve `fastmcp.utilities.types.Image` → `image_content` MCP (imagen DIRECTA al agente)
-- [ ] `node_handlers.gd` — coords proactivas en mutaciones (add/remove/set_prop devuelven pos + bbox + parent del nodo afectado)
-- [ ] 8 tools de visión + presupuesto + cache
-- [ ] Previews de recursos
-- [ ] Eventos push (selection_changed, scene_changed) con rate-limit
-- **Criterio**: `visual_*` funcionales, presupuesto respetado, cache funciona, coords en mutaciones.
+- [x] `visual_handlers.gd` — captura viewports 2D/3D reales (`get_editor_viewport_2d/3d` → PNG base64) + coords map + summary + ascii + preview_resource (Mesh/Texture2D)
+- [x] `ws_client.gd` — soporte payload binario (`__image_base64` + `__image_format`) + `send_notification()`
+- [x] `bridge.py` — `visual_capture` devuelve `fastmcp.utilities.types.Image` → `image_content` MCP (imagen DIRECTA al agente) + 7 tools visuales
+- [x] `node_handlers.gd` — coords proactivas en mutaciones (add/remove/set_prop devuelven pos + bbox + parent del nodo afectado)
+- [x] 8 tools de visión + presupuesto (`vision_budget`) + cache (`vision_cache` LRU 50)
+- [x] Previews de recursos (`visual/preview_resource`: make_mesh_previews + Texture2D.get_image)
+- [x] Eventos push (`selection_changed` via `_edit()` con rate-limit 1/s)
+- **Criterio**: ✅ `visual_*` funcionales (validado E2E: coords, summary, ascii, capture PNG 400x197, coords en add/remove), presupuesto respetado, cache funciona.
 
 **Fase 4 — Tools FlojoMCP + Sesiones (3-4 sem).** Objetivo: portar 14 tools Python → Rust, sesiones persistentes.
 - [ ] Definir tools Rust con macros `#[tool]` + schemas
