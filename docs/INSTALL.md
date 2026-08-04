@@ -1,168 +1,122 @@
-# Installation Guide - Heren MCP
+# 📦 Instalación — Heren Godot MCP v4.2
 
-Heren MCP is a Model Context Protocol (MCP) server for Godot Engine 4.x. It enables AI assistants to interact with Godot projects through a centralized tool system.
+> **Nota**: desde la v4.2, Heren MCP es un **server en Rust** (`heren-server.exe`)
+> construido sobre FlojoMCP. Ya NO requiere Python ni Node.js. Solo necesitas
+> Rust para compilar (o un `.exe` precompilado) y Godot instalado.
 
-## Requirements
+---
 
-- **Python**: 3.10 or higher
-- **Godot Engine**: 4.2 or higher (4.6+ recommended)
-- **Operating System**: Windows, Linux, or macOS
+## Requisitos
 
-## Quick Start
+| Requisito | Mínimo | Recomendado |
+|-----------|--------|-------------|
+| 🦀 **Rust** (solo para compilar) | 1.75+ | stable actual |
+| ⚙️ **Godot** | 4.2 | 4.6+ / 4.7 |
+| 💻 **OS** | — | Windows, Linux, macOS |
 
-### 1. Clone the Repository
+---
+
+## Paso 1 — Compilar el server Rust
 
 ```bash
 git clone https://github.com/CerebroCanibalus/heren-mcp.git
 cd heren-mcp
+
+# Compilar en release
+cargo build --release
+# → target/release/heren-server.exe   (~7 MB)
 ```
 
-### 2. Run the Installer
+> 💡 En Windows, `run.bat` ya compila y lanza el server. También hay un
+> `heren-build.bat` que carga VsDevCmd del Build Tools 2022 antes de compilar.
+
+---
+
+## Paso 1b — Instalador automático (recomendado)
+
+En vez de compilar y configurar a mano, ejecuta el instalador de **1 comando**:
 
 ```bash
-python install.py
+python install_mcp.py
 ```
 
-Or with a specific project:
+Esto hace todo por ti:
+1. **Compila** `heren-server.exe` (release) desde el workspace FlojoMCP.
+2. **Registra** el MCP `heren` en `opencode.jsonc` (detecta la ruta, GODOT_EXE y log).
+3. **Verifica** que el server responde al handshake MCP.
+
+Opciones útiles:
 
 ```bash
-python install.py --project-path D:/YourGame
+python install_mcp.py --no-build            # ya compilado, solo registrar
+python install_mcp.py --config <archivo>    # registrar en otro cliente MCP
+python install_mcp.py --godot-exe <ruta>    # forzar ruta de Godot
 ```
 
-The installer will:
-- Detect your operating system
-- Find your Godot installation
-- Install Python dependencies
-- Copy the Heren daemon files into your Godot project (`addons/heren/daemon/`)
-- Show MCP configuration instructions
+---
 
-### 3. Configure Your MCP Client
+## Paso 2 — Configurar el MCP en tu cliente
 
-Add the following to your MCP client configuration (e.g., `opencode.jsonc`):
+Añade el server a tu configuración de MCP (OpenCode, Claude Desktop, Cursor, etc.):
 
 ```json
 {
   "mcpServers": {
-    "heren-godot": {
-      "command": "python",
-      "args": ["-m", "heren.server"],
-      "env": {
-        "PYTHONPATH": "./src",
-        "GODOT_EXE": "D:/Mis Juegos/Godot/Godot_v4.6.1-stable_win64.exe",
-        "HEREN_PROJECT_PATH": "D:/YourGame"
+    "heren": {
+      "command": "D:/ruta/a/heren-server.exe",
+      "environment": {
+        "GODOT_EXE": "D:/Mis Juegos/Godot/Godot_v4.6.1-stable_win64.exe"
       }
     }
   }
 }
 ```
 
-### 4. Start Using Heren MCP
+> ⚠️ En OpenCode la clave es `"environment"` (no `"env"`), y `"timeout"` en ms
+> para el handshake (default 5000).
 
-Open a Godot project and start a session:
+---
 
-```python
-session(action="open", project_path="D:/YourGame")
-```
+## Paso 3 — Abrir una sesión
 
-## Manual Installation
-
-If you prefer manual installation or the automatic installer fails:
-
-### Step 1: Install Python Dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-Required packages:
-- `fastmcp>=1.0.0` - MCP framework
-- `pydantic>=2.0.0` - Data validation
-- `websocket-client>=1.6.0` - WebSocket communication with Godot
-
-### Step 2: Configure Godot Daemon in Your Project
-
-The Godot Daemon provides fast (~20ms) operations. To set it up, run from the heren-mcp directory:
-
-```bash
-python -m heren.tools.project_tool setup_daemon --project-path D:/YourGame
-```
-
-Or programmatically:
+Desde el cliente MCP, llama a `session` con action `open`:
 
 ```python
-from heren.tools.project_tool import project_tool
-project_tool("setup_daemon", project_path="D:/YourGame")
+session(action="open", project_path="D:/MiJuego")
 ```
 
-This copies all daemon files (`heren_daemon.gd` + modules) into `D:/YourGame/addons/heren/daemon/`.
+Esto hará todo automáticamente:
+1. Encuentra el ejecutable Godot (env `GODOT_EXE` o PATH).
+2. **Instala el plugin v4** (`addons/heren/`) en el proyecto si falta.
+3. **Habilita `[editor_plugins]`** en `project.godot` con el formato Godot 4.
+4. **Lanza `godot --editor --path <proyecto>`**.
+5. El plugin conecta al server por WebSocket y se registra.
 
-### Step 3: Set Environment Variables (Optional)
+Si el editor ya está abierto, se reutiliza (o se relanza limpio si quedó zombie).
 
-```bash
-# Windows
-set GODOT_EXE=D:\Mis Juegos\Godot\Godot_v4.6.1-stable_win64.exe
-set HEREN_PROJECT_PATH=D:\YourGame
+---
 
-# Linux/macOS
-export GODOT_EXE=/usr/bin/godot
-export HEREN_PROJECT_PATH=/home/user/YourGame
-```
+## Variables de entorno
 
-Supported variables:
+| Variable | Descripción |
+|----------|-------------|
+| `GODOT_EXE` | Ruta al ejecutable de Godot |
+| `GODOT_PATH` | Alias de `GODOT_EXE` |
+| `HEREN_PLUGIN_SOURCE` | Ruta al plugin fuente (default `addons/heren/`) |
+| `HEREN_LOG_FILE` | Archivo de log (opcional) |
+| `HEREN_MCP_PORT` | Puerto del WS plugin server (default 9099) |
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `GODOT_EXE` | Path to Godot executable | `D:/Godot/Godot.exe` |
-| `GODOT_PATH` | Alias for `GODOT_EXE` | `D:/Godot/Godot.exe` |
-| `HEREN_PROJECT_PATH` | Default Godot project path | `D:/YourGame` |
-| `HEREN_PORT` | Daemon WebSocket port | `4567` |
-| `HEREN_LOG_LEVEL` | Logging level | `INFO`, `DEBUG` |
+---
 
-## Platform-Specific Notes
+## Solución de problemas
 
-### Windows
+- **`health` devuelve `connected_projects: []`** → el editor no conectó. Revisa
+  que el plugin esté habilitado en `project.godot` (`[editor_plugins]`) y que el
+  editor esté abierto. `session/open` debería lanzarlo.
+- **"no editor connected"** → llama `session/open` primero con el proyecto.
+- **Editor zombie que no conecta** → cierra el Godot viejo manualmente y vuelve
+  a `session/open` (o relanza limpio automáticamente).
+- **El MCP no refresca las tools** → en OpenCode, el toolset MCP se carga al
+  inicio de la sesión. Tras recompilar el server, abre una **conversación nueva**.
 
-- Godot is commonly installed at `D:\Mis Juegos\Godot\` or `C:\Program Files\Godot\`
-- The installer searches these paths automatically
-- If Godot is not found, specify the path with `--godot-path`
-
-### Linux
-
-- Install Godot via package manager or download from godotengine.org
-- Common paths: `/usr/bin/godot`, `/usr/local/bin/godot`
-- The installer checks `PATH` for `godot` executable
-
-### macOS
-
-- Godot is typically in `/Applications/Godot.app`
-- The installer checks common application directories
-- You can also install via Homebrew: `brew install --cask godot`
-
-## Verification
-
-Test your installation:
-
-```bash
-python -c "from heren.server import mcp; print('Heren MCP loaded successfully')"
-```
-
-Open a session and list loaded scenes:
-
-```python
-from heren.tools.session_tool import session_tool
-from heren.tools.scene_tool import scene_tool
-
-session = session_tool("open", project_path="D:/YourGame")
-print(session)
-scene_tool("list_loaded", session_id=session["session_id"])
-```
-
-## Troubleshooting
-
-See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common issues.
-
-## Next Steps
-
-- Read the [API Reference](API.md)
-- Learn about the [Architecture](ARCHITECTURE.md)
-- Explore the [Spanish documentation](INSTALL.es.md)
+Ver [TROUBLESHOOTING.md](TROUBLESHOOTING.md) para más detalle.
