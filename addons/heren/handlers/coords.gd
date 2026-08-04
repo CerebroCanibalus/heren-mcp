@@ -216,6 +216,9 @@ static func normalize_node_path(node_path: Variant, root: Node) -> String:
 ## Asegura que root y TODOS sus descendientes tengan owner = root.
 ## CRÍTICO: PackedScene.pack() omite nodos sin owner → una escena construida
 ## por MCP (add_child por script NO setea owner) se guardaría vacía o incompleta.
+## OJO con instancias externas: un nodo con scene_file_path != "" ES una
+## instancia de .tscn → su raíz pertenece al árbol (owner = root) pero sus
+## internos NO se tocan (se guardan por referencia en el .tscn externo).
 static func ensure_owner_recursive(root: Node) -> void:
 	if root == null:
 		return
@@ -225,5 +228,10 @@ static func ensure_owner_recursive(root: Node) -> void:
 
 static func _ensure_owner_child(node: Node, owner: Node) -> void:
 	for child in node.get_children():
+		if child.scene_file_path != "":
+			# Instancia externa: solo la raíz pertenece a esta escena; sus
+			# internos se serializan en el .tscn referenciado (ExtResource).
+			child.owner = owner
+			continue
 		child.owner = owner
 		_ensure_owner_child(child, owner)

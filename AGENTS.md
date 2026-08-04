@@ -177,7 +177,7 @@ D:\Mis Juegos\GodotMCP\heren-mcp\
 |---|------|---------|---------|--------|-------|
 | 1 | `session` | open, close, list, info, health | Sesiones | ✅ 100% | close_editor opcional (default false) |
 | 2 | `scene` | get_open_scenes, get_edited_scene_root, open, save, create, unload | Escenas | ✅ 100% | EditorPlugin real |
-| 3 | `node` | add, remove, set_prop, get_prop, get_info, get_children, find, duplicate, rename, move, set_owner, reorder, array_append, array_remove | Nodos | ✅ 100% | coords proactivas en mutaciones |
+| 3 | `node` | add, instantiate, remove, set_prop, get_prop, get_info, get_children, find, duplicate, rename, move, set_owner, reorder, array_append, array_remove | Nodos | ✅ 100% | instantiate = `.tscn` como hijo (PackedScene.instantiate GEN_EDIT_STATE_INSTANCE → ExtResource externo, no copia inline). coords proactivas en mutaciones |
 | 4 | `resource` | create, read, update, delete, list, create_script, read_script, edit_script | Recursos .tres + .gd | ✅ 100% | EditorFileSystem |
 | 5 | `project` | create, setup_plugin, setting, autoload, remove_autoload, input_map, shader_global | Configuración | ✅ 100% | create sin editor + main.tscn automática |
 | 6 | `shader` | create, edit, get, inspect, validate, material, uniform, apply | Shaders | ✅ 100% | **v4.3**: `apply` one-shot (shader+material+uniforms en 1 llamada), `inspect` (uniforms vía `get_shader_uniform_list`), `get` (leer código), `validate` real (`get_errors`), template en create |
@@ -375,7 +375,8 @@ Esto da al agente **conocimiento espacial completo** sin llamadas extra. Benefic
 | 2026-08-04 | **Skeleton2D API falsa** | Skeleton2D NO tiene find_bone/set_bone_rest (Skeleton3D). Huesos = Bone2D hijos con `.rest=Transform2D`. `BoneAttachment2D` NO existe. |
 | 2026-08-04 | **`args()` omite keys None** | Antes insertaba `Value::Null` → `str(null)`="<null>" rompía guards. |
 | 2026-08-04 | **`launch_editor` mata zombie** | Recibe `editor_connected`; si hay proceso sin conectar lo mata y relanza limpio. Siempre sincroniza plugin antes. |
-| 2026-08-04 | **`AnimationNodeBlendSpace3D` NO existe en Godot 4.7** | Solo 1D/2D. Verificado con `ClassDB.get_class_list()`. Usar BlendSpace2D o BlendTree. |
+| 2026-08-04 | **`node/instantiate` = instancia externa (no copia)** | `PackedScene.instantiate(PackedScene.GEN_EDIT_STATE_INSTANCE)` → add_child + owner=root → pack() serializa `instance=ExtResource(...)` (referencia al .tscn), NO copia inline. **`ensure_owner_recursive` NO baja dentro de nodos con `scene_file_path != ""`** (instancia externa: sus internos viven en el .tscn referenciado; tocarlos los copiaría inline y duplicaría recursos). E2E validado en sandbox (`parent_out.tscn` con `instance=ExtResource`). |
+| 2026-08-04 | **`node/instantiate` con `instance_path`** | Tool `node` acepta `instance_path` (la .tscn/.res a instanciar) + `node_path`/`parent_path` (padre) + `node_name` + `properties` + `script` override. `node_type` sigue para clases nativas (backward-compatible). |
 | 2026-08-04 | **`SkeletonIK3D.magnet` es Vector3, `target_node` es NodePath** | `magnet` es el punto de magnet (no float); `target` es el Transform heredado (no usar). `target_node` recibe NODE PATH. |
 | 2026-08-04 | **`AnimationNodeBlendTree.connect_node(input, input_index, output)`** | 3 args en Godot 4.7 (input_node, input_index, output_node) — NO (from, from_port, to, to_port). |
 | 2026-08-04 | **IK 2D = FABRIK propio** | Godot no tiene IK nativo 2D. `skeleton_fabrik` implementa FABRIK sobre Bone2D con pesos por hueso. |

@@ -531,6 +531,68 @@ func handle_duplicate(args: Dictionary) -> Dictionary:
 	}
 
 
+## Instancia una escena .tscn (o PackedScene .res) como hijo del árbol.
+## GEN_EDIT_STATE_INSTANCE → el editor la trata como instancia externa editable
+## (ExtResource en pack, no copia inline). owner = root para que pack() la incluya.
+func handle_instantiate(args: Dictionary) -> Dictionary:
+	var root := _scene_root(args)
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+
+	var instance_path: String = str(args.get("instance_path", ""))
+	if instance_path == "":
+		return {"ok": false, "error": "instance_path required"}
+	if not ResourceLoader.exists(instance_path):
+		return {"ok": false, "error": "instance_not_found: " + instance_path}
+
+	var packed: PackedScene = load(instance_path)
+	if packed == null:
+		return {"ok": false, "error": "not_packed_scene: " + instance_path}
+
+	var parent: Node = root
+	if args.has("parent_path") and str(args.get("parent_path", "")) != "":
+		parent = _resolve_node(root, args.get("parent_path"))
+		if parent == null:
+			return {"ok": false, "error": "parent_not_found: " + str(args.get("parent_path"))}
+
+	var instance: Node = packed.instantiate(PackedScene.GEN_EDIT_STATE_INSTANCE)
+	if instance == null:
+		return {"ok": false, "error": "instantiate_failed: " + instance_path}
+
+	var node_name: String = str(args.get("node_name", ""))
+	if node_name != "":
+		instance.name = node_name
+
+	# Propiedades post-instanciación (coords unificadas).
+	var properties := _args_dict(args, "properties")
+	for prop_name in properties.keys():
+		if prop_name in instance:
+			instance.set(prop_name, HerenCoordsScript.deserialize_value(properties[prop_name]))
+
+	# Script override opcional.
+	if args.has("script") and str(args.get("script", "")) != "":
+		var script_path: String = str(args.get("script"))
+		if ResourceLoader.exists(script_path):
+			instance.set_script(load(script_path))
+
+	_undo_redo.begin_action("Heren Instantiate %s" % instance.name)
+	_undo_redo.add_do_method(parent, &"add_child", [instance])
+	_undo_redo.add_do_property(instance, &"owner", root)
+	_undo_redo.add_undo_method(parent, &"remove_child", [instance])
+	_undo_redo.commit_action()
+
+	return {
+		"ok": true,
+		"instance_path": instance_path,
+		"node_name": instance.name,
+		"node_type": instance.get_class(),
+		"parent_path": _node_path_relative(parent, root),
+		"node_path": _node_path_relative(instance, root),
+		"count": _count_scene_nodes(root),
+		"coords": _node_coords(instance, root),
+	}
+
+
 func handle_rename(args: Dictionary) -> Dictionary:
 	var root := _scene_root(args)
 	if root == null:
