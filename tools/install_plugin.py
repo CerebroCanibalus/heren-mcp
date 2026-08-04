@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -21,6 +22,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCE = REPO_ROOT / "addons" / "heren"
 PLUGIN_LINE = 'enabled=PackedStringArray("res://addons/heren/plugin.cfg")'
+# Línea vieja (formato Godot 3/manual) que debe NORMALIZARSE al formato 4.
+OLD_PLUGIN_RE = re.compile(r'^\s*enabled_plugins\s*=\s*\[[^\]]*plugin\.cfg[^\]]*\]', re.MULTILINE)
 
 
 def ensure_no_bom(path: Path) -> None:
@@ -30,6 +33,33 @@ def ensure_no_bom(path: Path) -> None:
         path.write_bytes(data[3:])
 
 
+def _source_files_match(source: Path, dst: Path) -> bool:
+    """¿TODOS los archivos del source existen en dst? (instalación completa)"""
+    for f in source.rglob("*"):
+        if f.is_file():
+            rel = f.relative_to(source)
+            if not (dst / rel).exists():
+                return False
+    return True
+
+
+def _normalize_enabled(pg: Path) -> None:
+    """Asegura [editor_plugins] enabled=PackedStringArray(...) en project.godot.
+    Normaliza el formato viejo enabled_plugins=[...] al formato Godot 4."""
+    text = pg.read_text(encoding="utf-8")
+    if PLUGIN_LINE in text:
+        return
+    if OLD_PLUGIN_RE.search(text):
+        text = OLD_PLUGIN_RE.sub(PLUGIN_LINE, text)
+    else:
+        if "[editor_plugins]" in text:
+            text = text.replace("[editor_plugins]", "[editor_plugins]\n" + PLUGIN_LINE, 1)
+        else:
+            text = text.rstrip() + "\n\n[editor_plugins]\n" + PLUGIN_LINE + "\n"
+    pg.write_text(text, encoding="utf-8")
+    ensure_no_bom(pg)
+
+
 def install(project: Path, source: Path) -> tuple[bool, str]:
     if not source.exists():
         return False, f"plugin source not found: {source}"
@@ -37,27 +67,27 @@ def install(project: Path, source: Path) -> tuple[bool, str]:
         return False, f"not a Godot project (no project.godot): {project}"
 
     dst = project / "addons" / "heren"
-    if (dst / "plugin.cfg").exists():
-        return False, "already installed (addons/heren/plugin.cfg exists)"
+    # Verifica TODOS los archivos, no solo plugin.cfg (instalación parcial).
+    if (dst / "plugin.cfg").exists() and _source_files_match(source, dst):
+        msg = "already installed (addons/heren/plugin.cfg exists)"
+        _normalize_enabled(project / "project.godot")
+        return False, msg
 
     dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists():
+        shutil.rmtree(dst)
     shutil.copytree(source, dst)
     # Strip .uid sidecar files (Godot regenerates per-project).
     for uid in dst.rglob("*.uid"):
         uid.unlink()
 
-    # Enable plugin in project.godot.
+    # Enable plugin in project.godot (normaliza formato viejo).
     pg = project / "project.godot"
-    text = pg.read_text(encoding="utf-8")
-    if "addons/heren/plugin.cfg" in text:
-        msg = f"installed to {dst} (already enabled in project.godot)"
+    had_old = OLD_PLUGIN_RE.search(pg.read_text(encoding="utf-8")) is not None
+    _normalize_enabled(pg)
+    if had_old:
+        msg = f"installed to {dst} + normalized [editor_plugins] format"
     else:
-        if "[editor_plugins]" in text:
-            text = text.replace("[editor_plugins]", "[editor_plugins]\n" + PLUGIN_LINE, 1)
-        else:
-            text = text.rstrip() + "\n\n[editor_plugins]\n" + PLUGIN_LINE + "\n"
-        pg.write_text(text, encoding="utf-8")
-        ensure_no_bom(pg)
         msg = f"installed to {dst} + enabled in project.godot"
     return True, msg
 
