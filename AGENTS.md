@@ -5,10 +5,12 @@
 
 Este documento es la biblia para agentes que operan Heren MCP. Lee esto antes de tocar una línea de código.
 
-> 🚧 **ESTADO: v4.1.0 OPERATIVO (EditorPlugin + heren-server.exe Rust).**
+> 🚧 **ESTADO: v4.2.0 OPERATIVO (EditorPlugin + heren-server.exe Rust).**
 > **Migración completada 2026-08-03**: GodotDaemon (v3) → EditorPlugin (v4).
 > **Fase 4 completada 2026-08-04**: el MCP es `heren-server.exe` (Rust/FlojoMCP),
 > 21 tools con paridad al bridge Python, WS plugin server + auto-launch del editor.
+> **v4.2 (2026-08-04)**: transporte `Content-Length` NATIVO en FlojoMCP (`flojo_run_stdio_cl`)
+> — el .exe habla Content-Length puro, bridge Python ELIMINADO, OpenCode apunta al .exe.
 > El bridge Python (`python -m heren.v4.bridge`) ya NO es el MCP activo (queda como fallback/referencia).
 > Los cambios nuevos van a v4/Rust. No ampliar v3 salvo bugs críticos.
 
@@ -558,8 +560,9 @@ session("open", project_path="D:/MiProyectoExistente")
 | **Build MSVC: requiere VsDevCmd del BuildTools 2022** | rustc MSVC usaba VS 18 Insiders (sin libs) → error `LNK1104 msvcrt.lib`. Fix: `heren-build.bat` carga `VsDevCmd.bat` del BuildTools 2022 antes de cargo. | 2026-08-04 |
 | **orchestrate con plan_file** | El batch rompía con dicts anidados (JSON del tool-call). Fix en Rust: `orchestrate` acepta `plan_file` (ruta al JSON del plan) — el plan viaja por archivo, no por tool-call. | 2026-08-04 |
 | **Reinicio MCP: matar bridge viejo primero** | Al cambiar el MCP a Rust, el bridge Python viejo (`python -m heren.v4.bridge`) quedó ocupando el puerto 9099 → "failed to get tools". Fix: matar el proceso bridge (taskkill) antes de reiniciar el MCP. | 2026-08-04 |
-| **CRÍTICO: OpenCode usa Content-Length, FlojoMCP usa NDJSON** | "failed to get tools" en OpenCode 1.18: el server respondía NDJSON (rmcp 1.7 stdio) pero OpenCode espera Content-Length framing (LSP-style) → parse error → server marcado como fallido. PulseWire (mismo rmcp) tampoco cargaba — confirmaba el mismatch. **Fix**: `framing_bridge.py` en run.bat traduce Content-Length ↔ NDJSON. Verificado E2E: initialize + 21 tools via Content-Length. | 2026-08-04 |
-| **Deadlock: stderr del server sin drenar** | El bridge lanzaba el server con stderr=PIPE pero no lo drenaba. El server escribe logs de tracing a stderr; cuando el pipe se llena (64KB Windows) el server se bloquea escribiendo → "tarda demasiado y muere". Fix: thread `drain_stderr()` que lee el stderr del server y lo loguea. | 2026-08-04 |
+| **CRÍTICO: OpenCode usa Content-Length, FlojoMCP usa NDJSON** | "failed to get tools" en OpenCode 1.18: el server respondía NDJSON (rmcp 1.7 stdio) pero OpenCode espera Content-Length framing (LSP-style) → parse error → server marcado como fallido. PulseWire (mismo rmcp) tampoco cargaba — confirmaba el mismatch. **Fix v1**: `framing_bridge.py` en run.bat traducía Content-Length ↔ NDJSON. **Fix definitivo v2**: transporte `ContentLengthTransport` NATIVO en FlojoMCP (`flojo-mcp/src/transport_cl.rs` + `flojo_run_stdio_cl`) — el .exe habla Content-Length directamente, bridge ELIMINADO, OpenCode apunta al .exe. | 2026-08-04 |
+| **Deadlock: stderr del server sin drenar** | El bridge lanzaba el server con stderr=PIPE pero no lo drenaba. El server escribe logs de tracing a stderr; cuando el pipe se llena (64KB Windows) el server se bloquea escribiendo → "tarda demasiado y muere". Fix: thread `drain_stderr()` que lee el stderr del server y lo loguea. **Superado por el fix v2** (sin bridge, stderr directo). | 2026-08-04 |
+| **Transporte Content-Length nativo (v4.2)** | rmcp 1.7 `stdio()` solo NDJSON (read_until b'\n' + b'\n'). OpenCode 1.18 espera Content-Length. Solución de arquitectura: `flojo-mcp::transport_cl::ContentLengthTransport` implementa `rmcp::transport::Transport` con framing LSP; `flojo_run_stdio_cl()` lo usa. heren-server ahora habla Content-Length PURO (INIT 1.06s + 21 tools, E2E verificado). OpenCode apunta directo a `target/release/heren-server.exe` — sin bridge Python, sin run.bat. | 2026-08-04 |
 
  ### Nuevas Features (v3.0)
 
