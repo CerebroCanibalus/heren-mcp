@@ -1,13 +1,8 @@
 @echo off
 REM Heren MCP Launcher para OpenCode
-REM v4: bridge server (FastMCP stdio <-> WebSocket <-> EditorPlugin Godot).
-REM Si el bridge v4 falla (dependencias), fallback a server v3 legacy.
+REM v4.1: heren-server.exe (Rust/FlojoMCP) — stdio MCP <-> WS 9099 <-> EditorPlugin Godot
+REM El plugin Godot conecta al WS server (patrón gopeak). El binario usa
+REM HEREN_WS_ADDR para el puerto WS (default 9099).
 
-cd /d "D:\Mis Juegos\GodotMCP\heren-mcp"
-set PYTHONPATH=D:\Mis Juegos\GodotMCP\heren-mcp\src
-
-python -m heren.v4.bridge 2>NUL
-if errorlevel 1 (
-    echo [Heren] bridge v4 no disponible, usando server v3 legacy... 1>&2
-    python -m heren.server
-)
+set HEREN_WS_ADDR=127.0.0.1:9099
+"D:\Mis Juegos\ClaudeMCPs\FlojoMCP\target\release\heren-server.exe"
