@@ -175,8 +175,8 @@ D:\Mis Juegos\GodotMCP\heren-mcp\
 | 4 | `resource` | create, read, update, delete, list, create_script, read_script, edit_script | Recursos .tres + .gd | ✅ 100% | EditorFileSystem |
 | 5 | `project` | create, setup_plugin, setting, autoload, remove_autoload, input_map, shader_global | Configuración | ✅ 100% | create sin editor + main.tscn automática |
 | 6 | `shader` | create, edit, validate, material, uniform | Shaders | ✅ 100% | .gdshader + ShaderMaterial |
-| 7 | `animation` | create_player, create, add_track, add_key, state_machine | Animaciones | ✅ 100% | AnimationLibrary |
-| 8 | `skeleton` | skeleton_create, skeleton_add_bone, skeleton_set_rest, skeleton_skin, skeleton_attachment | Esqueletos 2D/3D | ✅ 100% | fusionado en animation_handlers |
+| 7 | `animation` | create_player, create, add_track, add_key, state_machine, play, stop, seek, speed, get_animations, get_tracks, get_keyframes, get_state_machine, remove_track, remove_key, update_key, update_props, one_shot, tween, record, from_path, loop_pose, preview, curve | Animaciones | ✅ 100% | AnimationLibrary + playback + edición + procedural (§9) |
+| 8 | `skeleton` | skeleton_create, skeleton_add_bone, skeleton_set_rest, skeleton_skin, skeleton_attachment, skeleton_get_bones, skeleton_get_pose, skeleton_set_pose, skeleton_ik | Esqueletos 2D/3D | ✅ 100% | fusionado en animation_handlers |
 | 9 | `tilemap` | inspect_set, inspect_map, set_cell, terrain, pattern | TileMaps | ✅ 100% | requiere TileSet |
 | 10 | `debug` | run_scene, stop_scene, is_playing, get_editor_errors | Depuración | ✅ 100% | editor real, no subprocess |
 | 11 | `validate` | scene, script, node, resource | Validación | ✅ 100% | contra escena viva |
@@ -249,7 +249,12 @@ Ciclo:
 
 > **Objetivo:** llevar `animation`/`skeleton` de "básico funcional" a "potente e innovador".
 > Auditoría completa vs competencia (Better Godot MCP, satelliteoflove/godot-mcp, tugcantopaloglu/godot-mcp 149 tools, Unity MCP, unreal-animation-mcp 62 tools, Blender MCP).
-> Handler actual: `addons/heren/handlers/animation_handlers.gd` (479 líneas). Tool Rust: `server.rs`.
+> Handler actual: `addons/heren/handlers/animation_handlers.gd` (1598 líneas). Tool Rust: `server.rs`.
+>
+> **ESTADO 2026-08-04**: **Fases 1-4 IMPLEMENTADAS** (playback, inspección, edición, one_shot, tween,
+> skeleton pose/ik, state_machine ampliado, record/from_path/loop_pose/preview/curve).
+> 12/12 handlers `--check-only` OK. Binario release compilado con todas las acciones.
+> **PENDIENTE: validación E2E en vivo** (requiere sesión MCP nueva).
 
 ### 9.1 Problemas MUY mejorables (auditoría)
 
@@ -281,22 +286,28 @@ Ciclo:
 
 ### 9.3 Plan por fases
 
-**Fase 1 — Playback + Inspección (crítico, base):**
-- `animation/play`, `stop`, `seek`, `speed`
-- `animation/get_animations`, `get_tracks`, `get_keyframes`, `get_state_machine`
+**Fase 1 — Playback + Inspección (✅ IMPLEMENTADA):**
+- ✅ `animation/play`, `stop`, `seek`, `speed`
+- ✅ `animation/get_animations`, `get_tracks`, `get_keyframes`, `get_state_machine`
 
-**Fase 2 — Edición + One-shot:**
-- `remove_track`, `remove_key`, `update_key`, `update_props`
-- `animation/one_shot` (batch completo)
-- Fix bug loop=true
+**Fase 2 — Edición + One-shot (✅ IMPLEMENTADA):**
+- ✅ `remove_track`, `remove_key`, `update_key`, `update_props`
+- ✅ `animation/one_shot` (batch completo)
+- ✅ Fix bug loop=true (via `update_props` post-hoc)
 
-**Fase 3 — Avanzado (innovación):**
-- `state_machine` con blend spaces + parámetros
-- `animation/tween`
-- `skeleton/pose`, `skeleton/ik`
+**Fase 3 — Avanzado (✅ IMPLEMENTADA):**
+- ✅ `state_machine` con blend spaces 1D/2D + blend_tree + parámetros
+- ✅ `animation/tween`
+- ✅ `skeleton/pose` (get/set), `skeleton/ik`
 
-**Fase 4 — Innovación pura:**
-- `record`, `from_path`, `loop_pose`, `preview`, `curve`
+**Fase 4 — Innovación pura (✅ IMPLEMENTADA):**
+- ✅ `record`, `from_path`, `loop_pose`, `preview`, `curve`
+
+**Coordenadas enriquecidas (§9.4) — ✅ IMPLEMENTADA en `node_handlers.gd _node_coords()`.**
+
+> ⚠️ Nota API descubierta: `AnimationNodeBlendSpace3D` NO existe en Godot 4.7 (solo 1D/2D).
+> `SkeletonIK3D` usa `target_node` (NodePath), NO `target` (Transform heredado).
+> `AnimationNodeBlendTree.connect_node(input_node, input_index, output_node)` — 3 args.
 
 ### 9.4 Coordenadas enriquecidas (conocimiento espacial)
 
