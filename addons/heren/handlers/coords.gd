@@ -144,6 +144,14 @@ static func deserialize_value(value: Variant) -> Variant:
 				return null
 			_:
 				return value
+	elif value is Array:
+		# Recursively deserialize each element (arrays of Vector2/Color/
+		# nested dicts, etc.). Godot converts Array[Vector2] to PackedVector2Array
+		# when the target property is typed.
+		var result: Array = []
+		for element in value:
+			result.append(deserialize_value(element))
+		return result
 	elif value is String:
 		# v3: string that looks like a resource path gets loaded.
 		var str_value := value as String
