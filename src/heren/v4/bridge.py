@@ -36,6 +36,66 @@ _ws: WsServer | None = None
 _ws_loop: asyncio.AbstractEventLoop | None = None
 _ws_thread: threading.Thread | None = None
 
+# ---- vision state (Fase 3, §13.6 — RAM efímera, ADR-004) ----------------
+
+_VISION_BUDGET: dict[str, float] = {}          # project_path -> tokens budget
+_VISION_SPENT: dict[str, float] = {}           # project_path -> tokens spent
+_VISION_CACHE: dict[str, dict[str, Any]] = {}  # key -> {"tokens": n, "result": {...}}
+
+
+def _vision_key(project_path: str | None, tool_name: str, args: dict[str, Any]) -> str:
+    """Cache key: project + tool + args, so a capture with different max_side
+    or viewport gets its own entry (different cost/resolution)."""
+    import json as _json
+
+    project = project_path or "default"
+    stable = _json.dumps(args, sort_keys=True, default=str)
+    return f"{project}|{tool_name}|{stable}"
+
+
+def _vision_check(project_path: str | None, tool_name: str,
+                  args: dict[str, Any]) -> dict[str, Any] | None:
+    """Return cached result if present (cache hit), else None."""
+    key = _vision_key(project_path, tool_name, args)
+    entry = _VISION_CACHE.get(key)
+    if entry:
+        result = dict(entry["result"])
+        result["_cache"] = {"hit": True, "tokens_saved": entry["tokens"]}
+        return result
+    return None
+
+
+def _vision_store(project_path: str | None, tool_name: str,
+                  args: dict[str, Any], result: dict[str, Any], tokens: float) -> None:
+    key = _vision_key(project_path, tool_name, args)
+    _VISION_CACHE[key] = {"tokens": tokens, "result": result}
+    if len(_VISION_CACHE) > 50:
+        # Simple LRU-ish: drop oldest 20%.
+        keys = list(_VISION_CACHE.keys())
+        for k in keys[: max(1, len(keys) // 5)]:
+            _VISION_CACHE.pop(k, None)
+
+
+def _estimate_tokens(result: dict[str, Any]) -> float:
+    """Cheap token estimate: images ~= pixels/400, text ~= chars/4."""
+    tok = 0.0
+    for k, v in result.items():
+        if k == "__image_base64":
+            continue  # image cost handled via dimensions below
+        if isinstance(v, str):
+            tok += len(v) / 4.0
+        elif isinstance(v, dict):
+            tok += _estimate_tokens(v)
+        elif isinstance(v, (list, tuple)):
+            for item in v:
+                if isinstance(item, (dict, str)):
+                    tok += _estimate_tokens({"": item}) if isinstance(item, dict) else len(item) / 4.0
+    w = int(result.get("__image_w", 0))
+    h = int(result.get("__image_h", 0))
+    if w and h:
+        tok += (w * h) / 400.0  # ~400px² per token (low-res vision standard)
+    return max(1.0, round(tok, 1))
+
 
 def _ws_server() -> WsServer:
     global _ws
@@ -603,26 +663,55 @@ def _tool_visual(tool_name: str, args: dict[str, Any] | None = None,
     image DIRECTLY as MCP image_content (agnostic — the agent SEES it).
 
     Otherwise return the plain dict (coords/summary/ascii are text).
+    Applies vision budget + cache (§13.6): cache hit reuses tokens-free;
+    a new capture spends against the session budget.
     """
+    args = args or {}
+    # Budget check (only for image-level tools).
+    if "capture" in tool_name:
+        budget = _VISION_BUDGET.get(project_path or "default", float("inf"))
+        spent = _VISION_SPENT.get(project_path or "default", 0.0)
+        if spent >= budget:
+            return {"ok": False, "error": f"vision budget exhausted ({spent:.0f}/{budget:.0f} tokens). "
+                                          "Raise it with vision_budget or use scene_coords/visual_ascii."}
+
+    # Cache lookup.
+    cached = _vision_check(project_path, tool_name, args)
+    if cached is not None:
+        return _prepare_visual_result(cached, tool_name)
+
     resp = _tool(tool_name, args, project_path)
     if isinstance(resp, dict):
+        resp.pop("_metadata", None)
+        tokens = _estimate_tokens(resp)
+        _vision_store(project_path, tool_name, args, resp, tokens)
+        _VISION_SPENT[project_path or "default"] = \
+            _VISION_SPENT.get(project_path or "default", 0.0) + tokens
         b64 = resp.pop("__image_base64", None)
         if b64:
             try:
                 img = MCPImage(data=base64.b64decode(b64), format="png")
-                # Keep metadata alongside; annotations carry it to the agent.
                 meta = {k: v for k, v in resp.items() if k != "ok"}
-                img.annotations = None
-                if meta:
-                    # Best effort: attach as text in annotations is not
-                    # portable — append metadata as a sibling dict when no
-                    # image; with image, log it (OpenCode shows image+text
-                    # content blocks together).
-                    resp["_metadata"] = meta
+                resp["_metadata"] = meta
                 return img
             except Exception:  # noqa: BLE001
                 return {"ok": False, "error": "image decode failed"}
     return resp
+
+
+def _prepare_visual_result(result: dict[str, Any], tool_name: str) -> MCPImage | dict[str, Any]:
+    """Convert a cached/plain visual result into the final form."""
+    if "capture" in tool_name:
+        b64 = result.pop("__image_base64", None)
+        if b64:
+            try:
+                img = MCPImage(data=base64.b64decode(b64), format="png")
+                meta = {k: v for k, v in result.items() if k != "ok"}
+                result["_metadata"] = meta
+                return img
+            except Exception:  # noqa: BLE001
+                return {"ok": False, "error": "image decode failed"}
+    return result
 
 
 @mcp.tool()
@@ -676,6 +765,46 @@ async def visual_node(
     return _tool_visual("visual/capture_node",
                         {"node_path": node_path, "viewport": viewport, "max_side": max_side},
                         project_path)
+
+
+@mcp.tool()
+async def vision_budget(
+    project_path: str | None = None,
+    tokens: float | None = None,
+) -> dict:
+    """Presupuesto de tokens de visión por sesión (RAM, ADR-004).
+    Sin 'tokens' → consulta el estado. Con 'tokens' → lo establece (o lo
+    resetea a 0). El agente decide cuánto gasta en imágenes; coords/ascii
+    son gratis (nivel 0/1).
+    """
+    key = project_path or "default"
+    if tokens is not None:
+        _VISION_BUDGET[key] = tokens
+        _VISION_SPENT[key] = 0.0
+        return {"ok": True, "project_path": project_path, "budget": tokens, "spent": 0.0}
+    return {
+        "ok": True,
+        "project_path": project_path,
+        "budget": _VISION_BUDGET.get(key, float("inf")),
+        "spent": _VISION_SPENT.get(key, 0.0),
+        "remaining": _VISION_BUDGET.get(key, float("inf")) - _VISION_SPENT.get(key, 0.0),
+    }
+
+
+@mcp.tool()
+async def vision_cache(project_path: str | None = None, clear: bool = False) -> dict:
+    """Cache de visión: consultar entradas (clave, tokens) o limpiarla (clear=true).
+    La cache reusa capturas si la escena no cambió — ahorra tokens y latencia.
+    """
+    if clear:
+        n = len(_VISION_CACHE)
+        _VISION_CACHE.clear()
+        return {"ok": True, "cleared": n}
+    entries = [
+        {"key": k, "tokens": v.get("tokens", 0)}
+        for k, v in list(_VISION_CACHE.items())[:50]
+    ]
+    return {"ok": True, "count": len(_VISION_CACHE), "entries": entries}
 
 
 # ============================================================

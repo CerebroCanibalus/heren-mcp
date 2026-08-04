@@ -276,3 +276,65 @@ func handle_capture_node(args: Dictionary) -> Dictionary:
 		"bbox": _node_bbox(node),
 		"pos": _node_pos(node),
 	}
+
+
+# ---------------------------------------------------------------- previews
+
+func handle_preview_resource(args: Dictionary) -> Dictionary:
+	# Thumbnail de un recurso vía EditorResourcePreview. Síncrono no es
+	# posible (el preview es async en Godot 4); usamos make_mesh_previews
+	# para meshes y un path de recurso para el resto (el editor lo genera).
+	var ei := _editor_interface()
+	if ei == null:
+		return {"ok": false, "error": "no editor interface"}
+	var resource_path: String = str(args.get("resource_path", ""))
+	if resource_path == "":
+		return {"ok": false, "error": "resource_path required"}
+	if not ResourceLoader.exists(resource_path):
+		return {"ok": false, "error": "resource_not_found: " + resource_path}
+	var res: Resource = load(resource_path)
+	var max_size: int = int(args.get("max_size", 128))
+
+	# Mesh preview: EditorInterface.make_mesh_previews genera la imagen SÍNCRONA.
+	if res is Mesh:
+		var previews := ei.make_mesh_previews([res], max_size)
+		if previews.size() > 0 and previews[0] is Texture2D:
+			var tex := previews[0] as Texture2D
+			var img: Image = tex.get_image()
+			if img != null:
+				img.flip_y()
+				var png := img.save_png_to_buffer()
+				if not png.is_empty():
+					return {
+						"ok": true,
+						"resource_path": resource_path,
+						"__image_base64": Marshalls.raw_to_base64(png),
+						"__image_format": "png",
+						"__image_w": img.get_width(),
+						"__image_h": img.get_height(),
+						"preview": "mesh",
+					}
+
+	# Textures: get_image() directo.
+	if res is Texture2D:
+		var img: Image = (res as Texture2D).get_image()
+		if img != null:
+			if max_size > 0:
+				img = _resize_image(img, max_size)
+			var png := img.save_png_to_buffer()
+			if not png.is_empty():
+				return {
+					"ok": true,
+					"resource_path": resource_path,
+					"__image_base64": Marshalls.raw_to_base64(png),
+					"__image_format": "png",
+					"__image_w": img.get_width(),
+					"__image_h": img.get_height(),
+					"preview": "texture",
+				}
+
+	return {
+		"ok": false,
+		"error": "preview_not_available: solo Mesh/Texture2D sincrónico",
+		"resource_path": resource_path,
+	}

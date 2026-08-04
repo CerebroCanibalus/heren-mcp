@@ -149,6 +149,18 @@ func _send_ping() -> void:
 	})
 
 
+## Send a push notification to the server (e.g. selection_changed).
+## Used by the editor plugin for event push (§13.6) with rate-limit.
+func send_notification(name: String, params: Dictionary = {}) -> void:
+	if not _is_connected:
+		return
+	_send_message({
+		"jsonrpc": "2.0",
+		"method": "notifications/" + name,
+		"params": params,
+	})
+
+
 func _handle_message(json_string: String) -> void:
 	var message = JSON.parse_string(json_string)
 	if message == null:

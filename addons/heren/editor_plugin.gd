@@ -210,6 +210,36 @@ func get_undo_redo_wrapper() -> Node:
 	return _undo_redo
 
 
+# ---------------------------------------------------------------- event push
+# §13.6: selection_changed notifica al agente qué nodo seleccionó el usuario
+# (rate-limited: máx 1 por segundo). NO envía imagen, solo el path (barato).
+
+var _last_selection_sent: float = -1.0
+const SELECTION_RATE_LIMIT := 1.0  # seconds
+
+
+func _edit(object: Object) -> void:
+	# Called when the user changes selection in the editor.
+	if _ws_client == null or not _ws_client.is_connected_to_server():
+		return
+	var now := Time.get_ticks_msec() * 0.001
+	if now - _last_selection_sent < SELECTION_RATE_LIMIT:
+		return
+	_last_selection_sent = now
+	var path := ""
+	var type_name := ""
+	if object is Node:
+		path = object.get_path()
+		type_name = object.get_class()
+	elif object is Resource:
+		path = (object as Resource).resource_path
+		type_name = object.get_class()
+	_ws_client.send_notification("selection_changed", {
+		"node_path": path,
+		"type": type_name,
+	})
+
+
 func _setup_status_indicator() -> void:
 	_status_label = Label.new()
 	_status_label.text = "Heren: Connecting..."
