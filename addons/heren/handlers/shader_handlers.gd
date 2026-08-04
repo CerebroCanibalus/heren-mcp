@@ -176,7 +176,8 @@ func handle_validate(args: Dictionary) -> Dictionary:
 		return {"ok": false, "error": "invalid_shader: " + shader_path}
 	var sh := shader as Shader
 	# Validate real: errores de compilación, no solo "es un Shader".
-	var errors := sh.get_errors()
+	# TIPO EXPLÍCITO: sh.get_errors() no es inferible → `:=` rompe el grafo.
+	var errors: PackedStringArray = sh.get_errors()
 	if not errors.is_empty():
 		return {
 			"ok": false,
@@ -245,7 +246,7 @@ func handle_inspect(args: Dictionary) -> Dictionary:
 		return {"ok": false, "error": "invalid_shader: " + shader_path}
 	var sh := shader as Shader
 	var uniforms := _shader_uniforms_to_json(sh)
-	var errors := sh.get_errors()
+	var errors: PackedStringArray = sh.get_errors()
 	return {
 		"ok": true,
 		"shader_path": shader_path,
