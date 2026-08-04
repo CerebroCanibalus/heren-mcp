@@ -153,39 +153,114 @@ func handle_add(args: Dictionary) -> Dictionary:
 
 # ------------------------------------------------------------- coords proactivas
 # §13.6 NIVEL 0: cada mutación devuelve las coordenadas del nodo afectado
-# (pos + bbox + parent) para que el agente sepa DÓNDE quedó sin llamada extra.
+# (pos + bbox + parent + size/height/scale/rotation/visible) para que el
+# agente sepa DÓNDE y CUÁNTO quedó sin llamada extra (§9.4 coords enriquecidas).
 
 func _node_coords(node: Node, root: Node) -> Dictionary:
 	var out := {
 		"parent_path": _node_path_relative(node.get_parent(), root) if node.get_parent() else "",
+		"visible": node.is_visible_in_tree() if node is Node and node.has_method("is_visible_in_tree") else true,
 	}
+	# Posición + transformación (2D y 3D) + scale + rotation en grados (legible).
 	if node is CanvasItem:
 		var ci := node as CanvasItem
 		out["pos"] = HerenCoordsScript.serialize_value(ci.global_position)
+		out["scale"] = HerenCoordsScript.serialize_value(ci.scale)
+		out["rotation"] = {
+			"deg": roundf(rad_to_deg(ci.rotation) * 100.0) / 100.0,
+			"rad": ci.rotation,
+		}
+		out["z_index"] = ci.z_index
 	elif node is Node3D:
 		var n3 := node as Node3D
 		out["pos"] = HerenCoordsScript.serialize_value(n3.global_position)
+		out["scale"] = HerenCoordsScript.serialize_value(n3.scale)
+		out["rotation"] = {
+			"deg": roundf(rad_to_deg(n3.rotation.y) * 100.0) / 100.0,
+			"rad": n3.rotation,
+		}
 	# Bounding box when derivable.
 	var bbox := {}
+	var size := {}
+	var height := 0.0
 	if node is Sprite2D:
 		var s := node as Sprite2D
 		if s.texture != null:
-			bbox = {"x": s.global_position.x - s.texture.get_width() * s.scale.x * 0.5,
-					"y": s.global_position.y - s.texture.get_height() * s.scale.y * 0.5,
-					"w": s.texture.get_width() * s.scale.x, "h": s.texture.get_height() * s.scale.y}
+			var w: float = s.texture.get_width() * s.scale.x
+			var h: float = s.texture.get_height() * s.scale.y
+			bbox = {"x": s.global_position.x - w * 0.5, "y": s.global_position.y - h * 0.5, "w": w, "h": h}
+			size = {"w": w, "h": h}
+			height = h
+	elif node is AnimatedSprite2D:
+		var as2 := node as AnimatedSprite2D
+		if as2.sprite_frames != null:
+			var tex: Texture2D = as2.sprite_frames.get_frame_texture(as2.animation, as2.frame)
+			if tex != null:
+				var w: float = tex.get_width() * as2.scale.x
+				var h: float = tex.get_height() * as2.scale.y
+				bbox = {"x": as2.global_position.x - w * 0.5, "y": as2.global_position.y - h * 0.5, "w": w, "h": h}
+				size = {"w": w, "h": h}
+				height = h
 	elif node is CollisionShape2D:
 		var cs := node as CollisionShape2D
 		var shape: Shape2D = cs.shape
 		if shape is RectangleShape2D:
-			var size: Vector2 = (shape as RectangleShape2D).size
-			bbox = {"x": cs.global_position.x - size.x * 0.5, "y": cs.global_position.y - size.y * 0.5,
-					"w": size.x, "h": size.y}
+			var rsize: Vector2 = (shape as RectangleShape2D).size
+			bbox = {"x": cs.global_position.x - rsize.x * 0.5, "y": cs.global_position.y - rsize.y * 0.5,
+					"w": rsize.x, "h": rsize.y}
+			size = {"w": rsize.x, "h": rsize.y}
+			height = rsize.y
 		elif shape is CircleShape2D:
 			var radius: float = (shape as CircleShape2D).radius
 			bbox = {"x": cs.global_position.x - radius, "y": cs.global_position.y - radius,
 					"w": radius * 2.0, "h": radius * 2.0}
+			size = {"w": radius * 2.0, "h": radius * 2.0}
+			height = radius * 2.0
+	elif node is Label:
+		var lbl := node as Label
+		var s2 := lbl.get_minimum_size()
+		bbox = {"x": lbl.global_position.x, "y": lbl.global_position.y, "w": s2.x, "h": s2.y}
+		size = {"w": s2.x, "h": s2.y}
+		height = s2.y
+	elif node is Polygon2D:
+		var pg := node as Polygon2D
+		var pr: Rect2 = pg.get_rect()
+		bbox = {"x": pg.global_position.x + pr.position.x, "y": pg.global_position.y + pr.position.y,
+				"w": pr.size.x, "h": pr.size.y}
+		size = {"w": pr.size.x, "h": pr.size.y}
+		height = pr.size.y
+	elif node is Line2D:
+		var ln := node as Line2D
+		var lr: Rect2 = ln.get_rect()
+		bbox = {"x": ln.global_position.x + lr.position.x, "y": ln.global_position.y + lr.position.y,
+				"w": lr.size.x, "h": lr.size.y}
+		size = {"w": lr.size.x, "h": lr.size.y}
+		height = lr.size.y
+	elif node is TextureRect:
+		var tr := node as TextureRect
+		var tr_size: Vector2 = tr.size
+		bbox = {"x": tr.global_position.x, "y": tr.global_position.y, "w": tr_size.x, "h": tr_size.y}
+		size = {"w": tr_size.x, "h": tr_size.y}
+		height = tr_size.y
+	elif node is Control:
+		var ctl := node as Control
+		var csize: Vector2 = ctl.size
+		bbox = {"x": ctl.global_position.x, "y": ctl.global_position.y, "w": csize.x, "h": csize.y}
+		size = {"w": csize.x, "h": csize.y}
+		height = csize.y
+	elif node is MeshInstance3D:
+		var mi := node as MeshInstance3D
+		if mi.mesh != null:
+			var aabb: AABB = mi.get_aabb()
+			out["aabb"] = HerenCoordsScript.serialize_value(aabb)
+			size = {"w": aabb.size.x, "h": aabb.size.z, "d": aabb.size.y}
+			height = aabb.size.y
 	if not bbox.is_empty():
 		out["bbox"] = bbox
+	if not size.is_empty():
+		out["size"] = size
+	if height != 0.0:
+		out["height"] = roundf(height * 100.0) / 100.0
 	return out
 
 

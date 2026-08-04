@@ -209,8 +209,53 @@ func handle_state_machine(args: Dictionary) -> Dictionary:
 	if player == null:
 		return {"ok": false, "error": "animation_player_not_found"}
 
-	var state_machine := AnimationNodeStateMachine.new()
+	# Fase 3: soporta AnimationNodeStateMachine (default) o AnimationNodeBlendTree
+	# con blend spaces 1D/2D, one-shot, time-scale, transición y parámetros.
+	var graph_type: String = str(args.get("graph_type", "state_machine"))
+	var graph_root: AnimationNode
 
+	match graph_type:
+		"blend_tree":
+			graph_root = _build_blend_tree(args)
+		"blend_space_1d":
+			graph_root = _build_blend_space_1d(args)
+		"blend_space_2d":
+			graph_root = _build_blend_space_2d(args)
+		_:
+			graph_root = _build_state_machine(args)
+
+	if graph_root == null:
+		return {"ok": false, "error": "failed to build graph"}
+
+	var tree := AnimationTree.new()
+	tree.tree_root = graph_root
+	tree.anim_player = player.get_path()
+
+	# Parámetros iniciales (si el grafo los expone).
+	var params: Dictionary = _args_dict(args, "parameters")
+	if not params.is_empty():
+		for key in params.keys():
+			var param_name := "parameters/" + str(key)
+			if tree.get(param_name) != null:
+				tree.set(param_name, HerenCoordsScript.deserialize_value(params[key]))
+
+	_undo_redo.begin_action("Heren Create AnimationTree")
+	_undo_redo.add_do_method(player, &"add_child", [tree])
+	_undo_redo.add_do_property(tree, &"owner", root)
+	_undo_redo.add_undo_method(player, &"remove_child", [tree])
+	_undo_redo.commit_action()
+
+	return {
+		"ok": true,
+		"state_machine": true,
+		"graph_type": graph_type,
+		"tree_path": _node_path_relative(player, root) + "/" + tree.name,
+		"parameters": params.size(),
+	}
+
+
+func _build_state_machine(args: Dictionary) -> AnimationNodeStateMachine:
+	var state_machine := AnimationNodeStateMachine.new()
 	var states: Array = args.get("states", [])
 	for state in states:
 		var state_dict: Dictionary = state if state is Dictionary else {}
@@ -232,18 +277,1092 @@ func handle_state_machine(args: Dictionary) -> Dictionary:
 			if condition != "":
 				trans.advance_condition = condition
 			state_machine.add_transition(from_state, to_state, trans)
+	return state_machine
 
-	var tree := AnimationTree.new()
-	tree.tree_root = state_machine
-	tree.anim_player = player.get_path()
 
-	_undo_redo.begin_action("Heren Create State Machine")
-	_undo_redo.add_do_method(player, &"add_child", [tree])
-	_undo_redo.add_do_property(tree, &"owner", root)
-	_undo_redo.add_undo_method(player, &"remove_child", [tree])
-	_undo_redo.commit_action()
+func _build_blend_tree(args: Dictionary) -> AnimationNodeBlendTree:
+	var bt := AnimationNodeBlendTree.new()
+	var nodes: Array = args.get("nodes", [])
+	for n in nodes:
+		var nd: Dictionary = n if n is Dictionary else {}
+		var name: String = str(nd.get("name", ""))
+		var node_type: String = str(nd.get("type", ""))
+		if name == "" or node_type == "":
+			continue
+		var anim_node: AnimationNode = null
+		match node_type:
+			"animation":
+				var an := AnimationNodeAnimation.new()
+				an.animation = str(nd.get("animation", ""))
+				anim_node = an
+			"blend2":
+				anim_node = AnimationNodeBlend2.new()
+			"blend3":
+				anim_node = AnimationNodeBlend3.new()
+			"add2":
+				anim_node = AnimationNodeAdd2.new()
+			"add3":
+				anim_node = AnimationNodeAdd3.new()
+			"sub2":
+				anim_node = AnimationNodeSub2.new()
+			"sync":
+				anim_node = AnimationNodeSync.new()
+			"one_shot":
+				anim_node = AnimationNodeOneShot.new()
+			"time_scale":
+				anim_node = AnimationNodeTimeScale.new()
+			"time_seek":
+				anim_node = AnimationNodeTimeSeek.new()
+			"transition":
+				anim_node = AnimationNodeTransition.new()
+			"output":
+				anim_node = AnimationNodeOutput.new()
+			_:
+				continue
+		bt.add_node(name, anim_node)
 
-	return {"ok": true, "state_machine": true, "states": states.size(), "transitions": transitions.size()}
+	var connections: Array = args.get("connections", [])
+	for c in connections:
+		var cd: Dictionary = c if c is Dictionary else {}
+		var from_node: String = str(cd.get("from", ""))
+		var from_port: int = int(cd.get("from_port", 0))
+		var to_node: String = str(cd.get("to", ""))
+		var to_port: int = int(cd.get("to_port", 0))
+		if from_node != "" and to_node != "":
+			bt.connect_node(from_node, from_port, to_node)
+	return bt
+
+
+func _build_blend_space_1d(args: Dictionary) -> AnimationNodeBlendSpace1D:
+	var bs := AnimationNodeBlendSpace1D.new()
+	bs.min_space = float(args.get("min", 0.0))
+	bs.max_space = float(args.get("max", 1.0))
+	bs.blend_mode = int(args.get("blend_mode", 0))
+	bs.snap = float(args.get("snap", 0.1))
+	var points: Array = args.get("points", [])
+	for p in points:
+		var pd: Dictionary = p if p is Dictionary else {}
+		var anim_name: String = str(pd.get("animation", ""))
+		var pos: float = float(pd.get("position", 0.0))
+		if anim_name != "":
+			var an := AnimationNodeAnimation.new()
+			an.animation = anim_name
+			bs.add_blend_point(an, pos)
+	return bs
+
+
+func _build_blend_space_2d(args: Dictionary) -> AnimationNodeBlendSpace2D:
+	var bs := AnimationNodeBlendSpace2D.new()
+	bs.min_space = Vector2(float(args.get("min_x", -1.0)), float(args.get("min_y", -1.0)))
+	bs.max_space = Vector2(float(args.get("max_x", 1.0)), float(args.get("max_y", 1.0)))
+	bs.blend_mode = int(args.get("blend_mode", 0))
+	bs.snap = Vector2(float(args.get("snap_x", 0.1)), float(args.get("snap_y", 0.1)))
+	bs.x_label = str(args.get("x_label", "x"))
+	bs.y_label = str(args.get("y_label", "y"))
+	var points: Array = args.get("points", [])
+	for p in points:
+		var pd: Dictionary = p if p is Dictionary else {}
+		var anim_name: String = str(pd.get("animation", ""))
+		var pos := Vector2(float(pd.get("x", 0.0)), float(pd.get("y", 0.0)))
+		if anim_name != "":
+			var an := AnimationNodeAnimation.new()
+			an.animation = anim_name
+			bs.add_blend_point(an, pos)
+	return bs
+
+
+# ---------------------------------------------------------------- edición (Fase 2)
+
+func handle_remove_track(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	var anim_name: String = str(args.get("anim_name", ""))
+	if anim_name == "":
+		return {"ok": false, "error": "anim_name required"}
+	if not player.has_animation(anim_name):
+		return {"ok": false, "error": "animation_not_found: " + anim_name}
+	var anim: Animation = player.get_animation(anim_name)
+	var track_idx: int = int(args.get("track_idx", -1))
+	if track_idx < 0 or track_idx >= anim.get_track_count():
+		return {"ok": false, "error": "invalid_track_idx: " + str(track_idx)}
+	anim.remove_track(track_idx)
+	return {"ok": true, "anim_name": anim_name, "removed_track": track_idx, "tracks_left": anim.get_track_count()}
+
+
+func handle_remove_key(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	var anim_name: String = str(args.get("anim_name", ""))
+	if anim_name == "":
+		return {"ok": false, "error": "anim_name required"}
+	if not player.has_animation(anim_name):
+		return {"ok": false, "error": "animation_not_found: " + anim_name}
+	var anim: Animation = player.get_animation(anim_name)
+	var track_idx: int = int(args.get("track_idx", -1))
+	var key_idx: int = int(args.get("key_idx", -1))
+	if track_idx < 0 or track_idx >= anim.get_track_count():
+		return {"ok": false, "error": "invalid_track_idx: " + str(track_idx)}
+	if key_idx < 0 or key_idx >= anim.track_get_key_count(track_idx):
+		return {"ok": false, "error": "invalid_key_idx: " + str(key_idx)}
+	anim.track_remove_key(track_idx, key_idx)
+	return {"ok": true, "anim_name": anim_name, "track_idx": track_idx, "removed_key": key_idx}
+
+
+func handle_update_key(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	var anim_name: String = str(args.get("anim_name", ""))
+	if anim_name == "":
+		return {"ok": false, "error": "anim_name required"}
+	if not player.has_animation(anim_name):
+		return {"ok": false, "error": "animation_not_found: " + anim_name}
+	var anim: Animation = player.get_animation(anim_name)
+	var track_idx: int = int(args.get("track_idx", -1))
+	var key_idx: int = int(args.get("key_idx", -1))
+	if track_idx < 0 or track_idx >= anim.get_track_count():
+		return {"ok": false, "error": "invalid_track_idx: " + str(track_idx)}
+	if key_idx < 0 or key_idx >= anim.track_get_key_count(track_idx):
+		return {"ok": false, "error": "invalid_key_idx: " + str(key_idx)}
+
+	if args.has("time"):
+		anim.track_set_key_time(track_idx, key_idx, float(args.get("time")))
+	if args.has("value"):
+		anim.track_set_key_value(track_idx, key_idx, HerenCoordsScript.deserialize_value(args.get("value")))
+	if args.has("transition"):
+		anim.track_set_key_transition(track_idx, key_idx, float(args.get("transition")))
+
+	return {"ok": true, "anim_name": anim_name, "track_idx": track_idx, "key_idx": key_idx}
+
+
+func handle_update_props(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	var anim_name: String = str(args.get("anim_name", ""))
+	if anim_name == "":
+		return {"ok": false, "error": "anim_name required"}
+	if not player.has_animation(anim_name):
+		return {"ok": false, "error": "animation_not_found: " + anim_name}
+	var anim: Animation = player.get_animation(anim_name)
+
+	if args.has("length"):
+		anim.length = float(args.get("length"))
+	if args.has("loop"):
+		anim.loop_mode = Animation.LOOP_LINEAR if bool(args.get("loop")) else Animation.LOOP_NONE
+	if args.has("loop_mode"):
+		match str(args.get("loop_mode")):
+			"linear":
+				anim.loop_mode = Animation.LOOP_LINEAR
+			"pingpong":
+				anim.loop_mode = Animation.LOOP_PINGPONG
+			_:
+				anim.loop_mode = Animation.LOOP_NONE
+
+	return {"ok": true, "anim_name": anim_name, "length": anim.length, "loop_mode": _loop_mode_str(anim.loop_mode)}
+
+
+# ---------------------------------------------------------------- one_shot (Fase 2)
+
+func handle_one_shot(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	var anim_name: String = str(args.get("anim_name", ""))
+	if anim_name == "":
+		return {"ok": false, "error": "anim_name required"}
+
+	var anim := Animation.new()
+	anim.length = float(args.get("length", 1.0))
+	if args.has("loop_mode"):
+		match str(args.get("loop_mode")):
+			"linear":
+				anim.loop_mode = Animation.LOOP_LINEAR
+			"pingpong":
+				anim.loop_mode = Animation.LOOP_PINGPONG
+			_:
+				anim.loop_mode = Animation.LOOP_NONE
+	else:
+		anim.loop_mode = Animation.LOOP_LINEAR if bool(args.get("loop", false)) else Animation.LOOP_NONE
+
+	var tracks: Array = args.get("tracks", [])
+	var track_count := 0
+	var key_count := 0
+	for t in tracks:
+		var td: Dictionary = t if t is Dictionary else {}
+		var node_path: String = str(td.get("node", ""))
+		var property: String = str(td.get("property", ""))
+		var track_type: String = str(td.get("track_type", "value"))
+		if node_path == "":
+			continue
+
+		var track_idx := -1
+		match track_type:
+			"value":
+				track_idx = anim.add_track(Animation.TYPE_VALUE)
+				anim.track_set_path(track_idx, node_path + ":" + property)
+			"position_3d", "rotation_3d", "scale_3d":
+				track_idx = anim.add_track(Animation.TYPE_POSITION_3D if track_type == "position_3d" else Animation.TYPE_ROTATION_3D if track_type == "rotation_3d" else Animation.TYPE_SCALE_3D)
+				anim.track_set_path(track_idx, node_path)
+			"method":
+				track_idx = anim.add_track(Animation.TYPE_METHOD)
+				anim.track_set_path(track_idx, node_path)
+			"bezier":
+				track_idx = anim.add_track(Animation.TYPE_BEZIER)
+				anim.track_set_path(track_idx, node_path + ":" + property)
+			"audio":
+				track_idx = anim.add_track(Animation.TYPE_AUDIO)
+				anim.track_set_path(track_idx, node_path)
+			_:
+				continue
+		track_count += 1
+
+		var keys: Array = td.get("keys", [])
+		for k in keys:
+			var kd: Dictionary = k if k is Dictionary else {}
+			var time: float = float(kd.get("time", 0.0))
+			var transition: float = float(kd.get("transition", 1.0))
+			if track_type == "method":
+				var method_name: String = str(kd.get("method", ""))
+				var method_args: Array = kd.get("args", [])
+				var m := {"method": method_name, "args": method_args}
+				anim.track_insert_key(track_idx, time, m, transition)
+			else:
+				var value: Variant = HerenCoordsScript.deserialize_value(kd.get("value"))
+				anim.track_insert_key(track_idx, time, value, transition)
+			key_count += 1
+
+	var anim_lib := player.get_animation_library("")
+	if anim_lib == null:
+		anim_lib = AnimationLibrary.new()
+		player.add_animation_library("", anim_lib)
+	anim_lib.add_animation(anim_name, anim)
+
+	return {
+		"ok": true,
+		"anim_name": anim_name,
+		"length": anim.length,
+		"loop_mode": _loop_mode_str(anim.loop_mode),
+		"tracks": track_count,
+		"keys": key_count,
+		"player_path": _node_path_relative(player, root),
+	}
+
+
+# ---------------------------------------------------------------- tween (Fase 3)
+
+func handle_tween(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var node := _resolve_node(root, args.get("node_path", ""))
+	if node == null:
+		return {"ok": false, "error": "node_not_found"}
+	var property: String = str(args.get("property", ""))
+	if property == "":
+		return {"ok": false, "error": "property required"}
+
+	var duration: float = float(args.get("duration", 1.0))
+	var to_value: Variant = HerenCoordsScript.deserialize_value(args.get("to"))
+	var from_value: Variant = HerenCoordsScript.deserialize_value(args.get("from", null))
+	var easing: String = str(args.get("easing", "linear"))
+	var transition: String = str(args.get("transition", "linear"))
+
+	var tween := node.create_tween()
+	var tween_prop: PropertyTweener
+	if from_value != null:
+		tween_prop = tween.tween_property(node, property, to_value, duration).from(from_value)
+	else:
+		tween_prop = tween.tween_property(node, property, to_value, duration)
+	tween_prop.set_trans(_tween_transition(transition))
+	tween_prop.set_ease(_tween_ease(easing))
+
+	return {
+		"ok": true,
+		"node_path": _node_path_relative(node, root),
+		"property": property,
+		"duration": duration,
+		"to": HerenCoordsScript.serialize_value(to_value),
+		"easing": easing,
+		"transition": transition,
+	}
+
+
+func _tween_transition(name: String) -> int:
+	match name:
+		"quad": return Tween.TRANS_QUAD
+		"cubic": return Tween.TRANS_CUBIC
+		"quart": return Tween.TRANS_QUART
+		"quint": return Tween.TRANS_QUINT
+		"sine": return Tween.TRANS_SINE
+		"expo": return Tween.TRANS_EXPO
+		"circ": return Tween.TRANS_CIRC
+		"elastic": return Tween.TRANS_ELASTIC
+		"back": return Tween.TRANS_BACK
+		"bounce": return Tween.TRANS_BOUNCE
+		_:
+			return Tween.TRANS_LINEAR
+
+
+func _tween_ease(name: String) -> int:
+	match name:
+		"in": return Tween.EASE_IN
+		"out": return Tween.EASE_OUT
+		"in_out": return Tween.EASE_IN_OUT
+		"out_in": return Tween.EASE_OUT_IN
+		_:
+			return Tween.EASE_IN_OUT
+
+
+# ---------------------------------------------------------------- skeleton pose/ik (Fase 3)
+
+func handle_skeleton_get_bones(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var node := _resolve_node(root, args.get("skeleton_path", ""))
+	if node == null:
+		return {"ok": false, "error": "skeleton_not_found"}
+
+	var bones: Array = []
+	if node is Skeleton2D:
+		var skel2d := node as Skeleton2D
+		for i in skel2d.get_bone_count():
+			var b := skel2d.get_bone(i)
+			bones.append({
+				"idx": i,
+				"name": b.name,
+				"rest": HerenCoordsScript.serialize_value(b.rest),
+				"default_length": b.default_length,
+			})
+	elif node is Skeleton3D:
+		var skel3d := node as Skeleton3D
+		for i in skel3d.get_bone_count():
+			bones.append({
+				"idx": i,
+				"name": skel3d.get_bone_name(i),
+				"rest": HerenCoordsScript.serialize_value(skel3d.get_bone_rest(i)),
+				"parent": skel3d.get_bone_parent(i),
+			})
+	else:
+		return {"ok": false, "error": "invalid_skeleton_type"}
+
+	return {"ok": true, "skeleton_path": _node_path_relative(node, root), "bones": bones}
+
+
+func handle_skeleton_get_pose(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var node := _resolve_node(root, args.get("skeleton_path", ""))
+	if node == null:
+		return {"ok": false, "error": "skeleton_not_found"}
+
+	var pose: Array = []
+	if node is Skeleton2D:
+		var skel2d := node as Skeleton2D
+		for i in skel2d.get_bone_count():
+			var b := skel2d.get_bone(i)
+			pose.append({"name": b.name, "transform": HerenCoordsScript.serialize_value(b.transform)})
+	elif node is Skeleton3D:
+		var skel3d := node as Skeleton3D
+		for i in skel3d.get_bone_count():
+			pose.append({
+				"name": skel3d.get_bone_name(i),
+				"pose": HerenCoordsScript.serialize_value(skel3d.get_bone_pose(i)),
+			})
+	else:
+		return {"ok": false, "error": "invalid_skeleton_type"}
+
+	return {"ok": true, "skeleton_path": _node_path_relative(node, root), "pose": pose}
+
+
+func handle_skeleton_set_pose(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var node := _resolve_node(root, args.get("skeleton_path", ""))
+	if node == null:
+		return {"ok": false, "error": "skeleton_not_found"}
+	var bone_name: String = str(args.get("bone_name", ""))
+	if bone_name == "":
+		return {"ok": false, "error": "bone_name required"}
+
+	if node is Skeleton2D:
+		var skel2d := node as Skeleton2D
+		for i in skel2d.get_bone_count():
+			var b := skel2d.get_bone(i)
+			if b.name == bone_name:
+				var t: Dictionary = _args_dict(args, "transform")
+				var angle: float = float(t.get("angle", t.get("rotation", 0.0)))
+				var origin := Vector2(float(t.get("x", 0)), float(t.get("y", 0)))
+				b.transform = Transform2D(angle, origin)
+				return {"ok": true, "bone_name": bone_name, "type": "Skeleton2D"}
+		return {"ok": false, "error": "bone_not_found: " + bone_name}
+	elif node is Skeleton3D:
+		var skel3d := node as Skeleton3D
+		var bone_idx: int = skel3d.find_bone(bone_name)
+		if bone_idx < 0:
+			return {"ok": false, "error": "bone_not_found: " + bone_name}
+		var t: Dictionary = _args_dict(args, "transform")
+		var origin := Vector3(float(t.get("x", 0)), float(t.get("y", 0)), float(t.get("z", 0)))
+		var basis := Basis()
+		if t.has("rotation"):
+			var rot: Dictionary = t["rotation"] if t["rotation"] is Dictionary else {}
+			basis = Basis.from_euler(Vector3(float(rot.get("x", 0)), float(rot.get("y", 0)), float(rot.get("z", 0))))
+		skel3d.set_bone_pose(bone_idx, Transform3D(basis, origin))
+		return {"ok": true, "bone_name": bone_name, "bone_idx": bone_idx, "type": "Skeleton3D"}
+	return {"ok": false, "error": "invalid_skeleton_type"}
+
+
+func handle_skeleton_ik(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var skeleton := _resolve_node(root, args.get("skeleton_path", "")) as Skeleton3D
+	if skeleton == null:
+		return {"ok": false, "error": "skeleton3d_not_found"}
+
+	var ik_name: String = str(args.get("ik_name", "SkeletonIK3D"))
+	var ik := SkeletonIK3D.new()
+	ik.name = ik_name
+	ik.skeleton = skeleton.get_path()
+	ik.root_bone = str(args.get("root_bone", ""))
+	ik.tip_bone = str(args.get("tip_bone", ""))
+	ik.interpolation = float(args.get("interpolation", 1.0))
+	ik.max_iterations = int(args.get("max_iterations", 10))
+	ik.override_tip_basis = bool(args.get("override_tip_basis", false))
+
+	var target_path: String = str(args.get("target_path", ""))
+	if target_path != "":
+		var target := _resolve_node(root, target_path)
+		if target != null:
+			ik.target_node = target.get_path()
+
+	skeleton.add_child(ik)
+	ik.owner = root
+
+	if bool(args.get("start", true)):
+		ik.start()
+
+	return {
+		"ok": true,
+		"ik_name": ik_name,
+		"skeleton_path": _node_path_relative(skeleton, root),
+		"root_bone": ik.root_bone,
+		"tip_bone": ik.tip_bone,
+		"running": ik.running,
+	}
+
+
+# ---------------------------------------------------------------- innovación (Fase 4)
+
+func handle_record(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	var anim_name: String = str(args.get("anim_name", ""))
+	if anim_name == "":
+		return {"ok": false, "error": "anim_name required"}
+	var node_path: String = str(args.get("node_path", ""))
+	if node_path == "":
+		return {"ok": false, "error": "node_path required"}
+	var node := _resolve_node(root, node_path)
+	if node == null:
+		return {"ok": false, "error": "node_not_found"}
+	var property: String = str(args.get("property", "position"))
+	var fps: float = float(args.get("fps", 30.0))
+	var duration: float = float(args.get("duration", 1.0))
+
+	# Graba el estado del nodo cada frame durante `duration` segundos.
+	var anim := Animation.new()
+	anim.length = duration
+	anim.loop_mode = Animation.LOOP_LINEAR if bool(args.get("loop", false)) else Animation.LOOP_NONE
+	var track_idx := anim.add_track(Animation.TYPE_VALUE)
+	anim.track_set_path(track_idx, node_path + ":" + property)
+
+	var steps: int = int(duration * fps)
+	var dt: float = 1.0 / fps
+	for i in steps + 1:
+		var t: float = i * dt
+		var value: Variant = node.get(property)
+		anim.track_insert_key(track_idx, t, value, 1.0)
+		# Avanzar un frame del editor para capturar el siguiente estado.
+		await _editor_interface().get_base_control().get_tree().process_frame
+
+	var anim_lib := player.get_animation_library("")
+	if anim_lib == null:
+		anim_lib = AnimationLibrary.new()
+		player.add_animation_library("", anim_lib)
+	anim_lib.add_animation(anim_name, anim)
+
+	return {
+		"ok": true,
+		"anim_name": anim_name,
+		"node_path": node_path,
+		"property": property,
+		"fps": fps,
+		"duration": duration,
+		"keys": steps + 1,
+	}
+
+
+func handle_from_path(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	var anim_name: String = str(args.get("anim_name", ""))
+	if anim_name == "":
+		return {"ok": false, "error": "anim_name required"}
+	var path_node := _resolve_node(root, args.get("path_path", ""))
+	if path_node == null:
+		return {"ok": false, "error": "path_not_found"}
+	var node_path: String = str(args.get("node_path", ""))
+	if node_path == "":
+		return {"ok": false, "error": "node_path required"}
+
+	var is_3d: bool = path_node is Path3D
+	var curve: Variant = null
+	if path_node is Path2D:
+		curve = (path_node as Path2D).curve
+	elif path_node is Path3D:
+		curve = (path_node as Path3D).curve
+	if curve == null:
+		return {"ok": false, "error": "path_has_no_curve"}
+
+	var duration: float = float(args.get("duration", 1.0))
+	var fps: float = float(args.get("fps", 30.0))
+
+	var anim := Animation.new()
+	anim.length = duration
+	anim.loop_mode = Animation.LOOP_LINEAR if bool(args.get("loop", false)) else Animation.LOOP_NONE
+	var track_idx := anim.add_track(Animation.TYPE_POSITION_3D if is_3d else Animation.TYPE_VALUE)
+	var prop: String = "position" if is_3d else "position"
+	anim.track_set_path(track_idx, node_path + (":" + prop if not is_3d else ""))
+
+	var steps: int = int(duration * fps)
+	var dt: float = 1.0 / fps
+	for i in steps + 1:
+		var t: float = i * dt
+		var offset: float = t / duration
+		if is_3d:
+			var pos3: Vector3 = (path_node as Path3D).curve.sample_baked(offset * (path_node as Path3D).curve.get_baked_length())
+			anim.track_insert_key(track_idx, t, pos3, 1.0)
+		else:
+			var pos2: Vector2 = (path_node as Path2D).curve.sample_baked(offset * (path_node as Path2D).curve.get_baked_length())
+			anim.track_insert_key(track_idx, t, pos2, 1.0)
+
+	var anim_lib := player.get_animation_library("")
+	if anim_lib == null:
+		anim_lib = AnimationLibrary.new()
+		player.add_animation_library("", anim_lib)
+	anim_lib.add_animation(anim_name, anim)
+
+	return {
+		"ok": true,
+		"anim_name": anim_name,
+		"node_path": node_path,
+		"path": _node_path_relative(path_node, root),
+		"duration": duration,
+		"keys": steps + 1,
+		"is_3d": is_3d,
+	}
+
+
+func handle_loop_pose(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	var anim_name: String = str(args.get("anim_name", ""))
+	if anim_name == "":
+		return {"ok": false, "error": "anim_name required"}
+	var node_path: String = str(args.get("node_path", ""))
+	if node_path == "":
+		return {"ok": false, "error": "node_path required"}
+	var node := _resolve_node(root, node_path)
+	if node == null:
+		return {"ok": false, "error": "node_not_found"}
+
+	# Genera keyframes de bucle procedural (idle bob / breathing / walk simple).
+	var property: String = str(args.get("property", "position"))
+	var amplitude: float = float(args.get("amplitude", 10.0))
+	var frequency: float = float(args.get("frequency", 2.0))
+	var duration: float = float(args.get("duration", 1.0))
+	var fps: float = float(args.get("fps", 30.0))
+	var axis: String = str(args.get("axis", "y"))
+	var base_value: Variant = node.get(property)
+
+	var anim := Animation.new()
+	anim.length = duration
+	anim.loop_mode = Animation.LOOP_LINEAR
+	var track_idx := anim.add_track(Animation.TYPE_VALUE)
+	anim.track_set_path(track_idx, node_path + ":" + property)
+
+	var steps: int = int(duration * fps)
+	var dt: float = 1.0 / fps
+	for i in steps + 1:
+		var t: float = i * dt
+		var phase: float = t * frequency * TAU
+		var offset: float = sin(phase) * amplitude
+		var value: Variant = base_value
+		if value is Vector2:
+			var v2 := value as Vector2
+			if axis == "x":
+				v2.x += offset
+			else:
+				v2.y += offset
+			value = v2
+		elif value is Vector3:
+			var v3 := value as Vector3
+			if axis == "x":
+				v3.x += offset
+			elif axis == "z":
+				v3.z += offset
+			else:
+				v3.y += offset
+			value = v3
+		elif value is float:
+			value = float(value) + offset
+		anim.track_insert_key(track_idx, t, value, 1.0)
+
+	var anim_lib := player.get_animation_library("")
+	if anim_lib == null:
+		anim_lib = AnimationLibrary.new()
+		player.add_animation_library("", anim_lib)
+	anim_lib.add_animation(anim_name, anim)
+
+	return {
+		"ok": true,
+		"anim_name": anim_name,
+		"node_path": node_path,
+		"property": property,
+		"amplitude": amplitude,
+		"frequency": frequency,
+		"axis": axis,
+		"keys": steps + 1,
+	}
+
+
+func handle_preview(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	var anim_name: String = str(args.get("anim_name", ""))
+	if anim_name == "":
+		return {"ok": false, "error": "anim_name required"}
+	if not player.has_animation(anim_name):
+		return {"ok": false, "error": "animation_not_found: " + anim_name}
+
+	# Busca el AnimationPlayer en el árbol para poder seek.
+	var time: float = float(args.get("time", 0.0))
+	player.seek(time, true)
+	player.pause()
+
+	return {
+		"ok": true,
+		"anim_name": anim_name,
+		"time": time,
+		"position": player.current_animation_position,
+		"hint": "usa visual/capture para ver el frame",
+	}
+
+
+func handle_curve(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	var anim_name: String = str(args.get("anim_name", ""))
+	if anim_name == "":
+		return {"ok": false, "error": "anim_name required"}
+	if not player.has_animation(anim_name):
+		return {"ok": false, "error": "animation_not_found: " + anim_name}
+	var anim: Animation = player.get_animation(anim_name)
+	var track_idx: int = int(args.get("track_idx", -1))
+	if track_idx < 0 or track_idx >= anim.get_track_count():
+		return {"ok": false, "error": "invalid_track_idx: " + str(track_idx)}
+
+	# Aplica easing a todos los keyframes del track (Fase 4: animation/curve).
+	var easing: String = str(args.get("easing", "linear"))
+	var transition: float = _easing_transition(easing)
+	for k in anim.track_get_key_count(track_idx):
+		anim.track_set_key_transition(track_idx, k, transition)
+
+	return {
+		"ok": true,
+		"anim_name": anim_name,
+		"track_idx": track_idx,
+		"easing": easing,
+		"keys_updated": anim.track_get_key_count(track_idx),
+	}
+
+
+func _easing_transition(easing: String) -> float:
+	# Mapea nombres de easing a valores de transition de Godot (0..1).
+	match easing:
+		"linear": return 0.0
+		"ease_in": return 0.2
+		"ease_out": return 0.8
+		"ease_in_out": return 0.5
+		"elastic": return 0.9
+		"bounce": return 0.7
+		_:
+			return 0.0
+
+
+# ------------------------------------------------- playback + inspección (Fase 1)
+
+func _player_or_error(root: Node, args: Dictionary) -> Dictionary:
+	var player: AnimationPlayer = _get_animation_player(root, args.get("player_path", ""))
+	if player == null:
+		return {"ok": false, "error": "animation_player_not_found"}
+	return {"ok": true, "player": player}
+
+
+func handle_play(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	var anim_name: String = str(args.get("anim_name", ""))
+	var custom_blend: float = float(args.get("custom_blend", -1.0))
+
+	if anim_name != "":
+		if not player.has_animation(anim_name):
+			return {"ok": false, "error": "animation_not_found: " + anim_name}
+		if custom_blend >= 0.0:
+			player.play(anim_name, custom_blend)
+		else:
+			player.play(anim_name)
+	else:
+		# Reproduce la animación actual (o la primera si no hay ninguna).
+		player.play()
+
+	return {
+		"ok": true,
+		"playing": player.is_playing(),
+		"current_animation": player.current_animation,
+		"position": player.current_animation_position,
+		"player_path": _node_path_relative(player, root),
+	}
+
+
+func handle_stop(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	player.stop()
+	return {
+		"ok": true,
+		"playing": false,
+		"player_path": _node_path_relative(player, root),
+	}
+
+
+func handle_seek(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	var time: float = float(args.get("time", 0.0))
+	player.seek(time, true)
+	return {
+		"ok": true,
+		"position": player.current_animation_position,
+		"player_path": _node_path_relative(player, root),
+	}
+
+
+func handle_speed(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	var speed: float = float(args.get("speed", 1.0))
+	player.speed_scale = speed
+	return {
+		"ok": true,
+		"speed_scale": player.speed_scale,
+		"player_path": _node_path_relative(player, root),
+	}
+
+
+func handle_get_animations(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+
+	var libs: Array = []
+	for lib_name in player.get_animation_library_list():
+		var lib := player.get_animation_library(lib_name)
+		var anims: Array = []
+		for anim_name in lib.get_animation_list():
+			var anim := lib.get_animation(anim_name)
+			anims.append({
+				"name": anim_name,
+				"length": anim.length,
+				"loop_mode": _loop_mode_str(anim.loop_mode),
+				"tracks": anim.get_track_count(),
+			})
+		libs.append({"library": lib_name if lib_name != "" else "<default>", "animations": anims})
+
+	return {
+		"ok": true,
+		"current_animation": player.current_animation,
+		"playing": player.is_playing(),
+		"position": player.current_animation_position,
+		"libraries": libs,
+		"player_path": _node_path_relative(player, root),
+	}
+
+
+func handle_get_tracks(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	var anim_name: String = str(args.get("anim_name", ""))
+	if anim_name == "":
+		return {"ok": false, "error": "anim_name required"}
+	if not player.has_animation(anim_name):
+		return {"ok": false, "error": "animation_not_found: " + anim_name}
+	var anim: Animation = player.get_animation(anim_name)
+
+	var tracks: Array = []
+	for i in anim.get_track_count():
+		var track_type: int = anim.track_get_type(i)
+		var track_path: String = str(anim.track_get_path(i))
+		tracks.append({
+			"idx": i,
+			"type": _track_type_str(track_type),
+			"path": track_path,
+			"keys": anim.track_get_key_count(i),
+			"enabled": anim.track_is_enabled(i),
+		})
+
+	return {
+		"ok": true,
+		"anim_name": anim_name,
+		"length": anim.length,
+		"loop_mode": _loop_mode_str(anim.loop_mode),
+		"tracks": tracks,
+	}
+
+
+func handle_get_keyframes(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var resolved := _player_or_error(root, args)
+	if not resolved.ok:
+		return resolved
+	var player: AnimationPlayer = resolved.player
+	var anim_name: String = str(args.get("anim_name", ""))
+	if anim_name == "":
+		return {"ok": false, "error": "anim_name required"}
+	if not player.has_animation(anim_name):
+		return {"ok": false, "error": "animation_not_found: " + anim_name}
+	var anim: Animation = player.get_animation(anim_name)
+
+	var track_idx: int = int(args.get("track_idx", -1))
+	if track_idx < 0 or track_idx >= anim.get_track_count():
+		return {"ok": false, "error": "invalid_track_idx: " + str(track_idx)}
+
+	var keys: Array = []
+	for k in anim.track_get_key_count(track_idx):
+		var key := {
+			"idx": k,
+			"time": anim.track_get_key_time(track_idx, k),
+			"transition": anim.track_get_key_transition(track_idx, k),
+		}
+		if anim.track_get_type(track_idx) != Animation.TYPE_METHOD:
+			key["value"] = HerenCoordsScript.serialize_value(anim.track_get_key_value(track_idx, k))
+		else:
+			var m: Dictionary = anim.track_get_key_value(track_idx, k)
+			key["method"] = str(m.get("method", ""))
+			key["args"] = HerenCoordsScript.serialize_value(m.get("args", []))
+		keys.append(key)
+
+	return {
+		"ok": true,
+		"anim_name": anim_name,
+		"track_idx": track_idx,
+		"track_type": _track_type_str(anim.track_get_type(track_idx)),
+		"keys": keys,
+	}
+
+
+func handle_get_state_machine(args: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+
+	var tree_path: Variant = args.get("tree_path", "")
+	var tree: AnimationTree = null
+	if tree_path != null and str(tree_path) != "":
+		tree = _resolve_node(root, tree_path) as AnimationTree
+	else:
+		# Buscar el AnimationTree hijo del player (o cualquier AnimationTree del root).
+		var resolved := _player_or_error(root, args)
+		if resolved.ok:
+			var player: AnimationPlayer = resolved.player
+			for child in player.get_children():
+				if child is AnimationTree:
+					tree = child as AnimationTree
+					break
+		if tree == null:
+			for child in root.get_children():
+				if child is AnimationTree:
+					tree = child as AnimationTree
+					break
+	if tree == null:
+		return {"ok": false, "error": "animation_tree_not_found"}
+
+	var graph_root: AnimationNode = tree.tree_root
+	var info := {
+		"root_type": graph_root.get_class() if graph_root != null else "",
+		"tree_path": _node_path_relative(tree, root),
+		"parameters": [],
+	}
+
+	if graph_root is AnimationNodeStateMachine:
+		var sm := graph_root as AnimationNodeStateMachine
+		var states: Array = []
+		for state_name in sm.get_node_list():
+			var state_node: AnimationNode = sm.get_node(state_name)
+			var state_info := {"name": str(state_name), "type": state_node.get_class()}
+			if state_node is AnimationNodeAnimation:
+				state_info["animation"] = (state_node as AnimationNodeAnimation).animation
+			states.append(state_info)
+		info["states"] = states
+
+		var transitions: Array = []
+		for t in sm.get_transition_list():
+			transitions.append({
+				"from": str(t.get("from", "")),
+				"to": str(t.get("to", "")),
+				"advance_condition": str(t.get("advance_condition", "")),
+			})
+		info["transitions"] = transitions
+	elif graph_root is AnimationNodeBlendSpace2D:
+		var bs := graph_root as AnimationNodeBlendSpace2D
+		var points: Array = []
+		for p in bs.get_blend_points():
+			var anim_node := bs.get_blend_point_node(p) as AnimationNodeAnimation
+			points.append({
+				"point": bs.get_blend_point_position(p),
+				"animation": anim_node.animation if anim_node else "",
+			})
+		info["blend_space_2d"] = {
+			"blend_positions": bs.blend_positions,
+			"blend_point_count": points.size(),
+			"x_label": bs.x_label, "y_label": bs.y_label,
+		}
+		info["points"] = points
+	elif graph_root is AnimationNodeBlendTree:
+		var bt := graph_root as AnimationNodeBlendTree
+		var nodes: Array = []
+		for n in bt.get_node_list():
+			nodes.append({"name": str(n), "type": bt.get_node(n).get_class()})
+		info["blend_tree"] = {"nodes": nodes, "connections": bt.get_connection_list().size()}
+
+	for p in tree.get_parameter_list():
+		info["parameters"].append(str(p))
+	if graph_root != null:
+		info["root_parameters"] = tree.get_parameter_list().size()
+
+	return {"ok": true, "state_machine": info}
+
+
+func _loop_mode_str(mode: int) -> String:
+	match mode:
+		Animation.LOOP_LINEAR:
+			return "linear"
+		Animation.LOOP_PINGPONG:
+			return "pingpong"
+		Animation.LOOP_NONE:
+			return "none"
+	return "none"
+
+
+func _track_type_str(type_id: int) -> String:
+	match type_id:
+		Animation.TYPE_VALUE:
+			return "value"
+		Animation.TYPE_POSITION_3D:
+			return "position_3d"
+		Animation.TYPE_ROTATION_3D:
+			return "rotation_3d"
+		Animation.TYPE_SCALE_3D:
+			return "scale_3d"
+		Animation.TYPE_BEZIER:
+			return "bezier"
+		Animation.TYPE_AUDIO:
+			return "audio"
+		Animation.TYPE_METHOD:
+			return "method"
+	return "unknown"
 
 
 # ---------------------------------------------------------------- skeleton
