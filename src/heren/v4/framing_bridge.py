@@ -62,6 +62,18 @@ def main() -> None:
     )
     log("server lanzado")
 
+    # Thread: drena stderr del server — CRÍTICO. Si no se lee, el pipe de
+    # stderr se llena (64KB en Windows) y el server se bloquea escribiendo
+    # logs de tracing -> 'tarda demasiado y muere' en OpenCode.
+    def drain_stderr() -> None:
+        while True:
+            chunk = server.stderr.readline()
+            if not chunk:
+                break
+            log(f"server stderr: {chunk.decode(errors='replace').strip()}")
+
+    threading.Thread(target=drain_stderr, daemon=True).start()
+
     # Thread: lee stdout del server (NDJSON) -> escribe a stdout (Content-Length)
     def server_to_opencode() -> None:
         while True:
