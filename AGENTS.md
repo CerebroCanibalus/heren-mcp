@@ -558,6 +558,7 @@ session("open", project_path="D:/MiProyectoExistente")
 | **Build MSVC: requiere VsDevCmd del BuildTools 2022** | rustc MSVC usaba VS 18 Insiders (sin libs) → error `LNK1104 msvcrt.lib`. Fix: `heren-build.bat` carga `VsDevCmd.bat` del BuildTools 2022 antes de cargo. | 2026-08-04 |
 | **orchestrate con plan_file** | El batch rompía con dicts anidados (JSON del tool-call). Fix en Rust: `orchestrate` acepta `plan_file` (ruta al JSON del plan) — el plan viaja por archivo, no por tool-call. | 2026-08-04 |
 | **Reinicio MCP: matar bridge viejo primero** | Al cambiar el MCP a Rust, el bridge Python viejo (`python -m heren.v4.bridge`) quedó ocupando el puerto 9099 → "failed to get tools". Fix: matar el proceso bridge (taskkill) antes de reiniciar el MCP. | 2026-08-04 |
+| **CRÍTICO: OpenCode usa Content-Length, FlojoMCP usa NDJSON** | "failed to get tools" en OpenCode 1.18: el server respondía NDJSON (rmcp 1.7 stdio) pero OpenCode espera Content-Length framing (LSP-style) → parse error → server marcado como fallido. PulseWire (mismo rmcp) tampoco cargaba — confirmaba el mismatch. **Fix**: `framing_bridge.py` en run.bat traduce Content-Length ↔ NDJSON. Verificado E2E: initialize + 21 tools via Content-Length. | 2026-08-04 |
 
  ### Nuevas Features (v3.0)
 
