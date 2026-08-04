@@ -8,13 +8,23 @@ Este documento es la biblia para agentes que operan Heren MCP. Lee esto antes de
 > 🚧 **ESTADO: v4.2.0 OPERATIVO (EditorPlugin + heren-server.exe Rust).**
 > **Migración completada 2026-08-03**: GodotDaemon (v3) → EditorPlugin (v4).
 > **Fase 4 completada 2026-08-04**: el MCP es `heren-server.exe` (Rust/FlojoMCP),
-> 21 tools con paridad al bridge Python, WS plugin server + auto-launch del editor.
+> **15 tools centralizadas** (filosofía §1), WS plugin server + auto-launch del editor.
 > **v4.2 (2026-08-04)**: el .exe habla **NDJSON** por stdio (el framing real de OpenCode,
 > verificado con stdin-spy), bridge Python ELIMINADO, OpenCode apunta al .exe directo.
 > El transporte `Content-Length` (`flojo_run_stdio_cl`) queda en FlojoMCP como feature genérica
 > para clientes LSP-style, pero OpenCode NO lo usa.
 > El bridge Python (`python -m heren.v4.bridge`) ya NO es el MCP activo (queda como fallback/referencia).
 > Los cambios nuevos van a v4/Rust. No ampliar v3 salvo bugs críticos.
+>
+> **v4.2 sesión 2026-08-04 (bugs E2E arreglados):**
+> - **15 tools**: 8 renombradas sin `_tool`, 7 de visión consolidadas en `visual`.
+> - **Single-instance**: `run()` mata heren-server viejos (el editor conecta al server correcto).
+> - **`[editor_plugins]` normalizado** a `enabled=PackedStringArray(...)` (Godot 4 carga el plugin).
+> - **Instalación completa**: verifica TODOS los archivos, no solo plugin.cfg.
+> - **`project/create` sin editor** + main.tscn automática + configurabilidad profunda.
+> - **`project/setup_plugin`**: instalación como tool que el agente puede llamar.
+> - **`session.close_editor`** ahora opcional (default false).
+> - Herramienta de diagnóstico: `.temp/probe_tools.py` (probe stdio NDJSON del .exe).
 
 ---
 
@@ -765,33 +775,35 @@ project("setting", setting_name="display/window/size/viewport_width", value=1920
 
 ---
 
-## 10. Las 15 Tools de Heren MCP v2.0
+## 10. Las 15 Tools de Heren MCP v4.2
 
 ### Lista Completa y Estado
 
 | # | Tool | Actions | Dominio | Estado | Notas |
 |---|------|---------|---------|--------|-------|
-| 1 | `session` | open, close, list, info, health | Gestión de sesiones | ✅ **100%** | Estable |
-| 2 | `scene` | get_tree, save, load, unload, list_loaded, screenshot, create, delete, rename, add_ext_resource, set_editable_paths | Escenas | ✅ **100%** | v2.0: Modular |
-| 3 | `node` | add, remove, set_prop, get_prop, duplicate, rename, move, array_append, array_remove | Nodos | ✅ **100%** | v2.0: Mesh inline soportado |
-| 4 | `batch` | (múltiples operaciones) | Batch operations | ✅ **100%** | 11 ops en ~200ms |
-| 5 | `resource` | create, read, update, delete, list, create_script, read_script, edit_script | Recursos .tres + .gd | ✅ **100%** | v2.0: script CRUD |
-| 6 | `animation` | create_player, create, add_track, add_key, state_machine | Animaciones | ✅ **100%** | v2.0: AnimationLibrary |
-| 7 | `skeleton` | create, add_bone, set_rest, skin, attachment | Esqueletos 2D/3D | ✅ **100%** | v2.0: Modular |
-| 8 | `shader` | create, edit, validate, material, uniform | Shaders | ✅ **100%** | v2.0: Sin duplicación de shader_type |
-| 9 | `tilemap` | inspect_set, inspect_map, set_cell, terrain, pattern | TileMaps | ✅ **100%** | v2.0: Requiere tilesets |
-| 10 | `project` | create, setup_daemon, setting, autoload, remove_autoload, shader_global | Configuración | ✅ **100%** | v2.0: setup_daemon copia todos los módulos |
-| 11 | `debug` | breakpoint, stack_trace, watch, console, run_scene, stop_scene, get_editor_errors, execute_editor_script | Depuración | ✅ **100%** | v2.0: Debug completo |
-| 12 | `validate` | scene, script, node, resource | Validación | ✅ **100%** | v2.0: scene/node verificados |
-| 13 | `signal` | connect, disconnect, list, set_script | Señales | ✅ **100%** | v1.0: Signal management |
-| 14 | `global` | autoload, project_setting, shader_global | Configuración global | ✅ **100%** | v1.0: Global settings |
+| 1 | `session` | open, close, list, info, health | Gestión de sesiones | ✅ **100%** | close_editor opcional (default false) |
+| 2 | `scene` | get_open_scenes, get_edited_scene_root, open, save, create, unload | Escenas | ✅ **100%** | EditorPlugin real |
+| 3 | `node` | add, remove, set_prop, get_prop, get_info, get_children, find, duplicate, rename, move, set_owner, reorder, array_append, array_remove | Nodos | ✅ **100%** | coords proactivas en mutaciones |
+| 4 | `resource` | create, read, update, delete, list, create_script, read_script, edit_script | Recursos .tres + .gd | ✅ **100%** | EditorFileSystem |
+| 5 | `project` | create, setup_plugin, setting, autoload, remove_autoload, input_map, shader_global | Configuración | ✅ **100%** | create sin editor + main.tscn automática |
+| 6 | `shader` | create, edit, validate, material, uniform | Shaders | ✅ **100%** | .gdshader + ShaderMaterial |
+| 7 | `animation` | create_player, create, add_track, add_key, state_machine | Animaciones | ✅ **100%** | AnimationLibrary |
+| 8 | `skeleton` | skeleton_create, skeleton_add_bone, skeleton_set_rest, skeleton_skin, skeleton_attachment | Esqueletos 2D/3D | ✅ **100%** | fusionado en animation_handlers |
+| 9 | `tilemap` | inspect_set, inspect_map, set_cell, terrain, pattern | TileMaps | ✅ **100%** | requiere TileSet |
+| 10 | `debug` | run_scene, stop_scene, is_playing, get_editor_errors | Depuración | ✅ **100%** | editor real, no subprocess |
+| 11 | `validate` | scene, script, node, resource | Validación | ✅ **100%** | contra escena viva |
+| 12 | `signal` | connect, disconnect, list, set_script | Señales | ✅ **100%** | CONNECT_PERSIST |
+| 13 | `orchestrate` | (múltiples ops en una llamada) | Batch operations | ✅ **100%** | plan_file evita dicts anidados |
+| 14 | `visual` | coords, summary, ascii, capture, node, budget, cache | Sistema de visión §13.6 | ✅ **100%** | 1 tool, 7 acciones (consolidada) |
+| 15 | `health` | server + editor status | Health check | ✅ **100%** | connected_projects |
 
 ### Filosofía: Centralizadas
 
 ```python
-# 14 tools cubren TODO Godot Engine
+# 15 tools cubren TODO Godot Engine
 # NO dispersar en 50 archivos
 # NO crear una tool por cada operación atómica
+# Las tools de visión se consolidaron en UNA (visual) — ver §13.6
 ```
 
 ### Filosofía: Modulares
@@ -1212,13 +1224,14 @@ guardar/leer `last_project` (1 clave), no para cachear estado de trabajo.
 
 **Fase 4 — Tools FlojoMCP + Sesiones (COMPLETADA 2026-08-04).** Objetivo: portar las tools → Rust, WS plugin server, auto-launch.
 - [x] Crate `heren-server` en workspace FlojoMCP (`crates/heren-server`) — dogfooding
-- [x] **21 tools** con macros `#[tool]` + schemas compile-time (paridad al bridge Python, verificado por `tests/tools_parity.rs`)
+- [x] **15 tools** con macros `#[tool]` + schemas compile-time (8 renombradas sin `_tool`, 7 de visión consolidadas en `visual`; verificado por `tests/tools_parity.rs`)
 - [x] WS plugin server (`ws_plugin_server.rs`) — el EditorPlugin Godot conecta (patrón gopeak), registra por `project_path`, correlaciona respuestas por id (tolera `"1.0"`/`"1"`)
 - [x] Auto-launch del editor (`launcher.rs`) — port de `godot_launcher.py`: find_godot_executable, ensure_plugin_installed, enable_plugin_in_project, is_editor_running (WMI), launch_editor, close_editor, last_project
 - [x] `orchestrate` con `plan_file` (arregla el batch de dicts anidados: el plan puede venir por archivo)
+- [x] `project/create` sin editor (escribe project.godot) + `project/setup_plugin` (instala plugin sin editor)
 - [x] `run.bat` apunta a `heren-server.exe` (Rust) — el MCP activo
-- [x] Tests: `tests/ws_plugin.rs` (WS E2E) + `tests/tools_parity.rs` (21 tools) + unit
-- **Criterio**: ✅ 21 tools con paridad, WS E2E, auto-launch, schemas compile-time, release 8.5MB
+- [x] Tests: `tests/ws_plugin.rs` (WS E2E) + `tests/tools_parity.rs` (15 tools) + unit
+- **Criterio**: ✅ 15 tools con paridad, WS E2E, auto-launch, schemas compile-time, release 8.5MB
 - **Nota**: el bridge Python (`src/heren/v4/bridge.py`) queda como fallback/referencia — NO es el MCP activo.
 
 **Fase 5 — Hardening + Release (2 sem).**
