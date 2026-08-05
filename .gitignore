@@ -61,3 +61,6 @@ test_daemon*.bat
 check_syntax.bat
 test_daemon_output.py
 
+
+# OpenCode local state (memory plugin garbage)
+.opencode/
