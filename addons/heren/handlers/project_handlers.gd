@@ -52,7 +52,7 @@ func _serialize_setting(value: Variant) -> Variant:
 		for k in value.keys():
 			out[k] = _serialize_setting(value[k])
 		return out
-	return HerenCoordsScript.serialize_value(value)
+	return HerenCoordsScript.serialize_value(value, true)
 
 
 # ---------------------------------------------------------------- handlers

@@ -77,7 +77,7 @@ func _serialize_resource_props(res: Resource) -> Dictionary:
 		var name: StringName = prop.name
 		if name in ["resource_path", "resource_local_to_scene", "resource_name"]:
 			continue
-		out[name] = HerenCoordsScript.serialize_value(res.get(name))
+		out[name] = HerenCoordsScript.serialize_value(res.get(name), true)
 	return out
 
 
@@ -186,7 +186,19 @@ func handle_update(args: Dictionary) -> Dictionary:
 	var applied: Array = []
 	for key in properties.keys():
 		if key in res:
-			res.set(key, HerenCoordsScript.deserialize_value(properties[key]))
+			var prop_value: Variant = properties[key]
+			# Curve._data: expandir posiciones [[x,y],...] al formato interno
+			# (5 elementos/punto) — sin esto el setter de Curve los descarta.
+			if res is Curve and key == "_data":
+				prop_value = HerenCoordsScript.expand_curve_data(prop_value)
+			else:
+				var prop_type: int = TYPE_NIL
+				for prop in res.get_property_list():
+					if prop.name == key:
+						prop_type = int(prop.type)
+						break
+				prop_value = HerenCoordsScript.deserialize_typed(prop_value, prop_type, res.get(key))
+			res.set(key, prop_value)
 			applied.append(key)
 
 	_ensure_parent_dir(resource_path)

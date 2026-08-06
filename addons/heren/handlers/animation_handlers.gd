@@ -597,7 +597,7 @@ func handle_tween(args: Dictionary) -> Dictionary:
 		"node_path": _node_path_relative(node, root),
 		"property": property,
 		"duration": duration,
-		"to": HerenCoordsScript.serialize_value(to_value),
+		"to": HerenCoordsScript.serialize_value(to_value, true),
 		"easing": easing,
 		"transition": transition,
 	}
@@ -647,7 +647,7 @@ func handle_skeleton_get_bones(args: Dictionary) -> Dictionary:
 			bones.append({
 				"idx": i,
 				"name": b.name,
-				"rest": HerenCoordsScript.serialize_value(b.rest),
+				"rest": HerenCoordsScript.serialize_value(b.rest, true),
 				"default_length": b.default_length,
 			})
 	elif node is Skeleton3D:
@@ -656,7 +656,7 @@ func handle_skeleton_get_bones(args: Dictionary) -> Dictionary:
 			bones.append({
 				"idx": i,
 				"name": skel3d.get_bone_name(i),
-				"rest": HerenCoordsScript.serialize_value(skel3d.get_bone_rest(i)),
+				"rest": HerenCoordsScript.serialize_value(skel3d.get_bone_rest(i), true),
 				"parent": skel3d.get_bone_parent(i),
 			})
 	else:
@@ -734,7 +734,7 @@ func handle_skeleton_get_pose(args: Dictionary) -> Dictionary:
 				continue
 			var entry := {
 				"name": b.name,
-				"global": HerenCoordsScript.serialize_value(b.global_position),
+				"global": HerenCoordsScript.serialize_value(b.global_position, true),
 				"parent": b.get_parent().name if b.get_parent() is Bone2D else "",
 			}
 			if compact:
@@ -743,7 +743,7 @@ func handle_skeleton_get_pose(args: Dictionary) -> Dictionary:
 					"origin_delta": HerenCoordsScript.origin_delta(b.rest, b.transform),
 				}
 			else:
-				entry["transform"] = HerenCoordsScript.serialize_value(b.transform)
+				entry["transform"] = HerenCoordsScript.serialize_value(b.transform, true)
 			pose.append(entry)
 			world_positions.append(b.global_position)
 	elif node is Skeleton3D:
@@ -756,7 +756,7 @@ func handle_skeleton_get_pose(args: Dictionary) -> Dictionary:
 			var rest_pose: Transform3D = skel3d.get_bone_rest(i)
 			var entry := {
 				"name": bone_name,
-				"global": HerenCoordsScript.serialize_value(global_pose.origin),
+				"global": HerenCoordsScript.serialize_value(global_pose.origin, true),
 				"parent": skel3d.get_bone_parent(i),
 			}
 			if compact:
@@ -765,8 +765,8 @@ func handle_skeleton_get_pose(args: Dictionary) -> Dictionary:
 					"origin_delta": HerenCoordsScript.origin_delta(rest_pose, global_pose),
 				}
 			else:
-				entry["pose"] = HerenCoordsScript.serialize_value(skel3d.get_bone_pose(i))
-				entry["global_transform"] = HerenCoordsScript.serialize_value(global_pose)
+				entry["pose"] = HerenCoordsScript.serialize_value(skel3d.get_bone_pose(i), true)
+				entry["global_transform"] = HerenCoordsScript.serialize_value(global_pose, true)
 			pose.append(entry)
 			world_positions.append(global_pose.origin)
 	else:
@@ -885,7 +885,7 @@ func handle_skeleton_set_pose(args: Dictionary) -> Dictionary:
 				b.transform = Transform2D(angle, origin)
 				return {"ok": true, "bone_name": bone_name, "type": "Skeleton2D",
 					"coords": {
-						"global": HerenCoordsScript.serialize_value(b.global_position),
+						"global": HerenCoordsScript.serialize_value(b.global_position, true),
 						"delta_vs_rest": {
 							"rotation_deg": HerenCoordsScript.rotation_delta_deg(b.rest, b.transform),
 							"origin_delta": HerenCoordsScript.origin_delta(b.rest, b.transform),
@@ -908,7 +908,7 @@ func handle_skeleton_set_pose(args: Dictionary) -> Dictionary:
 		var rest_pose: Transform3D = skel3d.get_bone_rest(bone_idx)
 		return {"ok": true, "bone_name": bone_name, "bone_idx": bone_idx, "type": "Skeleton3D",
 			"coords": {
-				"global": HerenCoordsScript.serialize_value(global_pose.origin),
+				"global": HerenCoordsScript.serialize_value(global_pose.origin, true),
 				"delta_vs_rest": {
 					"rotation_deg": HerenCoordsScript.rotation_delta_deg(rest_pose, global_pose),
 					"origin_delta": HerenCoordsScript.origin_delta(rest_pose, global_pose),
@@ -1868,7 +1868,7 @@ func handle_capture_pose(args: Dictionary) -> Dictionary:
 			var rest_pose: Transform3D = skel.get_bone_rest(idx)
 			captured_coords.append({
 				"name": bone_name,
-				"global": HerenCoordsScript.serialize_value(global_pose.origin),
+				"global": HerenCoordsScript.serialize_value(global_pose.origin, true),
 				"delta_vs_rest": {
 					"rotation_deg": HerenCoordsScript.rotation_delta_deg(rest_pose, global_pose),
 					"origin_delta": HerenCoordsScript.origin_delta(rest_pose, global_pose),
@@ -1894,7 +1894,7 @@ func handle_capture_pose(args: Dictionary) -> Dictionary:
 				keys_inserted += 1
 			captured_coords.append({
 				"name": bone_name,
-				"global": HerenCoordsScript.serialize_value(bone.global_position),
+				"global": HerenCoordsScript.serialize_value(bone.global_position, true),
 				"delta_vs_rest": {
 					"rotation_deg": HerenCoordsScript.rotation_delta_deg(bone.rest, bone.transform),
 					"origin_delta": HerenCoordsScript.origin_delta(bone.rest, bone.transform),
@@ -2043,7 +2043,7 @@ func handle_tree_set_param(args: Dictionary) -> Dictionary:
 	if tree.get(param_name) == null:
 		return {"ok": false, "error": "parameter_not_found: " + param_name}
 	tree.set(param_name, HerenCoordsScript.deserialize_value(args.get("value")))
-	return {"ok": true, "parameter": param_name, "value": HerenCoordsScript.serialize_value(tree.get(param_name))}
+	return {"ok": true, "parameter": param_name, "value": HerenCoordsScript.serialize_value(tree.get(param_name), true)}
 
 
 func handle_tree_get_param(args: Dictionary) -> Dictionary:
@@ -2058,12 +2058,12 @@ func handle_tree_get_param(args: Dictionary) -> Dictionary:
 		# Devuelve todos los parámetros.
 		var all := {}
 		for p in tree.get_parameter_list():
-			all[str(p)] = HerenCoordsScript.serialize_value(tree.get(str(p)))
+			all[str(p)] = HerenCoordsScript.serialize_value(tree.get(str(p)), true)
 		return {"ok": true, "parameters": all}
 	var param_name := "parameters/" + name
 	if tree.get(param_name) == null:
 		return {"ok": false, "error": "parameter_not_found: " + param_name}
-	return {"ok": true, "parameter": param_name, "value": HerenCoordsScript.serialize_value(tree.get(param_name))}
+	return {"ok": true, "parameter": param_name, "value": HerenCoordsScript.serialize_value(tree.get(param_name), true)}
 
 
 # ---------------------------------------------------------------- P1: IK a profundidad (procedural)

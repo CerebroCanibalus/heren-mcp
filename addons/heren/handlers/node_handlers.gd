@@ -78,19 +78,22 @@ func _serialize_props(node: Node, keys: Array) -> Dictionary:
 	var out := {}
 	for key in keys:
 		if key in node:
-			out[key] = HerenCoordsScript.serialize_value(node.get(key))
+			out[key] = HerenCoordsScript.serialize_value(node.get(key), true)
 	return out
 
 
 func _get_children_list(root: Node, node: Node, recursive: bool, out: Array, depth: int = 0) -> void:
 	for child in node.get_children():
-		out.append({
+		var entry := {
 			"name": child.name,
 			"type": child.get_class(),
 			"path": _node_path_relative(child, root),
-			"owner": _node_path_relative(child.get_owner(), root) if child.get_owner() else "",
-			"depth": depth,
-		})
+		}
+		# owner vacío es el caso común → omitirlo (ahorra ~10B/nodo en listas grandes)
+		var owner_path := _node_path_relative(child.get_owner(), root) if child.get_owner() else ""
+		if owner_path != "":
+			entry["owner"] = owner_path
+		out.append(entry)
 		if recursive:
 			_get_children_list(root, child, true, out, depth + 1)
 
@@ -166,8 +169,8 @@ func _node_coords(node: Node, root: Node) -> Dictionary:
 	# Posición + transformación (2D y 3D) + scale + rotation en grados (legible).
 	if node is CanvasItem:
 		var ci := node as CanvasItem
-		out["pos"] = HerenCoordsScript.serialize_value(ci.global_position)
-		out["scale"] = HerenCoordsScript.serialize_value(ci.scale)
+		out["pos"] = HerenCoordsScript.serialize_value(ci.global_position, true)
+		out["scale"] = HerenCoordsScript.serialize_value(ci.scale, true)
 		out["rotation"] = {
 			"deg": roundf(rad_to_deg(ci.rotation) * 100.0) / 100.0,
 			"rad": ci.rotation,
@@ -175,8 +178,8 @@ func _node_coords(node: Node, root: Node) -> Dictionary:
 		out["z_index"] = ci.z_index
 	elif node is Node3D:
 		var n3 := node as Node3D
-		out["pos"] = HerenCoordsScript.serialize_value(n3.global_position)
-		out["scale"] = HerenCoordsScript.serialize_value(n3.scale)
+		out["pos"] = HerenCoordsScript.serialize_value(n3.global_position, true)
+		out["scale"] = HerenCoordsScript.serialize_value(n3.scale, true)
 		out["rotation"] = {
 			"deg": roundf(rad_to_deg(n3.rotation.y) * 100.0) / 100.0,
 			"rad": n3.rotation,
@@ -254,7 +257,7 @@ func _node_coords(node: Node, root: Node) -> Dictionary:
 		var mi := node as MeshInstance3D
 		if mi.mesh != null:
 			var aabb: AABB = mi.get_aabb()
-			out["aabb"] = HerenCoordsScript.serialize_value(aabb)
+			out["aabb"] = HerenCoordsScript.serialize_value(aabb, true)
 			size = {"w": aabb.size.x, "h": aabb.size.z, "d": aabb.size.y}
 			height = aabb.size.y
 	if not bbox.is_empty():
@@ -324,8 +327,15 @@ func handle_set_prop(args: Dictionary) -> Dictionary:
 	if property not in node:
 		return {"ok": false, "error": "property_not_found: " + property}
 
-	var new_value: Variant = HerenCoordsScript.deserialize_value(args.get("value", null))
 	var old_value: Variant = node.get(property)
+	var prop_type: int = TYPE_NIL
+	for prop in node.get_property_list():
+		if prop.name == property:
+			prop_type = int(prop.type)
+			break
+	var new_value: Variant = HerenCoordsScript.deserialize_typed(args.get("value", null), prop_type, old_value)
+	if new_value is Resource:
+		HerenCoordsScript.ensure_resource_local_recursive(new_value)
 
 	_undo_redo.begin_action("Heren Set %s.%s" % [node.name, property])
 	_undo_redo.add_do_property(node, property, new_value)
@@ -336,8 +346,8 @@ func handle_set_prop(args: Dictionary) -> Dictionary:
 		"ok": true,
 		"node_path": _node_path_relative(node, root),
 		"property": property,
-		"old_value": HerenCoordsScript.serialize_value(old_value),
-		"new_value": HerenCoordsScript.serialize_value(new_value),
+		"old_value": HerenCoordsScript.serialize_value(old_value, true),
+		"new_value": HerenCoordsScript.serialize_value(new_value, true),
 		"coords": _node_coords(node, root),
 	}
 
@@ -393,7 +403,7 @@ func handle_get_prop(args: Dictionary) -> Dictionary:
 		"ok": true,
 		"node_path": _node_path_relative(node, root),
 		"property": property,
-		"value": HerenCoordsScript.serialize_value(node.get(property)),
+		"value": HerenCoordsScript.serialize_value(node.get(property), true),
 	}
 
 
@@ -749,7 +759,7 @@ func handle_array_append(args: Dictionary) -> Dictionary:
 		"ok": true,
 		"node_path": _node_path_relative(node, root),
 		"property_name": property_name,
-		"value_added": HerenCoordsScript.serialize_value(value),
+		"value_added": HerenCoordsScript.serialize_value(value, true),
 		"array_size": current.size(),
 	}
 
@@ -796,7 +806,7 @@ func handle_array_remove(args: Dictionary) -> Dictionary:
 		"ok": true,
 		"node_path": _node_path_relative(node, root),
 		"property_name": property_name,
-		"removed_value": HerenCoordsScript.serialize_value(removed_value),
+		"removed_value": HerenCoordsScript.serialize_value(removed_value, true),
 		"array_size": old_value.size(),
 	}
 

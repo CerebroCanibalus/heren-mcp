@@ -12,17 +12,21 @@ extends RefCounted
 
 
 ## Serialize a Godot value to JSON-compatible dict/primitive.
-static func serialize_value(value: Variant) -> Variant:
+## compact=true omite "__type" en tipos que deserialize_value auto-detecta por
+## keys (Vector2/3, Color, Quaternion, Plane, AABB, Transform2D/3D) → hasta
+## -43% tokens en respuestas de lectura. Los ambiguos (Vector2i, Rect2,
+## NodePath, StringName, Resource) SIEMPRE conservan __type.
+static func serialize_value(value: Variant, compact: bool = false) -> Variant:
 	if value is Vector2:
-		return {"x": value.x, "y": value.y, "__type": "Vector2"}
+		return {"x": value.x, "y": value.y} if compact else {"x": value.x, "y": value.y, "__type": "Vector2"}
 	elif value is Vector2i:
 		return {"x": value.x, "y": value.y, "__type": "Vector2i"}
 	elif value is Vector3:
-		return {"x": value.x, "y": value.y, "z": value.z, "__type": "Vector3"}
+		return {"x": value.x, "y": value.y, "z": value.z} if compact else {"x": value.x, "y": value.y, "z": value.z, "__type": "Vector3"}
 	elif value is Vector3i:
 		return {"x": value.x, "y": value.y, "z": value.z, "__type": "Vector3i"}
 	elif value is Color:
-		return {"r": value.r, "g": value.g, "b": value.b, "a": value.a, "__type": "Color"}
+		return {"r": value.r, "g": value.g, "b": value.b, "a": value.a} if compact else {"r": value.r, "g": value.g, "b": value.b, "a": value.a, "__type": "Color"}
 	elif value is Rect2:
 		return {"x": value.position.x, "y": value.position.y, "w": value.size.x, "h": value.size.y, "__type": "Rect2"}
 	elif value is Rect2i:
@@ -32,25 +36,38 @@ static func serialize_value(value: Variant) -> Variant:
 	elif value is StringName:
 		return {"name": str(value), "__type": "StringName"}
 	elif value is Quaternion:
-		return {"x": value.x, "y": value.y, "z": value.z, "w": value.w, "__type": "Quaternion"}
+		return {"x": value.x, "y": value.y, "z": value.z, "w": value.w} if compact else {"x": value.x, "y": value.y, "z": value.z, "w": value.w, "__type": "Quaternion"}
 	elif value is Plane:
-		return {"normal": serialize_value(value.normal), "d": value.d, "__type": "Plane"}
+		return {"normal": serialize_value(value.normal, compact), "d": value.d} if compact else {"normal": serialize_value(value.normal, compact), "d": value.d, "__type": "Plane"}
 	elif value is AABB:
-		return {"position": serialize_value(value.position), "size": serialize_value(value.size), "__type": "AABB"}
+		return {"position": serialize_value(value.position, compact), "size": serialize_value(value.size, compact)} if compact else {"position": serialize_value(value.position, compact), "size": serialize_value(value.size, compact), "__type": "AABB"}
 	elif value is Transform2D:
 		return {
-			"origin": serialize_value(value.origin),
-			"x_axis": serialize_value(value.x),
-			"y_axis": serialize_value(value.y),
+			"origin": serialize_value(value.origin, compact),
+			"x_axis": serialize_value(value.x, compact),
+			"y_axis": serialize_value(value.y, compact),
+			"__type": "Transform2D",
+		} if compact else {
+			"origin": serialize_value(value.origin, compact),
+			"x_axis": serialize_value(value.x, compact),
+			"y_axis": serialize_value(value.y, compact),
 			"__type": "Transform2D",
 		}
 	elif value is Transform3D:
 		return {
-			"origin": serialize_value(value.origin),
+			"origin": serialize_value(value.origin, compact),
 			"basis": {
-				"x": serialize_value(value.basis.x),
-				"y": serialize_value(value.basis.y),
-				"z": serialize_value(value.basis.z),
+				"x": serialize_value(value.basis.x, compact),
+				"y": serialize_value(value.basis.y, compact),
+				"z": serialize_value(value.basis.z, compact),
+			},
+			"__type": "Transform3D",
+		} if compact else {
+			"origin": serialize_value(value.origin, compact),
+			"basis": {
+				"x": serialize_value(value.basis.x, compact),
+				"y": serialize_value(value.basis.y, compact),
+				"z": serialize_value(value.basis.z, compact),
 			},
 			"__type": "Transform3D",
 		}
@@ -178,13 +195,193 @@ static func deserialize_resource(value: Dictionary) -> Resource:
 	for key in value.keys():
 		if key in ["type", "resource_type", "__type"]:
 			continue
-		var prop_value: Variant = deserialize_value(value[key])
+		# Curve._data: formato INTERNO = 5 elementos por punto
+		# [position(Vector2), left_tangent, right_tangent, left_mode, right_mode].
+		# El usuario pasa solo posiciones [[x,y],...] → expandir. (curve.cpp set_data)
+		if resource_type == "Curve" and key == "_data" and value[key] is Array:
+			res.set(key, expand_curve_data(value[key]))
+			continue
+		var prop_type: int = TYPE_NIL
+		var prop_hint: String = ""
+		var found := false
 		for prop in res.get_property_list():
 			if prop.name == key:
-				res.set(key, prop_value)
+				prop_type = int(prop.type)
+				prop_hint = str(prop.hint_string)
+				found = true
 				break
+		if not found:
+			continue
+		var prop_value: Variant = deserialize_typed(value[key], prop_type, res.get(key))
+		# Godot 4: props *_curve (Texture2D) esperan CurveTexture/CurveXYZTexture
+		# (NO Curve), color_ramp espera GradientTexture1D (NO Gradient) — el
+		# usuario pasa Curve/Gradient naturalmente; wrap automático por hint.
+		prop_value = _wrap_curve_gradient(prop_value, prop_hint)
+		res.set(key, prop_value)
+
+	# Sub-recursos (Curve/Gradient/Material anidados) sin path: marcarlos local
+	# o Godot los omite al serializar la escena (helper v3 se perdió en v4).
+	ensure_resource_local_recursive(res)
 
 	return res
+
+
+## Deserializa `value` según el TIPO DECLARADO de la propiedad destino
+## (`target_type` del property list, con fallback al tipo del valor actual).
+## Sin esto, un Array anidado [x,y] se queda como Array y Godot lo convierte
+## a PackedVector2Array produciendo Vector2(0,0) — el bug de Curve._data y
+## Gradient.colors que quedaban negros/cero.
+static func deserialize_typed(value: Variant, target_type: int, target_value: Variant = null) -> Variant:
+	var t: int = target_type
+	var vt: int = typeof(target_value) if target_value != null else TYPE_NIL
+	# El tipo del VALOR actual es más fiable que el declarado para props
+	# internas (ej: Curve._data reporta INT pero es PackedVector2Array).
+	if vt == TYPE_PACKED_VECTOR2_ARRAY or vt == TYPE_PACKED_VECTOR3_ARRAY \
+			or vt == TYPE_PACKED_COLOR_ARRAY or vt == TYPE_PACKED_FLOAT32_ARRAY \
+			or vt == TYPE_PACKED_FLOAT64_ARRAY or vt == TYPE_PACKED_INT32_ARRAY \
+			or vt == TYPE_PACKED_STRING_ARRAY or vt == TYPE_PACKED_BYTE_ARRAY:
+		t = vt
+	# Fallback por contenido: Array de arrays numéricos uniformes (2/3/4)
+	# → packed del tamaño detectado. Cubre props internas sin tipo real.
+	if t == TYPE_NIL or t == TYPE_OBJECT or t == TYPE_ARRAY or t == TYPE_INT:
+		var dim := _packed_dim(value)
+		if dim != 0:
+			t = dim
+	if not value is Array:
+		return deserialize_value(value)
+	match t:
+		TYPE_PACKED_VECTOR2_ARRAY:
+			var out := PackedVector2Array()
+			for e in value:
+				if e is Dictionary:
+					out.append(deserialize_value(e))
+				elif e is Array:
+					out.append(Vector2(float(e[0]), float(e[1])))
+				elif e is Vector2:
+					out.append(e)
+			return out
+		TYPE_PACKED_VECTOR3_ARRAY:
+			var out := PackedVector3Array()
+			for e in value:
+				if e is Dictionary:
+					out.append(deserialize_value(e))
+				elif e is Array:
+					out.append(Vector3(float(e[0]), float(e[1]), float(e[2])))
+				elif e is Vector3:
+					out.append(e)
+			return out
+		TYPE_PACKED_COLOR_ARRAY:
+			var out := PackedColorArray()
+			for e in value:
+				if e is Dictionary:
+					out.append(deserialize_value(e))
+				elif e is Array:
+					out.append(Color(float(e[0]), float(e[1]), float(e[2]), float(e[3]) if e.size() > 3 else 1.0))
+				elif e is Color:
+					out.append(e)
+			return out
+		TYPE_PACKED_FLOAT32_ARRAY, TYPE_PACKED_FLOAT64_ARRAY:
+			var out := PackedFloat32Array()
+			for e in value:
+				out.append(float(e))
+			return out
+		TYPE_PACKED_INT32_ARRAY:
+			var out := PackedInt32Array()
+			for e in value:
+				out.append(int(e))
+			return out
+		TYPE_PACKED_STRING_ARRAY:
+			var out := PackedStringArray()
+			for e in value:
+				out.append(str(e))
+			return out
+		_:
+			return deserialize_value(value)
+
+
+## Detecta la dimensión packed de un Array de arrays numéricos uniformes:
+## [[x,y],...] → 2 (Vector2), [[x,y,z],...] → 3 (Vector3), [[r,g,b,a],...] → 4 (Color).
+## Devuelve 0 si no es un Array de arrays de números con tamaño uniforme.
+static func _packed_dim(value: Variant) -> int:
+	if not value is Array or value.size() == 0:
+		return 0
+	var first: Variant = value[0]
+	if not first is Array:
+		return 0
+	var dim: int = first.size()
+	if dim < 2 or dim > 4:
+		return 0
+	for e in value:
+		if not e is Array or e.size() != dim:
+			return 0
+		for n in e:
+			if not (n is float or n is int):
+				return 0
+	return TYPE_PACKED_VECTOR2_ARRAY if dim == 2 \
+		else TYPE_PACKED_VECTOR3_ARRAY if dim == 3 \
+		else TYPE_PACKED_COLOR_ARRAY
+
+
+## Godot 4: ParticleProcessMaterial y similares exponen *_curve como Texture2D
+## (CurveTexture/CurveXYZTexture) y color_ramp como GradientTexture1D. El
+## usuario pasa Curve/Gradient naturalmente; si el hint lo pide, wrap automático.
+static func _wrap_curve_gradient(v: Variant, hint: String) -> Variant:
+	if hint == "" or not v is Resource:
+		return v
+	if v is Curve and hint.contains("CurveTexture"):
+		var ct := CurveTexture.new()
+		ct.curve = v
+		return ct
+	if v is Gradient and hint.contains("GradientTexture1D"):
+		var gt := GradientTexture1D.new()
+		gt.gradient = v
+		return gt
+	return v
+
+
+## Expande posiciones [[x,y],...] al formato INTERNO de Curve._data
+## (5 elementos por punto: position, left_tangent, right_tangent, left_mode,
+## right_mode). Si el valor ya viene en formato interno (lista plana con
+## Vector2 + números), lo devuelve tal cual.
+static func expand_curve_data(value: Variant) -> Variant:
+	if not value is Array or value.size() == 0:
+		return value
+	var pts: Array = value
+	if not (pts[0] is Array or pts[0] is Dictionary):
+		return value  # ya formato interno
+	var curve_data: Array = []
+	for p in pts:
+		var pos: Vector2 = deserialize_value(p) if p is Dictionary else Vector2(float(p[0]), float(p[1]))
+		curve_data.append(pos)  # position
+		curve_data.append(0.0)  # left_tangent
+		curve_data.append(0.0)  # right_tangent
+		curve_data.append(0)    # left_mode (TANGENT_FREE)
+		curve_data.append(0)    # right_mode (TANGENT_FREE)
+	return curve_data
+
+
+## Marca `resource_local_to_scene` en el recurso y TODOS sus sub-recursos.
+## Sin esto, Godot omite los sub-recursos sin resource_path al guardar la
+## escena (la causa de "el Curve/Gradient se pierden al guardar").
+static func ensure_resource_local_recursive(res: Resource) -> void:
+	if res.resource_path != "":
+		return  # recurso externo: no tocar
+	if res.resource_local_to_scene:
+		return  # ya marcado (también corta ciclos)
+	res.resource_local_to_scene = true
+	for prop in res.get_property_list():
+		var usage: int = int(prop.usage)
+		if usage & PROPERTY_USAGE_STORAGE == 0:
+			continue
+		if usage & PROPERTY_USAGE_INTERNAL != 0:
+			continue
+		var v: Variant = res.get(prop.name)
+		if v is Resource:
+			ensure_resource_local_recursive(v)
+		elif v is Array:
+			for e in v:
+				if e is Resource:
+					ensure_resource_local_recursive(e)
 
 
 ## Normalize a node path to be resolvable from the scene root.

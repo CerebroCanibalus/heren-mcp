@@ -194,11 +194,14 @@ func handle_save(args: Dictionary) -> Dictionary:
 		return {"ok": false, "error": "scene has no scene_file_path; pass scene_path"}
 
 	# 3) Pack directo + owners garantizados + disco.
+	#    FLAG_BUNDLE_RESOURCES: incrusta los sub-recursos (Curve/Gradient/
+	#    Material anidados, sin resource_path) inline en el .tscn. Sin esta
+	#    flag Godot los omite silenciosamente al guardar.
 	_ensure_parent_dir(scene_path)
 	HerenCoordsScript.ensure_owner_recursive(root)
 	var packed := PackedScene.new()
 	packed.pack(root)
-	var err := ResourceSaver.save(packed, scene_path)
+	var err := ResourceSaver.save(packed, scene_path, ResourceSaver.FLAG_BUNDLE_RESOURCES)
 	if err != OK:
 		return {"ok": false, "error": "save_failed: " + error_string(err)}
 

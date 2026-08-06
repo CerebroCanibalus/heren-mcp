@@ -60,9 +60,9 @@ func _scene_root(args: Dictionary = {}) -> Node:
 
 func _node_pos(node: Node) -> Dictionary:
 	if node is CanvasItem:
-		return HerenCoordsScript.serialize_value((node as CanvasItem).global_position)
+		return HerenCoordsScript.serialize_value((node as CanvasItem).global_position, true)
 	if node is Node3D:
-		return HerenCoordsScript.serialize_value((node as Node3D).global_position)
+		return HerenCoordsScript.serialize_value((node as Node3D).global_position, true)
 	return {}
 
 
@@ -100,7 +100,6 @@ func _walk(node: Node, root: Node, out: Dictionary, depth: int, max_depth: int) 
 		return
 	var entry := {
 		"type": node.get_class(),
-		"parent": _path_relative(node.get_parent(), root) if node.get_parent() else "",
 	}
 	var pos := _node_pos(node)
 	if not pos.is_empty():
