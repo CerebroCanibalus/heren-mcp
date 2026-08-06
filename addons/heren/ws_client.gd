@@ -116,9 +116,23 @@ func _handle_connect() -> void:
 	_send_message({
 		"jsonrpc": "2.0",
 		"method": "notifications/godot_ready",
-		"params": {"project_path": _project_path},
+		"params": {
+			"project_path": _project_path,
+			"plugin_version": _read_plugin_version(),
+		},
 	})
 	connected.emit()
+
+
+## Versión del plugin que corre en este editor (plugin.cfg → [plugin] version).
+## El server la compara con la versión source para avisar al agente cuando el
+## editor corre una versión antigua (session/reopen para recargar).
+func _read_plugin_version() -> String:
+	var cfg := ConfigFile.new()
+	var err := cfg.load("res://addons/heren/plugin.cfg")
+	if err != OK:
+		return ""
+	return str(cfg.get_value("plugin", "version", ""))
 
 
 func _handle_disconnect() -> void:
