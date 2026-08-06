@@ -213,6 +213,55 @@ static func normalize_node_path(node_path: Variant, root: Node) -> String:
 	return path_str
 
 
+## ============================================================
+## Sistema de coordenadas SMART (NIVEL 0+) — "deltas con significado".
+## La investigación (SiT-Bench, Martorell 2025) muestra que los LLM razonan
+## mejor con estructura cartesiana JSON + representaciones RELATIVAS que con
+## números absolutos. Para animación: el agente necesita "qué cambió, en qué
+## dirección, respecto a qué" — no 12 números por hueso.
+## ============================================================
+
+## Delta de rotación entre dos Transform3D/Transform2D, en GRADOS por eje
+## (euler). Los LLM interpretan "+28° en X" mucho mejor que quaternions.
+## Devuelve {"x": float, "y": float, "z": float} (grados) o {} si no puede.
+static func rotation_delta_deg(from: Variant, to: Variant) -> Dictionary:
+	var out := {}
+	if from is Transform3D and to is Transform3D:
+		# Rotación relativa: to * from⁻¹ (deshace el rest → el delta puro).
+		var rel: Basis = (to as Transform3D).basis * (from as Transform3D).basis.inverse()
+		var eul := rel.get_euler()
+		out = {
+			"x": round(eul.x * 180.0 / PI * 100.0) / 100.0,
+			"y": round(eul.y * 180.0 / PI * 100.0) / 100.0,
+			"z": round(eul.z * 180.0 / PI * 100.0) / 100.0,
+		}
+	elif from is Transform2D and to is Transform2D:
+		var delta := (to as Transform2D).get_rotation() - (from as Transform2D).get_rotation()
+		out = {
+			"z": round(rad_to_deg(delta) * 100.0) / 100.0,
+		}
+	return out
+
+
+## Delta de origen entre dos Transform3D (o posiciones), redondeado a 3 dec.
+static func origin_delta(from: Variant, to: Variant) -> Dictionary:
+	var out := {}
+	if from is Transform3D and to is Transform3D:
+		var d: Vector3 = (to as Transform3D).origin - (from as Transform3D).origin
+		out = {
+			"x": round(d.x * 1000.0) / 1000.0,
+			"y": round(d.y * 1000.0) / 1000.0,
+			"z": round(d.z * 1000.0) / 1000.0,
+		}
+	elif from is Transform2D and to is Transform2D:
+		var d: Vector2 = (to as Transform2D).origin - (from as Transform2D).origin
+		out = {
+			"x": round(d.x * 1000.0) / 1000.0,
+			"y": round(d.y * 1000.0) / 1000.0,
+		}
+	return out
+
+
 ## Asegura que root y TODOS sus descendientes tengan owner = root.
 ## CRÍTICO: PackedScene.pack() omite nodos sin owner → una escena construida
 ## por MCP (add_child por script NO setea owner) se guardaría vacía o incompleta.

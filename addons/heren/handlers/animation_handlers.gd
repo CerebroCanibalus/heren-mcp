@@ -71,6 +71,28 @@ func _get_animation_player(root: Node, player_path: Variant) -> AnimationPlayer:
 	return player
 
 
+## Resuelve el skeleton objetivo. Si `skeleton_path` viene vacío, auto-detecta:
+## 1. El skeleton cuyo nombre coincide con `skeleton_name`.
+## 2. El PRIMER Skeleton2D/Skeleton3D en profundidad de la escena.
+## Evita el clásico "skeleton_not_found" cuando el agente solo sabe el nombre.
+func _resolve_skeleton(root: Node, skeleton_path: Variant, skeleton_name: String = "") -> Node:
+	var explicit := _resolve_node(root, skeleton_path)
+	if explicit != null:
+		return explicit
+	if root == null:
+		return null
+	var name_filter := skeleton_name.strip_edges()
+	var queue: Array = [root]
+	while not queue.is_empty():
+		var n: Node = queue.pop_front()
+		if n is Skeleton2D or n is Skeleton3D:
+			if name_filter == "" or str(n.name) == name_filter:
+				return n
+		for child in n.get_children():
+			queue.append(child)
+	return null
+
+
 ## Accepts a Dictionary directly, or a JSON string.
 func _args_dict(args: Dictionary, key: String) -> Dictionary:
 	var raw: Variant = args.get(key, {})
@@ -647,35 +669,105 @@ func handle_skeleton_get_pose(args: Dictionary) -> Dictionary:
 	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
-	var node := _resolve_node(root, args.get("skeleton_path", ""))
+	var node := _resolve_skeleton(root, args.get("skeleton_path", ""), str(args.get("skeleton_name", "")))
 	if node == null:
 		return {"ok": false, "error": "skeleton_not_found"}
 
+	# SMART por defecto: cada hueso devuelve delta_vs_rest (rotación en GRADOS
+	# + delta de origen) — el agente lee "hand.r rotó +12° en X" sin calcular.
+	# compact=false devuelve además pose/global_transform completos (backward).
+	# Filtrar por bone_name (1) o bones (lista); con bone_name se incluye la
+	# cadena de ancestros (2 niveles) para contexto espacial sin llamada extra.
+	var compact: bool = bool(args.get("compact", true))
+	var include_context: bool = bool(args.get("context", true))
+	var filter_names: Array = []
+	var single: String = str(args.get("bone_name", ""))
+	if single != "":
+		filter_names.append(single)
+	var bones_arg: Array = args.get("bones", [])
+	if bones_arg is Array and not bones_arg.is_empty():
+		for b in bones_arg:
+			filter_names.append(str(b))
+
+	# Si pedimos un solo hueso, añadir ancestros (hasta 2 niveles) como contexto.
+	var context_extra: Array = []
+	if include_context and filter_names.size() == 1:
+		var target := single
+		if node is Skeleton3D:
+			var skel3d := node as Skeleton3D
+			var idx := skel3d.find_bone(target)
+			var parent := skel3d.get_bone_parent(idx) if idx >= 0 else -1
+			var depth := 0
+			while parent >= 0 and depth < 2:
+				var pname: String = skel3d.get_bone_name(parent)
+				if not filter_names.has(pname):
+					context_extra.append(pname)
+				parent = skel3d.get_bone_parent(parent)
+				depth += 1
+		elif node is Skeleton2D:
+			var skel2d := node as Skeleton2D
+			for i in skel2d.get_bone_count():
+				var b := skel2d.get_bone(i)
+				if str(b.name) == target and b.get_parent() is Bone2D:
+					var p: Bone2D = b.get_parent()
+					if not filter_names.has(str(p.name)):
+						context_extra.append(str(p.name))
+					if p.get_parent() is Bone2D:
+						var gp: Bone2D = p.get_parent()
+						if not filter_names.has(str(gp.name)):
+							context_extra.append(str(gp.name))
+					break
+		for c in context_extra:
+			filter_names.append(c)
+
 	var pose: Array = []
 	var world_positions: Array = []
+	var compare_out := {}
+	var compare_arg: Dictionary = args.get("compare", {})
+	if compare_arg is Dictionary and not compare_arg.is_empty() and node is Skeleton3D:
+		compare_out = _compare_skeleton_pose(node, compare_arg)
 	if node is Skeleton2D:
 		var skel2d := node as Skeleton2D
 		for i in skel2d.get_bone_count():
 			var b := skel2d.get_bone(i)
-			pose.append({
+			if not filter_names.is_empty() and not filter_names.has(str(b.name)):
+				continue
+			var entry := {
 				"name": b.name,
-				"transform": HerenCoordsScript.serialize_value(b.transform),
 				"global": HerenCoordsScript.serialize_value(b.global_position),
 				"parent": b.get_parent().name if b.get_parent() is Bone2D else "",
-			})
+			}
+			if compact:
+				entry["delta_vs_rest"] = {
+					"rotation_deg": HerenCoordsScript.rotation_delta_deg(b.rest, b.transform),
+					"origin_delta": HerenCoordsScript.origin_delta(b.rest, b.transform),
+				}
+			else:
+				entry["transform"] = HerenCoordsScript.serialize_value(b.transform)
+			pose.append(entry)
 			world_positions.append(b.global_position)
 	elif node is Skeleton3D:
 		var skel3d := node as Skeleton3D
 		for i in skel3d.get_bone_count():
 			var bone_name: String = skel3d.get_bone_name(i)
+			if not filter_names.is_empty() and not filter_names.has(bone_name):
+				continue
 			var global_pose: Transform3D = skel3d.get_bone_global_pose(i)
-			pose.append({
+			var rest_pose: Transform3D = skel3d.get_bone_rest(i)
+			var entry := {
 				"name": bone_name,
-				"pose": HerenCoordsScript.serialize_value(skel3d.get_bone_pose(i)),
 				"global": HerenCoordsScript.serialize_value(global_pose.origin),
-				"global_transform": HerenCoordsScript.serialize_value(global_pose),
 				"parent": skel3d.get_bone_parent(i),
-			})
+			}
+			if compact:
+				entry["delta_vs_rest"] = {
+					"rotation_deg": HerenCoordsScript.rotation_delta_deg(rest_pose, global_pose),
+					"origin_delta": HerenCoordsScript.origin_delta(rest_pose, global_pose),
+				}
+			else:
+				entry["pose"] = HerenCoordsScript.serialize_value(skel3d.get_bone_pose(i))
+				entry["global_transform"] = HerenCoordsScript.serialize_value(global_pose)
+			pose.append(entry)
 			world_positions.append(global_pose.origin)
 	else:
 		return {"ok": false, "error": "invalid_skeleton_type"}
@@ -694,14 +786,88 @@ func handle_skeleton_get_pose(args: Dictionary) -> Dictionary:
 			"size": {"x": max_x - min_x, "y": max_y - min_y, "z": max_z - min_z},
 		}
 
-	return {"ok": true, "skeleton_path": _node_path_relative(node, root), "pose": pose, "aabb": aabb}
+	var out := {"ok": true, "skeleton_path": _node_path_relative(node, root), "pose": pose, "aabb": aabb}
+	if not compare_out.is_empty():
+		out["compare"] = compare_out
+	return out
+
+
+## Compara la pose del skeleton en dos tiempos de una animación (seek automático).
+## Devuelve el delta por hueso: rotación en grados + delta de origen entre
+## t1 y t2 — el agente ve "hand.r rotó +28° al pasar de idle a pico" SIN
+## tener que hacer dos llamadas ni calcular él la resta (donde se equivoca).
+## SÍNCRONO: en el editor, player.seek aplica la pose inmediatamente (sin
+## esperar frame), así que el handler no necesita await.
+func _compare_skeleton_pose(skeleton: Node, compare: Dictionary) -> Dictionary:
+	var root := _scene_root()
+	var player: AnimationPlayer = _get_animation_player(root, compare.get("player_path", ""))
+	# Auto-detección: si no hay player explícito, buscar el AnimationPlayer más
+	# cercano al skeleton (ascendente) — automaticidad sin llamada extra.
+	if player == null and skeleton != null:
+		var p := skeleton.get_parent()
+		while p != null:
+			if p is AnimationPlayer:
+				player = p
+				break
+			p = p.get_parent()
+	if player == null and root != null:
+		player = _find_first_animation_player(root)
+	var anim_name: String = str(compare.get("anim", ""))
+	var t1: float = float(compare.get("t1", 0.0))
+	var t2: float = float(compare.get("t2", 0.0))
+	if player == null or anim_name == "" or not player.has_animation(anim_name):
+		return {"error": "compare requires anim y t1/t2 (AnimationPlayer auto-detectado si no se da player_path)"}
+
+	var anim: Animation = player.get_animation(anim_name)
+	var skel3d := skeleton as Skeleton3D
+	if skel3d == null:
+		return {"error": "compare solo soporta Skeleton3D"}
+
+	# Guardar playback actual para restaurarlo.
+	var was_playing: bool = player.is_playing()
+	var was_time: float = player.current_animation_position
+
+	var deltas: Dictionary = {}
+	for i in skel3d.get_bone_count():
+		var bone_name: String = skel3d.get_bone_name(i)
+		player.play(anim_name)
+		player.seek(t1, true)
+		var p1: Transform3D = skel3d.get_bone_global_pose(i)
+		player.seek(t2, true)
+		var p2: Transform3D = skel3d.get_bone_global_pose(i)
+		deltas[bone_name] = {
+			"rotation_deg": HerenCoordsScript.rotation_delta_deg(p1, p2),
+			"origin_delta": HerenCoordsScript.origin_delta(p1, p2),
+		}
+
+	# Restaurar playback.
+	if was_playing:
+		player.play(anim_name)
+		player.seek(was_time, true)
+	else:
+		player.stop()
+	return deltas
+
+
+## Primer AnimationPlayer en profundidad (BFS) de la escena.
+func _find_first_animation_player(root: Node) -> AnimationPlayer:
+	if root == null:
+		return null
+	var queue: Array = [root]
+	while not queue.is_empty():
+		var n: Node = queue.pop_front()
+		if n is AnimationPlayer:
+			return n
+		for child in n.get_children():
+			queue.append(child)
+	return null
 
 
 func handle_skeleton_set_pose(args: Dictionary) -> Dictionary:
 	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
-	var node := _resolve_node(root, args.get("skeleton_path", ""))
+	var node := _resolve_skeleton(root, args.get("skeleton_path", ""), str(args.get("skeleton_name", "")))
 	if node == null:
 		return {"ok": false, "error": "skeleton_not_found"}
 	var bone_name: String = str(args.get("bone_name", ""))
@@ -717,7 +883,14 @@ func handle_skeleton_set_pose(args: Dictionary) -> Dictionary:
 				var angle: float = float(t.get("angle", t.get("rotation", 0.0)))
 				var origin := Vector2(float(t.get("x", 0)), float(t.get("y", 0)))
 				b.transform = Transform2D(angle, origin)
-				return {"ok": true, "bone_name": bone_name, "type": "Skeleton2D"}
+				return {"ok": true, "bone_name": bone_name, "type": "Skeleton2D",
+					"coords": {
+						"global": HerenCoordsScript.serialize_value(b.global_position),
+						"delta_vs_rest": {
+							"rotation_deg": HerenCoordsScript.rotation_delta_deg(b.rest, b.transform),
+							"origin_delta": HerenCoordsScript.origin_delta(b.rest, b.transform),
+						},
+					}}
 		return {"ok": false, "error": "bone_not_found: " + bone_name}
 	elif node is Skeleton3D:
 		var skel3d := node as Skeleton3D
@@ -731,7 +904,16 @@ func handle_skeleton_set_pose(args: Dictionary) -> Dictionary:
 			var rot: Dictionary = t["rotation"] if t["rotation"] is Dictionary else {}
 			basis = Basis.from_euler(Vector3(float(rot.get("x", 0)), float(rot.get("y", 0)), float(rot.get("z", 0))))
 		skel3d.set_bone_pose(bone_idx, Transform3D(basis, origin))
-		return {"ok": true, "bone_name": bone_name, "bone_idx": bone_idx, "type": "Skeleton3D"}
+		var global_pose: Transform3D = skel3d.get_bone_global_pose(bone_idx)
+		var rest_pose: Transform3D = skel3d.get_bone_rest(bone_idx)
+		return {"ok": true, "bone_name": bone_name, "bone_idx": bone_idx, "type": "Skeleton3D",
+			"coords": {
+				"global": HerenCoordsScript.serialize_value(global_pose.origin),
+				"delta_vs_rest": {
+					"rotation_deg": HerenCoordsScript.rotation_delta_deg(rest_pose, global_pose),
+					"origin_delta": HerenCoordsScript.origin_delta(rest_pose, global_pose),
+				},
+			}}
 	return {"ok": false, "error": "invalid_skeleton_type"}
 
 
@@ -1667,6 +1849,7 @@ func handle_capture_pose(args: Dictionary) -> Dictionary:
 	if bone_names.is_empty():
 		return {"ok": false, "error": "no_bones_resolved"}
 	var keys_inserted := 0
+	var captured_coords: Array = []
 
 	for bone_name in bone_names:
 		if skeleton is Skeleton3D:
@@ -1680,6 +1863,17 @@ func handle_capture_pose(args: Dictionary) -> Dictionary:
 			var pose: Transform3D = skel.get_bone_pose(idx)
 			anim.track_insert_key(track_idx, time, pose, 1.0)
 			keys_inserted += 1
+			# Coords proactivas: delta de la pose capturada vs rest, en grados.
+			var global_pose: Transform3D = skel.get_bone_global_pose(idx)
+			var rest_pose: Transform3D = skel.get_bone_rest(idx)
+			captured_coords.append({
+				"name": bone_name,
+				"global": HerenCoordsScript.serialize_value(global_pose.origin),
+				"delta_vs_rest": {
+					"rotation_deg": HerenCoordsScript.rotation_delta_deg(rest_pose, global_pose),
+					"origin_delta": HerenCoordsScript.origin_delta(rest_pose, global_pose),
+				},
+			})
 		elif skeleton is Skeleton2D:
 			var skel := skeleton as Skeleton2D
 			var bone: Bone2D = null
@@ -1698,6 +1892,14 @@ func handle_capture_pose(args: Dictionary) -> Dictionary:
 			if pos_track >= 0:
 				anim.track_insert_key(pos_track, time, bone.position, 1.0)
 				keys_inserted += 1
+			captured_coords.append({
+				"name": bone_name,
+				"global": HerenCoordsScript.serialize_value(bone.global_position),
+				"delta_vs_rest": {
+					"rotation_deg": HerenCoordsScript.rotation_delta_deg(bone.rest, bone.transform),
+					"origin_delta": HerenCoordsScript.origin_delta(bone.rest, bone.transform),
+				},
+			})
 
 	return {
 		"ok": true,
@@ -1706,6 +1908,7 @@ func handle_capture_pose(args: Dictionary) -> Dictionary:
 		"bones_captured": bone_names.size(),
 		"keys_inserted": keys_inserted,
 		"bones": bone_names,
+		"coords": captured_coords,
 	}
 
 
