@@ -5,17 +5,31 @@
 
 Biblia para agentes que operan Heren MCP. Léelo antes de tocar código.
 
-> 🚧 **ESTADO: v4.3.0 OPERATIVO (EditorPlugin + heren-server.exe Rust/FlojoMCP).**
+> 🚧 **ESTADO: v4.4.0 OPERATIVO (EditorPlugin + heren-server.exe Rust/FlojoMCP).**
 > Migración GodotDaemon(v3)→EditorPlugin(v4) completada 2026-08-03. Fase 4 (Rust) 2026-08-04.
 > **15 tools centralizadas**, WS plugin server (patrón gopeak), auto-launch del editor.
 > El .exe habla **NDJSON** por stdio (framing real de OpenCode, verificado con stdin-spy).
 > Bridge Python (`python -m heren.v4.bridge`) = fallback/referencia, NO el MCP activo.
 > **Los cambios nuevos van a v4/Rust. No ampliar v3 salvo bugs críticos.**
 >
+> **v4.4 (2026-08-06)**: **Plugin SIEMPRE ENCENDIDO + actualización inteligente**.
+> - `enable_plugin_in_project` **IDEMPOTENTE y NORMALIZADORA**: reemplaza cualquier `enabled=` en `[editor_plugins]`
+>   (vacío `PackedStringArray()`, nombre desnudo `"heren"`, duplicadas) por la única canónica
+>   `enabled=PackedStringArray("res://addons/heren/plugin.cfg")`. Solo escribe si difiere; verifica post-escritura.
+> - `ensure_plugin_installed` → **sync INCREMENTAL por contenido** (solo diffs, borra huérfanos).
+>   NO reinstala todo entre versiones: `plugin up-to-date` = cero trabajo.
+> - `launch_editor` política: editor conectado + sin cambios → `reuse up-to-date` (no relanza);
+>   conectado + cambió → avisa `plugin_changed` (el agente hace `session/reopen` para recargar);
+>   zombie → mata PRIMERO, escribe enable DESPUÉS (nadie pisa project.godot → adiós lost-update).
+> - **Reporte de versión al agente**: el plugin manda `plugin_version` en `godot_ready`;
+>   `session/info` → `plugin_version_source/installed/editor` + `plugin_stale` + `plugin_stale_remedy`;
+>   `session/health` → `stale_editors[]`.
+> - El plugin se habilita UNA vez (`setup_plugin`/`create`); NO se "reenciende" en cada open.
+> - **15/15 tests Rust** (6 nuevos de enable), clippy -D warnings limpio, release 9.3MB.
+>
 > **v4.3 (2026-08-04)**: `setting` con `op` get/set/list/delete/set_multi + `restart_required`/`applied_runtime`;
 > `input_map` con **persistencia REAL** (`input/<action>` en project.godot, tipos add/get/list/add_event/set_events/remove_event/set_deadzone);
-> `session/reopen` (mata + relanza limpio sin repetir path); `node/instantiate` (escena .tscn como hijo ExtResource);
-> `ensure_plugin_installed` SIEMPRE reemplaza el plugin (el source es la única verdad, nunca "already installed").
+> `session/reopen` (mata + relanza limpio sin repetir path); `node/instantiate` (escena .tscn como hijo ExtResource).
 > **C1/C2 + H1-H4 + S1-S6 RESUELTOS Y VALIDADOS E2E EN VIVO.**
 
 ---
@@ -388,6 +402,13 @@ Esto da al agente **conocimiento espacial completo** sin llamadas extra. Benefic
 | 2026-08-04 | **IK 2D = FABRIK propio** | Godot no tiene IK nativo 2D. `skeleton_fabrik` implementa FABRIK sobre Bone2D con pesos por hueso. |
 | 2026-08-04 | **Contexto de escena estable (S3)** | `apply_scene_context` en server.rs guarda el último `scene_path` por proyecto en RAM y lo inyecta en llamadas de node/animation/shader/signal/tilemap/visual (nunca sobreescribe si ya viene explícito). En el plugin, `_scene_root(args)` activa la escena pedida con `open_scene_from_path`. El agente fija la escena UNA vez (`scene_path` en una llamada) y el resto de la sesión opera contra ella — adiós a los `node_not_found` intermitentes por cambio de pestaña. `validate` NO usa este contexto (su `scene_path` es el archivo a validar). |
 | 2026-08-04 | **SceneRegistry = fuente de verdad de escenas (S6)** | `addons/heren/scene_registry.gd`: `scene_path → root` en RAM. `scene/save` es pack directo del root registrado (`ensure_owner_recursive` + `ResourceSaver`), NUNCA `save_scene()` (pestaña). `scene/create` abre pestaña; si `open_scene_from_path` falla silencioso, mantiene el árbol vivo en el registry (la "escena fantasma" deja de ser bug: es el diseño). `_scene_root` en 6 handlers resuelve registry → pestaña → disco. `remember_scene_context` (server) registra el path de `create`; `scene/save|open` inyectan contexto → el agente NO repite `scene_path`. `handle_save` acepta `output_path` como alias. |
+| 2026-08-06 | **Formato `[editor_plugins]` verificado contra source de Godot** | Godot persiste el **path completo** `enabled=PackedStringArray("res://addons/heren/plugin.cfg")` (clave del mapa `addon_name_to_plugin`, `editor_node.cpp` `_update_addon_config` L4493). Acepta al leer también el nombre desnudo `"heren"` (`set_addon_plugin_enabled` L4514 normaliza `res://addons/<name>/plugin.cfg`), pero lo re-escribe como path completo al guardar. El `enabled=PackedStringArray()` vacío = lost-update: un editor VIVO guarda project.godot con su estado en memoria (sin el plugin) y pisa el enable escrito por el server. |
+| 2026-08-06 | **`enable_plugin_in_project` IDEMPOTENTE y NORMALIZADORA** | Reemplaza CUALQUIER `enabled=` dentro de `[editor_plugins]` (vacío, `"heren"`, duplicadas) por la única canónica `enabled=PackedStringArray("res://addons/heren/plugin.cfg")`. Solo escribe si difiere; relee y verifica post-escritura (1 línea). 6 tests Rust (`launcher::tests::enable_*`). Antes insertaba duplicados o no corregía el estado vacío. |
+| 2026-08-06 | **Plugin SIEMPRE ENCENDIDO + sync INCREMENTAL** | Se habilita UNA vez (`setup_plugin`/`create`); `open` NO lo "reenciende". `ensure_plugin_installed` → sincronización por contenido: copia solo diffs, borra huérfanos, `plugin up-to-date` = cero trabajo. Eliminada la reinstalación total entre versiones (antes `remove_dir_all` + recopia). |
+| 2026-08-06 | **`launch_editor` — kill zombie ANTES de escribir project.godot** | Orden correcto: mata editor zombie PRIMERO → sleep → escribe plugin+enable → relanza. Antes escribía enable ANTES de matar → el editor vivo podía pisar project.godot al salir (lost-update → `enabled=PackedStringArray()`). Ahora nadie pisa el archivo recién escrito. |
+| 2026-08-06 | **`launch_editor` — no relanzar si no hace falta** | Editor conectado + plugin sin cambios → `reuse up-to-date` (cero trabajo). Editor conectado + plugin cambió → NO relanza (rompería el flujo en marcha): devuelve `plugin_changed=true` y el agente decide `session/reopen`. Zombie → kill + relanzar limpio. |
+| 2026-08-06 | **Reporte de versión al agente (plugin_version)** | El plugin lee `plugin.cfg` (`_read_plugin_version`) y lo manda en `godot_ready`. El registry guarda `EditorHandle.plugin_version` (la versión que CORRE en el editor vivo, no la del disco). `session/info` → `plugin_version_source/installed/editor` + `plugin_stale` + `plugin_stale_remedy`; `session/health` → `stale_editors[]`; `open`/`reopen` → `plugin_changed` + versiones. El agente sabe cuándo el editor corre una versión antigua y que `session/reopen` recarga el código nuevo. |
+| 2026-08-06 | **Godot NO tiene hot-reload de plugins** | Issue oficial #11612. El EditorPlugin solo se re-instancia con `Project > Reload Current Project` o re-habilitándolo. Por eso la actualización de código del plugin requiere `session/reopen` — pero solo cuando `plugin_changed=true`, no en cada open. |
 
 ---
 
