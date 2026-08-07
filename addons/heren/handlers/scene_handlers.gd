@@ -75,7 +75,7 @@ func handle_create(args: Dictionary) -> Dictionary:
 
 	var root_type: String = str(args.get("root_type", "Node2D"))
 	var root_name: String = str(args.get("root_name", "NewNode"))
-	var scene_path: String = str(args.get("scene_path", ""))
+	var scene_path: String = _normalize_scene_path(str(args.get("scene_path", "")))
 
 	# Instantiate the root node.
 	var new_node: Node = ClassDB.instantiate(root_type)
@@ -124,7 +124,10 @@ func _create_scene_file(ei: EditorInterface, new_node: Node, scene_path: String,
 	var packed := PackedScene.new()
 	HerenCoordsScript.ensure_owner_recursive(new_node)
 	packed.pack(new_node)
-	var err := ResourceSaver.save(packed, scene_path)
+	# FLAG_BUNDLE_RESOURCES: incrusta sub-recursos (Curve/Gradient/Material
+	# anidados, sin resource_path) inline en el .tscn. Sin esta flag Godot los
+	# omite silenciosamente — inconsistente con handle_save que SÍ la usa.
+	var err := ResourceSaver.save(packed, scene_path, ResourceSaver.FLAG_BUNDLE_RESOURCES)
 	if err != OK:
 		new_node.free()
 		return {"ok": false, "error": "save_failed: " + error_string(err)}
@@ -240,3 +243,22 @@ func _ensure_parent_dir(path: String) -> void:
 	var dir_path := path.get_base_dir()
 	if dir_path != "" and not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(dir_path)):
 		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir_path))
+
+
+## Normaliza un scene_path a la forma canónica de Godot (res://, forward
+## slashes, sin trailing). El server ya normaliza; esta es defensa en el
+## plugin para que la key del SceneRegistry SIEMPRE coincida con el
+## scene_file_path de la pestaña (fix 2026-08-06: paths crudos del agente
+## rompían el match → escena fantasma divergente).
+func _normalize_scene_path(path: String) -> String:
+	var s := path.strip_edges()
+	if s == "":
+		return ""
+	s = s.replace("\\", "/")
+	while s.ends_with("/"):
+		s = s.substr(0, s.length() - 1)
+	if s.begins_with("res:/") and not s.begins_with("res://"):
+		return "res://" + s.substr(5)
+	if not s.begins_with("res://"):
+		return "res://" + s
+	return s

@@ -175,18 +175,32 @@ func handle_validate(args: Dictionary) -> Dictionary:
 	if shader == null or not shader is Shader:
 		return {"ok": false, "error": "invalid_shader: " + shader_path}
 	var sh := shader as Shader
-	# Validate real: errores de compilación, no solo "es un Shader".
-	# TIPO EXPLÍCITO: sh.get_errors() no es inferible → `:=` rompe el grafo.
-	var errors: PackedStringArray = sh.get_errors()
-	if not errors.is_empty():
-		return {
-			"ok": false,
-			"valid": false,
-			"shader_path": shader_path,
-			"error_count": errors.size(),
-			"errors": errors,
-		}
-	return {"ok": true, "valid": true, "shader_path": shader_path, "error_count": 0}
+
+	# Validación REAL (fix 2026-08-06): Godot 4.7 NO tiene Shader.get_errors()
+	# (verificado en runtime: has_method("get_errors") == false) → antes este
+	# handler crasheaba con SCRIPT ERROR → "Unknown error" en la tool.
+	# Señales reales que SÍ podemos leer:
+	#   - parseo estructural (shader_type, función principal, llaves)
+	#   - get_shader_uniform_list(): si el código declara uniforms pero el
+	#     compilador no registró ninguno → error de compilación.
+	var code := ""
+	var f := FileAccess.open(shader_path, FileAccess.READ)
+	if f != null:
+		code = f.get_as_text()
+		f = null
+	var issues: Array = _shader_structural_issues(sh, code)
+	var uniforms := sh.get_shader_uniform_list()
+	if uniforms.is_empty() and _shader_declares_uniforms(code):
+		issues.append("uniforms declared but none compiled — shader compilation error")
+	if issues.is_empty():
+		return {"ok": true, "valid": true, "shader_path": shader_path, "error_count": 0}
+	return {
+		"ok": false,
+		"valid": false,
+		"shader_path": shader_path,
+		"error_count": issues.size(),
+		"errors": issues,
+	}
 
 
 func handle_get(args: Dictionary) -> Dictionary:
@@ -246,15 +260,15 @@ func handle_inspect(args: Dictionary) -> Dictionary:
 		return {"ok": false, "error": "invalid_shader: " + shader_path}
 	var sh := shader as Shader
 	var uniforms := _shader_uniforms_to_json(sh)
-	var errors: PackedStringArray = sh.get_errors()
+	var issues: Array = _shader_structural_issues(sh, sh.get_code())
 	return {
 		"ok": true,
 		"shader_path": shader_path,
-		"shader_type": _mode_to_str(sh.mode),
+		"shader_type": _mode_to_str(sh.get_mode()),
 		"uniforms": uniforms,
 		"uniform_count": uniforms.size(),
-		"errors": errors,
-		"valid": errors.is_empty(),
+		"errors": issues,
+		"valid": issues.is_empty(),
 	}
 
 
@@ -498,3 +512,41 @@ func _parse_shader_type(content: String) -> String:
 	if res:
 		return res.get_string(1)
 	return "unknown"
+
+
+## Issues estructurales detectables sin Shader.get_errors() (inexistente en
+## Godot 4.7): shader_type presente, función principal según el modo, y llaves
+## balanceadas. La compilación real la hace Godot al usar el shader; esto da
+## señales tempranas SIN crashear.
+func _shader_structural_issues(sh: Shader, code: String) -> Array:
+	var issues: Array = []
+	if _parse_shader_type(code) == "unknown":
+		issues.append("missing or invalid shader_type")
+	var mode := sh.get_mode()
+	var required: String
+	match mode:
+		2: required = "start()"
+		3: required = "sky()"
+		_:
+			required = "fragment()"
+	if not code.contains(required):
+		issues.append("missing main function: " + required)
+	# Llaves balanceadas (heurística simple de parseo).
+	var open := 0
+	for ch in code:
+		if ch == "{":
+			open += 1
+		elif ch == "}":
+			open -= 1
+			if open < 0:
+				issues.append("unbalanced braces: extra }")
+				break
+	if open > 0:
+		issues.append("unbalanced braces: missing }")
+	return issues
+
+
+## ¿El código declara uniforms? (señal indirecta de compilación fallida:
+## si declara uniforms pero get_shader_uniform_list() sale vacío → error).
+func _shader_declares_uniforms(code: String) -> bool:
+	return code.contains("uniform")

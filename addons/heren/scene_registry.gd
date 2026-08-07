@@ -17,22 +17,37 @@ extends RefCounted
 static var _scenes: Dictionary = {}  # scene_path → Node (root)
 
 
+## Normaliza la key a la forma canónica (res://, forward slashes, sin
+## trailing) para que coincida SIEMPRE con scene_file_path de las pestañas.
+static func _norm(path: String) -> String:
+	var s := path.strip_edges()
+	if s == "":
+		return ""
+	s = s.replace("\\", "/")
+	while s.ends_with("/"):
+		s = s.substr(0, s.length() - 1)
+	if not s.begins_with("res://"):
+		return "res://" + s
+	return s
+
+
 static func register(path: String, root: Node) -> void:
-	if path == "" or root == null:
+	var p := _norm(path)
+	if p == "" or root == null:
 		return
-	_scenes[path] = root
+	_scenes[p] = root
 
 
 static func unregister(path: String) -> void:
-	_scenes.erase(path)
+	_scenes.erase(_norm(path))
 
 
 static func get_root(path: String) -> Node:
-	var root: Variant = _scenes.get(path, null)
+	var root: Variant = _scenes.get(_norm(path), null)
 	if root is Node and is_instance_valid(root):
 		return root
 	# Referencia colgante (pestaña cerrada → nodo liberado): limpiar.
-	_scenes.erase(path)
+	_scenes.erase(_norm(path))
 	return null
 
 
@@ -53,23 +68,33 @@ static func clear() -> void:
 	_scenes.clear()
 
 
-## Resuelve la escena objetivo de una operación: registry → pestaña → disco.
+## Resuelve la escena objetivo de una operación.
+## Prioridad (fix 2026-08-06, "rehace la escena"):
+##   1. Pestaña REAL del editor que coincide (lo que el usuario ve — si la
+##      escena está abierta, operamos sobre ella, no sobre un árbol fantasma)
+##   2. Registry (escena creada/editada por MCP en memoria, sin pestaña)
+##   3. Archivo en disco → open_scene_from_path
+##   4. null (error claro, nunca escena equivocada)
 static func resolve_root(ei: EditorInterface, scene_path: String) -> Node:
 	if ei == null:
 		return null
 	if scene_path == "":
 		return ei.get_edited_scene_root()
-	var registered := get_root(scene_path)
+	var path := _norm(scene_path)
+	# 1) Pestaña real: si el usuario abrió la escena, es la fuente de verdad.
+	var active := ei.get_edited_scene_root()
+	if active != null and active.scene_file_path == path:
+		register(path, active)
+		return active
+	# 2) Registry (fantasma en memoria — escena creada por MCP sin pestaña).
+	var registered := get_root(path)
 	if registered != null:
 		return registered
-	var active := ei.get_edited_scene_root()
-	if active != null and active.scene_file_path == scene_path:
-		register(scene_path, active)
-		return active
-	if ResourceLoader.exists(scene_path):
-		ei.open_scene_from_path(scene_path)
+	# 3) Disco: abrir y registrar la pestaña.
+	if ResourceLoader.exists(path):
+		ei.open_scene_from_path(path)
 		var opened := ei.get_edited_scene_root()
-		if opened != null and opened.scene_file_path == scene_path:
-			register(scene_path, opened)
+		if opened != null and opened.scene_file_path == path:
+			register(path, opened)
 			return opened
 	return null
