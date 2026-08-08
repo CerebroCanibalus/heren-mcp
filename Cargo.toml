@@ -1,0 +1,28 @@
+# Heren MCP v4 - workspace Rust (server del plugin Godot).
+# Fase 4 (2026-08-04): el server habla NDJSON por stdio con OpenCode y WS
+# con el EditorPlugin Godot. Reestructurado 2026-08-07: el crate vive AQUÍ
+# (antes en el workspace FlojoMCP). FlojoMCP (framework) se publica a
+# crates.io y se consume por version (NO por path) - ver Cargo.toml del crate.
+[workspace]
+members = ["crates/heren-server"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Heren MCP Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/CerebroCanibalus/heren-mcp"
+rust-version = "1.85"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio-tungstenite = "0.26"
+futures = "0.3"
+tokio-util = "0.7"
+thiserror = "2"

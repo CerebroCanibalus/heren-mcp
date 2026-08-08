@@ -62,5 +62,9 @@ check_syntax.bat
 test_daemon_output.py
 
 
+# Rust workspace (heren-server)
+target/
+crates/heren-server/target/
+
 # OpenCode local state (memory plugin garbage)
 .opencode/

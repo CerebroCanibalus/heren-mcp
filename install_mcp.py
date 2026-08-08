@@ -84,15 +84,14 @@ def default_workspace():
     env = os.environ.get("HEREN_WS")
     if env:
         return env
-    # Default: D:\Mis Juegos\ClaudeMCPs\FlojoMCP
-    cands = [
-        r"D:\Mis Juegos\ClaudeMCPs\FlojoMCP",
-        os.path.join(HEREN_MCP_DIR, "..", "..", "ClaudeMCPs", "FlojoMCP"),
-    ]
+    # Reestructurado 2026-08-07: el workspace Rust (crates/heren-server)
+    # vive AQUÍ (heren-mcp), no en FlojoMCP. El binario sale en
+    # <workspace>\target\release\heren-server.exe.
+    cands = [HEREN_MCP_DIR]
     for c in cands:
         if os.path.isdir(os.path.join(c, "crates", "heren-server")):
             return c
-    return cands[0]
+    return HEREN_MCP_DIR
 
 
 def default_config_path():
