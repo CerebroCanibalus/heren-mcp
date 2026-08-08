@@ -72,7 +72,27 @@ static func serialize_value(value: Variant, compact: bool = false) -> Variant:
 			"__type": "Transform3D",
 		}
 	elif value is Object and value is Resource and value.resource_path:
+		# Recurso con path: referencia por path (el agente puede load()).
 		return {"resource_path": value.resource_path, "__type": "Resource"}
+	elif value is Object and value is Resource:
+		# Sub-recurso INLINE sin resource_path (StyleBoxFlat dentro de un
+		# Theme .tres, Curve/Gradient en ParticleProcessMaterial, etc.).
+		# Fix 2026-08-06: antes caía al `else` → devolvía el objeto Godot crudo
+		# → JSON no representaba bg_color/border_color → se perdían (negro).
+		# Ahora serializa la clase + props con el MISMO filtro STORAGE que
+		# resource_handlers._serialize_resource_props (round-trip completo).
+		var d := {"__type": "Resource", "resource_class": value.get_class(), "props": {}}
+		for prop in value.get_property_list():
+			var usage: int = int(prop.usage)
+			if usage & PROPERTY_USAGE_STORAGE == 0:
+				continue
+			if usage & PROPERTY_USAGE_INTERNAL != 0:
+				continue
+			var pname: StringName = prop.name
+			if pname in ["resource_path", "resource_local_to_scene", "resource_name"]:
+				continue
+			d["props"][pname] = serialize_value(value.get(pname), compact)
+		return d
 	else:
 		return value
 
@@ -155,6 +175,10 @@ static func deserialize_value(value: Variant) -> Variant:
 				var path: String = str(value.get("resource_path", ""))
 				if path != "" and ResourceLoader.exists(path):
 					return load(path)
+				# Inline: {"resource_class": "StyleBoxFlat", "props": {...}}.
+				# (fix 2026-08-06: sub-recursos sin path con props serializadas)
+				if value.has("props") and value["props"] is Dictionary:
+					return deserialize_resource(value)
 				# No path: try inline resource creation.
 				if value.has("resource_type") or value.has("type"):
 					return deserialize_resource(value)
@@ -183,7 +207,7 @@ static func deserialize_value(value: Variant) -> Variant:
 ## Deserialize a dictionary with "type"/"resource_type" + props to a Resource.
 ## Example: {"type": "RectangleShape2D", "size": {"x": 64, "y": 64}}
 static func deserialize_resource(value: Dictionary) -> Resource:
-	var resource_type: String = str(value.get("type", value.get("resource_type", "")))
+	var resource_type: String = str(value.get("type", value.get("resource_type", value.get("resource_class", ""))))
 	if resource_type == "":
 		return null
 
@@ -192,8 +216,27 @@ static func deserialize_resource(value: Dictionary) -> Resource:
 		return null
 	var res := resource as Resource
 
+	# Inline serialization (fix 2026-08-06): {"resource_class", "props": {...}}
+	# — los props del sub-recurso viven en "props" (ver serialize_value).
+	if value.has("props") and value["props"] is Dictionary:
+		for key in value["props"].keys():
+			var k: String = str(key)
+			if k in res:
+				var prop_type: int = TYPE_NIL
+				var prop_hint: String = ""
+				for prop in res.get_property_list():
+					if prop.name == k:
+						prop_type = int(prop.type)
+						prop_hint = str(prop.hint_string)
+						break
+				var prop_value: Variant = deserialize_typed(value["props"][key], prop_type, res.get(k))
+				prop_value = _wrap_curve_gradient(prop_value, prop_hint)
+				res.set(k, prop_value)
+		ensure_resource_local_recursive(res)
+		return res
+
 	for key in value.keys():
-		if key in ["type", "resource_type", "__type"]:
+		if key in ["type", "resource_type", "__type", "resource_class"]:
 			continue
 		# Curve._data: formato INTERNO = 5 elementos por punto
 		# [position(Vector2), left_tangent, right_tangent, left_mode, right_mode].
