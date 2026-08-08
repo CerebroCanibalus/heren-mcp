@@ -19,6 +19,13 @@ Biblia para agentes que operan Heren MCP. Léelo antes de tocar código.
 > coroutine (`await`). Schema `visual` expone `source`. Verificado: `--check-only` + grafo
 > completo headless sin errores, 24+2+1 tests Rust OK, clippy limpio, release 9.4MB.
 >
+> **v4.4.2 (2026-08-07)**: **workspace Rust PROPIO + FlojoMCP publicado a crates.io**.
+> `crates/heren-server` se movió de FlojoMCP a heren-mcp (Cargo.toml workspace local,
+> `heren-build.bat`, `run.bat` → binario local). La config de OpenCode apunta a
+> `heren-mcp\target\release\heren-server.exe`. FlojoMCP queda SOLO como framework
+> (flojo-mcp/flojo-macros/flojo-session @ crates.io) — heren-server lo consume por
+> version (no path). Persistencia: cierre inesperado con 0 dirty = benigno.
+>
 > **v4.4 (2026-08-06)**: **Plugin SIEMPRE ENCENDIDO + actualización inteligente**.
 > - `enable_plugin_in_project` **IDEMPOTENTE y NORMALIZADORA**: reemplaza cualquier `enabled=` en `[editor_plugins]`
 >   (vacío `PackedStringArray()`, nombre desnudo `"heren"`, duplicadas) por la única canónica
@@ -159,13 +166,18 @@ D:\Mis Juegos\GodotMCP\heren-mcp\
 ├── AGENTS.md                 # Este archivo
 ├── README.md / README.en.md  # Usuarios finales
 ├── CHANGELOG.md              # Historial de versiones
+├── Cargo.toml                # 🆕 workspace Rust (crates/heren-server) — 2026-08-07
+├── crates/heren-server/      # 🆕 server Rust (MCP stdio NDJSON + WS plugin bridge, FlojoMCP)
+│   ├── src/                  # editor, launcher, registry, server, ws_plugin_server
+│   └── tests/                # tools_parity, ws_plugin
+├── heren-build.bat           # 🆕 compila server (debug+test+release+clippy, VsDevCmd)
 ├── install_mcp.py            # Instalador 1-comando (compila + registra MCP + verifica)
-├── run.bat                   # Launcher para OpenCode (heren-server.exe)
+├── run.bat                   # Launcher para OpenCode (heren-server.exe local)
 ├── addons/heren/             # 🆕 FUENTE del plugin v4 (GDScript, copiable a cualquier proyecto)
 │   ├── plugin.cfg
 │   ├── editor_plugin.gd      # EditorPlugin core (WS client + dispatcher + registro)
 │   ├── ws_client.gd          # Cliente WS MCP JSON-RPC (auto-reconnect)
-│   ├── dispatcher.gd         # Rutea tools/call → handlers por prefijo
+│   ├── dispatcher.gd         # Rutea tools/call → handlers por prefijo (soporta coroutine)
 │   ├── undo_redo_wrapper.gd
 │   └── handlers/             # scene, node, resource, project, signal, validate,
 │                             # debug, shader, animation(+skeleton), tilemap, visual, coords
@@ -174,6 +186,10 @@ D:\Mis Juegos\GodotMCP\heren-mcp\
 ├── tests/                    # Tests por capa
 └── benchmarks/               # Benchmarks de rendimiento
 ```
+
+> **FlojoMCP ya NO contiene el crate heren-server** (2026-08-07): el server vive
+> aquí. FlojoMCP es solo el framework (flojo-mcp, flojo-macros, flojo-session),
+> publicado a crates.io; heren-server lo consume por version (no path).
 
 ---
 
@@ -421,8 +437,10 @@ Esto da al agente **conocimiento espacial completo** sin llamadas extra. Benefic
 | 2026-08-06 | **Reporte de versión al agente (plugin_version)** | El plugin lee `plugin.cfg` (`_read_plugin_version`) y lo manda en `godot_ready`. El registry guarda `EditorHandle.plugin_version` (la versión que CORRE en el editor vivo, no la del disco). `session/info` → `plugin_version_source/installed/editor` + `plugin_stale` + `plugin_stale_remedy`; `session/health` → `stale_editors[]`; `open`/`reopen` → `plugin_changed` + versiones. El agente sabe cuándo el editor corre una versión antigua y que `session/reopen` recarga el código nuevo. |
 | 2026-08-06 | **Godot NO tiene hot-reload de plugins** | Issue oficial #11612. El EditorPlugin solo se re-instancia con `Project > Reload Current Project` o re-habilitándolo. Por eso la actualización de código del plugin requiere `session/reopen` — pero solo cuando `plugin_changed=true`, no en cada open. |
 | 2026-08-06 | **Sub-recursos inline viajan COMPLETOS en serialize_value (StyleBoxFlat/Theme)** | Un recurso SIN `resource_path` (StyleBoxFlat dentro de un Theme .tres, Curve/Gradient en ParticleProcessMaterial) caía a la rama `else` de `serialize_value` → se devolvía el objeto Godot crudo → el JSON no representaba `bg_color`/`border_color` → al `resource/update` se perdían (negro). **Fix**: `serialize_value` serializa inline `{"__type":"Resource","resource_class":X,"props":{...}}` con el MISMO filtro STORAGE que `_serialize_resource_props`; `deserialize_value` rama Resource maneja `resource_class`+`props`; `deserialize_resource` acepta `resource_class` y aplica props desde `props` (recursivo + `deserialize_typed` + `_wrap_curve_gradient` + `ensure_resource_local_recursive`). E2E: Theme → `Panel/styles/panel` con `bg=(0.02,0.03,0.025,0.85)` sobrevive serialize→deserialize→save→reload. Commit `9872546`. |
-| 2026-08-07 | **Rediseño persistencia: dirty tracking + flush-before-destroy + error en cierre inesperado** | **3 reglas** (implementadas en FlojoMCP `66812e8`→pendiente): (1) **Dirty set por proyecto** en `registry.rs` (`mark_dirty`/`clean_dirty`/`dirty_scenes`): las mutaciones (`node/*` escritura, `animation/*` escritura, `shader/*` escritura, `signal/*` conexión, `tilemap/*` set) marcan la escena; `scene/save` la limpia; `session/info` y `session/open` exponen `dirty_scenes`. Lecturas (get/inspect/validate/list) NO marcan. (2) **Flush-before-destroy**: `scene/open` de una escena dirty hace `scene/save` ANTES de abrir (no pierde la versión en RAM); `session/close` flushea todas las dirty antes de matar el editor. (3) **Cierre inesperado = ERROR**: si el WS cae sin `session/close`, `mark_unexpected_close` guarda las dirty y TODAS las tools del proyecto fallan con `editor_closed_unexpectedly: el editor se cerró sin session/close; había N escenas con cambios sin guardar: ...` hasta `session/open` (fail-fast, nunca silencio). `session/close` marca `graceful_close` para que la desconexión NO marque error. 4 tests nuevos (24/24 OK). Costo: ~0ms por mutación (insert HashSet) + ~20ms solo en flush. |
+| 2026-08-07 | **Rediseño persistencia: dirty tracking + flush-before-destroy + error en cierre inesperado** | **3 reglas** (implementadas en FlojoMCP `66812e8`→pendiente): (1) **Dirty set por proyecto** en `registry.rs` (`mark_dirty`/`clean_dirty`/`dirty_scenes`): las mutaciones (`node/*` escritura, `animation/*` escritura, `shader/*` escritura, `signal/*` conexión, `tilemap/*` set) marcan la escena; `scene/save` la limpia; `session/info` y `session/open` exponen `dirty_scenes`. Lecturas (get/inspect/validate/list) NO marcan. (2) **Flush-before-destroy**: `scene/open` de una escena dirty hace `scene/save` ANTES de abrir (no pierde la versión en RAM); `session/close` flushea todas las dirty antes de matar el editor. (3) **Cierre inesperado = ERROR solo si hay trabajo que perder**: si el WS cae sin `session/close`, `mark_unexpected_close` guarda las dirty y TODAS las tools del proyecto fallan con `editor_closed_unexpectedly: ... había N escena(s) con cambios sin guardar: ...` hasta `session/open` (fail-fast, nunca silencio). **Fix 2026-08-07**: con **0 escenas sucias** el cierre es **benigno** — NO se marca el flag (nada que proteger; las tools solo dan `no editor connected` hasta reconectar). `session/close` y `session/reopen` (reinicio deliberado: flush dirty + graceful_close ANTES del kill + clear flag tras relanzar) marcan `graceful_close` para que su desconexión NO marque error. 5 tests de persistencia (incl. `unexpected_close_without_dirty_is_benign`). Costo: ~0ms por mutación (insert HashSet) + ~20ms solo en flush. |
 | 2026-08-07 | **visual/capture: render OFF-SCREEN de la ESCENA, NO del viewport del editor** | `get_editor_viewport_2d/3d().get_texture().get_image()` devuelve el placeholder **2×2** (la textura del editor no es un render target accesible) → capturas inservibles. Fix: `_render_scene_offscreen()` en `visual_handlers.gd` — clona el root sin scripts (`duplicate(DUPLICATE_GROUPS)`), lo mete en un `SubViewport` dedicado (`UPDATE_ALWAYS`; `own_world_3d`+Environment BG_COLOR en 3D, `transparent_bg` en 2D), replica el framing del editor (`get_camera_2d/3d()` → cámara nueva en el clon), `await` 2× `RenderingServer.frame_post_draw`, captura y `queue_free`. **`source`**: `"scene"` (default, fiable) | `"viewport"` (editor: gizmos/grid/selección, con fallback automático a scene si sale 2×2). Animación (`animation:` seek) se aplica al player del CLON (escena real intacta) o al real en viewport. **Soporte coroutine en dispatcher**: `dispatcher.execute` completa `GDScriptFunctionState` (detectado por `get_class()`, NO `is` — no es tipo usable en Godot 4) + `editor_plugin._on_tool_invoke` hace `await`. Handlers con `await` = Handler coroutine. Verificado: `--check-only` 3 scripts + grafo completo headless 0 errores; 24+2+1 tests Rust (schema `visual.source`); clippy limpio; release 9.4MB; binario responde initialize+tools/list. |
+| 2026-08-07 | **heren-server sale del workspace FlojoMCP → workspace PROPIO en heren-mcp** | El crate Rust (server MCP) era el "dogfooding" del framework FlojoMCP. Decisión del General: (a) el crate vive en `heren-mcp/crates/heren-server` con su propio `Cargo.toml` workspace (deps por `workspace = true`), y (b) **FlojoMCP se publica a crates.io** (`flojo-macros` → `flojo-mcp` → `flojo-session`, @0.1.0) para que heren-server lo consuma por VERSION, no path. Scripts: `heren-build.bat` local (VsDevCmd), `run.bat` → `%~dp0target\release\heren-server.exe`, `install_mcp.py` busca el workspace local. **Config OpenCode actualizada** (`opencode.jsonc` L108): `command` → `D:\Mis Juegos\GodotMCP\heren-mcp\target\release\heren-server.exe` (backup previo). Publicar en orden con `--no-verify` (el verify compila el tarball y la shell sin VsDevCmd usa un linker MSVC roto "VS18 Insiders" sin msvcrt.lib). Tras publicar, cambiar la dep del crate de `path` a `version = "0.1"`. Verificado: 25+2+1 tests OK en el workspace local, clippy limpio, release responde initialize+tools/list. |
+| 2026-08-07 | **Cierre inesperado sin dirty = benigno** | El flag `editor_closed_unexpectedly` se marcaba en CUALQUIER desconexión WS sin `session/close`, incluso con **0 escenas sucias** → bloqueaba TODAS las tools (run_scene, validate...) tras un `session/reopen` por actualización del plugin, con mensaje absurdo "(sin escenas sucias)". Fix: `mark_unexpected_close` SOLO marca si hay dirty > 0 (trabajo que se perdería); 0 dirty = desconexión benigna (las tools dan `no editor connected` hasta `session/open`). Y `session/reopen` = reinicio DELIBERADO: flush dirty + `graceful_close` ANTES del kill (patrón de `session/close`) + `clear_unexpected_close` tras relanzar. Test `unexpected_close_without_dirty_is_benign`. |
 
 ---
 
