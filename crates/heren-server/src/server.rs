@@ -170,7 +170,7 @@ fn unwrap_result(raw: &Value) -> Value {
 // ============================================================
 
 #[tool(
-    description = "Gestion de sesiones v4: open|reopen|close|list|info|health — reopen mata el editor y relanza limpio (tras settings restart_required)"
+    description = "Gestion de sesiones v4: open|reopen|close|list|info|health|diagnose - reopen mata el editor y relanza limpio (tras settings restart_required); diagnose = DEBUGGER UNIFICADO del plugin (integridad archivo x archivo + validacion grafo godot headless + estado editor)"
 )]
 async fn session(
     action: String,
@@ -366,6 +366,67 @@ async fn session(
                 }))
             }
         }
+        "diagnose" => {
+            // DEBUGGER UNIFICADO del plugin (2026-08-08): deja de adivinar.
+            // Reporta: integridad archivo por archivo (source vs instalado),
+            // validación del grafo completo (godot headless en sandbox), y
+            // estado del editor (procesos vivos con cmdline, conexión WS).
+            let proj = resolve_project(project_path.as_deref())?;
+            let source = crate::launcher::source_plugin_version();
+            let installed = crate::launcher::read_plugin_version(&proj);
+            let live = registry.editor_plugin_version(&proj).await;
+            let connected = registry.has_editor(&proj).await;
+            let integrity = crate::launcher::plugin_integrity(&proj);
+            let stale_count = integrity
+                .iter()
+                .filter(|f| f.status == "stale" || f.status == "missing")
+                .count();
+            let graph = crate::launcher::validate_plugin_graph(&proj, godot_path.as_deref());
+            let procs = crate::launcher::godot_processes_detailed(&proj);
+            Ok(json!({
+                "ok": true,
+                "project_path": proj,
+                "plugin": {
+                    "source_version": source,
+                    "installed_version": installed,
+                    "editor_version": live,
+                    "stale": matches!((&live, &source), (Some(l), Some(s)) if l != s),
+                },
+                "integrity": {
+                    "files": integrity,
+                    "stale_count": stale_count,
+                    "message": if stale_count == 0 {
+                        "plugin integro: todos los archivos coinciden con source"
+                    } else {
+                        "plugin INCOMPLETO: hay archivos stale/missing - ejecuta session/open (sync) y session/reopen (recarga el editor)"
+                    },
+                },
+                "graph": {
+                    "ok": graph.ok,
+                    "errors": graph.errors,
+                    "output_tail": graph.output_tail,
+                    "message": if graph.ok {
+                        "el plugin CARGA sin errores en godot headless (grafo completo)"
+                    } else {
+                        "el plugin FALLA al cargar - SCRIPT ERROR/Parse Error arriba (esto crashea el editor real)"
+                    },
+                },
+                "editor": {
+                    "connected": connected,
+                    "processes": procs.iter().map(|(pid, cmd)| json!({
+                        "pid": pid,
+                        "cmdline": cmd,
+                    })).collect::<Vec<_>>(),
+                    "detected": !procs.is_empty(),
+                    "port": ws_port(),
+                },
+                "remedy": if !graph.ok || stale_count > 0 {
+                    "session/open (sync plugin) + session/reopen (recarga editor). Si el grafo sigue roto, el bug esta en addons/heren source."
+                } else {
+                    ""
+                },
+            }))
+        }
         other => Err(ToolError::invalid_params(format!(
             "unknown session action: {other}"
         ))),
@@ -493,7 +554,7 @@ async fn node(
     value: Option<Value>,
     new_name: Option<String>,
     new_parent: Option<String>,
-    index: i64,
+    index: Option<i64>,
     parent_path: Option<String>,
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref())?;
@@ -512,7 +573,7 @@ async fn node(
             ("value", value),
             ("new_name", new_name.map(Value::String)),
             ("new_parent", new_parent.map(Value::String)),
-            ("index", Some(json!(index))),
+            ("index", index.map(|i| json!(i))),
             ("parent_path", parent_path.map(Value::String)),
         ]),
     );
@@ -660,7 +721,15 @@ fn setup_plugin(project_path: Option<&str>) -> Result<Value, ToolError> {
         )));
     }
     let (installed, install_msg) = crate::launcher::ensure_plugin_installed(&proj);
-    let enabled = crate::launcher::enable_plugin_in_project(&proj);
+    // Ok(true)=normalizado, Ok(false)=ya correcto (éxito), Err=fallo real.
+    let enabled = match crate::launcher::enable_plugin_in_project(&proj) {
+        Ok(v) => v,
+        Err(e) => {
+            return Err(ToolError::internal(format!(
+                "enable_plugin_in_project failed: {e}"
+            )));
+        }
+    };
     Ok(json!({
         "ok": true,
         "project_path": proj,
@@ -1139,16 +1208,37 @@ async fn tilemap(
 // ============================================================
 
 #[tool(
-    description = "Depuración (v4, editor real): run_scene|stop_scene|is_playing|get_editor_errors"
+    description = "Depuración (v4.5): status|breakpoint|control|stack|vars|profiler|run_scene|stop_scene|is_playing|get_editor_errors. status=estado del depurador; breakpoint(op=set|clear|list|clear_all,path,line); control(op=pause|continue|step_over|step_into); stack=rastreo de pila al pausar; vars(frame)=variables del frame; profiler(op=start|stop|status|get|clear)"
 )]
+#[allow(clippy::too_many_arguments)]
 async fn debug(
     action: String,
     project_path: Option<String>,
     scene_path: Option<String>,
+    op: Option<String>,
+    path: Option<String>,
+    line: Option<i64>,
+    enabled: Option<bool>,
+    frame: Option<i64>,
+    profiler: Option<String>,
+    max_functions: Option<i64>,
+    include_native: Option<bool>,
+    limit: Option<i64>,
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref())?;
     let registry = EditorRegistry::global();
-    let a = args(&[("scene_path", scene_path.as_deref().map(normalize_scene_path).map(Value::String))]);
+    let a = args(&[
+        ("scene_path", scene_path.as_deref().map(normalize_scene_path).map(Value::String)),
+        ("op", op.map(Value::String)),
+        ("path", path.map(Value::String)),
+        ("line", line.map(|v| json!(v))),
+        ("enabled", enabled.map(|v| json!(v))),
+        ("frame", frame.map(|v| json!(v))),
+        ("profiler", profiler.map(Value::String)),
+        ("max_functions", max_functions.map(|v| json!(v))),
+        ("include_native", include_native.map(|v| json!(v))),
+        ("limit", limit.map(|v| json!(v))),
+    ]);
     forward(registry, &proj, &format!("debug/{action}"), a).await
 }
 

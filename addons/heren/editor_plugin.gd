@@ -16,6 +16,7 @@ const ProjectHandlersScript := preload("handlers/project_handlers.gd")
 const SignalHandlersScript := preload("handlers/signal_handlers.gd")
 const ValidateHandlersScript := preload("handlers/validate_handlers.gd")
 const DebugHandlersScript := preload("handlers/debug_handlers.gd")
+const HerenDebuggerPluginScript := preload("heren_debugger_plugin.gd")
 const ShaderHandlersScript := preload("handlers/shader_handlers.gd")
 const AnimationHandlersScript := preload("handlers/animation_handlers.gd")
 const TileMapHandlersScript := preload("handlers/tilemap_handlers.gd")
@@ -31,6 +32,7 @@ var _project_handlers: Node
 var _signal_handlers: Node
 var _validate_handlers: Node
 var _debug_handlers: Node
+var _dbg_plugin: EditorDebuggerPlugin
 var _shader_handlers: Node
 var _animation_handlers: Node
 var _tilemap_handlers: Node
@@ -87,6 +89,14 @@ func _enter_tree() -> void:
 	_debug_handlers.name = "HerenDebugHandlers"
 	_debug_handlers.set_editor_plugin(self)
 	add_child(_debug_handlers)
+
+	# Plugin del depurador (EditorDebuggerPlugin v4.5): expone sesiones del
+	# depurador (breakpoints, control, profiler) y captura stack/vars/errores
+	# via el signal `debug_data` del ScriptEditorDebugger default (tab 0).
+	_dbg_plugin = HerenDebuggerPluginScript.new()
+	_dbg_plugin.setup(self)
+	_debug_handlers.set_debugger_plugin(_dbg_plugin)
+	add_debugger_plugin(_dbg_plugin)
 
 	# Shader handlers.
 	_shader_handlers = ShaderHandlersScript.new()
@@ -175,6 +185,9 @@ func _exit_tree() -> void:
 	if _debug_handlers:
 		_debug_handlers.queue_free()
 		_debug_handlers = null
+	if _dbg_plugin:
+		remove_debugger_plugin(_dbg_plugin)
+		_dbg_plugin = null
 	if _validate_handlers:
 		_validate_handlers.queue_free()
 		_validate_handlers = null
