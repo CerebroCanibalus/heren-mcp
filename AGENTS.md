@@ -5,12 +5,19 @@
 
 Biblia para agentes que operan Heren MCP. Léelo antes de tocar código.
 
-> 🚧 **ESTADO: v4.4.0 OPERATIVO (EditorPlugin + heren-server.exe Rust/FlojoMCP).**
+> 🚧 **ESTADO: v4.4.1 OPERATIVO (EditorPlugin + heren-server.exe Rust/FlojoMCP).**
 > Migración GodotDaemon(v3)→EditorPlugin(v4) completada 2026-08-03. Fase 4 (Rust) 2026-08-04.
 > **15 tools centralizadas**, WS plugin server (patrón gopeak), auto-launch del editor.
 > El .exe habla **NDJSON** por stdio (framing real de OpenCode, verificado con stdin-spy).
 > Bridge Python (`python -m heren.v4.bridge`) = fallback/referencia, NO el MCP activo.
 > **Los cambios nuevos van a v4/Rust. No ampliar v3 salvo bugs críticos.**
+>
+> **v4.4.1 (2026-08-07)**: `visual/capture` + `visual/node` YA NO devuelven 2×2 px.
+> Render OFF-SCREEN de la ESCENA real en SubViewport dedicado (`source:"scene"` default,
+> framing replicado de la cámara del editor) o viewport del editor (`source:"viewport"`,
+> fallback automático a scene si da 2×2). Dispatcher/editor_plugin con soporte de handlers
+> coroutine (`await`). Schema `visual` expone `source`. Verificado: `--check-only` + grafo
+> completo headless sin errores, 24+2+1 tests Rust OK, clippy limpio, release 9.4MB.
 >
 > **v4.4 (2026-08-06)**: **Plugin SIEMPRE ENCENDIDO + actualización inteligente**.
 > - `enable_plugin_in_project` **IDEMPOTENTE y NORMALIZADORA**: reemplaza cualquier `enabled=` en `[editor_plugins]`
@@ -73,8 +80,8 @@ Biblia para agentes que operan Heren MCP. Léelo antes de tocar código.
 | `ascii` | ✅ árbol completo |
 | `summary` | ⚠️ by_type OK, node_count:0 |
 | `coords` | ❌ solo 3 nodos, paths ".." (incompleto) |
-| `capture` | ❌ imagen **2×2 px** (viewport 2D no renderiza la escena) |
-| `node` | ❌ 2×2 px + pos (0,0) incorrecta |
+| `capture` | ✅ **escena off-screen** (SubViewport dedicado; `source: "scene"` default) con framing de la cámara del editor; `source: "viewport"` fallback automático si da 2×2 |
+| `node` | ✅ igual que capture (escena off-screen) + bbox/pos correctos |
 | `budget` | ❌ **handler `handle_vision_budget` NO existe** en el plugin |
 | `cache` | ❌ **handler `handle_vision_cache` NO existe** en el plugin |
 
@@ -234,14 +241,14 @@ NIVEL 3: visual_capture full + visual_node (framing)            ~800+ tok
 | `coords` | ~20-100 tok | Mapa de coordenadas de la escena (textual) |
 | `summary` | ~50 tok | Contador por tipo, bbox total, dirty flags |
 | `ascii` | ~150 tok | Árbol ASCII colapsado/expandido |
-| `capture` | alto | **`Image` base64 MCP** — viewport 2D/3D real + metadatos |
-| `node` | alto | `Image` enfocada en un nodo (framing) |
+| `capture` | alto | **`Image` base64 MCP** — **escena OFF-SCREEN** (SubViewport dedicado; `source:"scene"` default, framing de la cámara del editor) o viewport del editor (`source:"viewport"`, fallback auto si da 2×2) + metadatos |
+| `node` | alto | `Image` de la escena (misma fuente que capture) + bbox/pos del nodo |
 | `budget` | ~30 tok | Consultar/establecer presupuesto de tokens |
 | `cache` | ~30 tok | Ver/limpiar cache de visión |
 
 **Formato captura:** `{"image": <base64 PNG — image_content MCP, NO path>, "metadata": {tokens_estimate, resolution, viewport, scene_hash, cached, node_count, selected}}`.
 
-**Implementación:** `visual_handlers.gd`: `get_editor_viewport_2d/3d()` → `.get_texture().get_image()` → `save_png_to_buffer()` → `Marshalls.raw_to_base64()`. `ws_client.gd` pasa `__image_base64` + `__image_format`. Eventos push (`selection_changed` via `_edit()`, rate-limit 1/s).
+**Implementación (2026-08-07):** `visual_handlers.gd` ya NO usa `get_editor_viewport_2d/3d().get_texture().get_image()` (devuelve 2×2, placeholder): `_render_scene_offscreen()` clona el root sin scripts en un `SubViewport` dedicado (UPDATE_ALWAYS, World3D propio en 3D, transparent en 2D), replica el framing de la cámara del editor (`get_camera_2d/3d`), `await` 2× `RenderingServer.frame_post_draw` y captura. `source:"scene"` (default) | `source:"viewport"` (editor, con fallback automático a scene si la imagen sale 2×2). Dispatcher/editor_plugin soportan handlers coroutine (`await`). `ws_client.gd` pasa `__image_base64` + `__image_format`. Eventos push (`selection_changed` via `_edit()`, rate-limit 1/s).
 
 ---
 
@@ -415,6 +422,7 @@ Esto da al agente **conocimiento espacial completo** sin llamadas extra. Benefic
 | 2026-08-06 | **Godot NO tiene hot-reload de plugins** | Issue oficial #11612. El EditorPlugin solo se re-instancia con `Project > Reload Current Project` o re-habilitándolo. Por eso la actualización de código del plugin requiere `session/reopen` — pero solo cuando `plugin_changed=true`, no en cada open. |
 | 2026-08-06 | **Sub-recursos inline viajan COMPLETOS en serialize_value (StyleBoxFlat/Theme)** | Un recurso SIN `resource_path` (StyleBoxFlat dentro de un Theme .tres, Curve/Gradient en ParticleProcessMaterial) caía a la rama `else` de `serialize_value` → se devolvía el objeto Godot crudo → el JSON no representaba `bg_color`/`border_color` → al `resource/update` se perdían (negro). **Fix**: `serialize_value` serializa inline `{"__type":"Resource","resource_class":X,"props":{...}}` con el MISMO filtro STORAGE que `_serialize_resource_props`; `deserialize_value` rama Resource maneja `resource_class`+`props`; `deserialize_resource` acepta `resource_class` y aplica props desde `props` (recursivo + `deserialize_typed` + `_wrap_curve_gradient` + `ensure_resource_local_recursive`). E2E: Theme → `Panel/styles/panel` con `bg=(0.02,0.03,0.025,0.85)` sobrevive serialize→deserialize→save→reload. Commit `9872546`. |
 | 2026-08-07 | **Rediseño persistencia: dirty tracking + flush-before-destroy + error en cierre inesperado** | **3 reglas** (implementadas en FlojoMCP `66812e8`→pendiente): (1) **Dirty set por proyecto** en `registry.rs` (`mark_dirty`/`clean_dirty`/`dirty_scenes`): las mutaciones (`node/*` escritura, `animation/*` escritura, `shader/*` escritura, `signal/*` conexión, `tilemap/*` set) marcan la escena; `scene/save` la limpia; `session/info` y `session/open` exponen `dirty_scenes`. Lecturas (get/inspect/validate/list) NO marcan. (2) **Flush-before-destroy**: `scene/open` de una escena dirty hace `scene/save` ANTES de abrir (no pierde la versión en RAM); `session/close` flushea todas las dirty antes de matar el editor. (3) **Cierre inesperado = ERROR**: si el WS cae sin `session/close`, `mark_unexpected_close` guarda las dirty y TODAS las tools del proyecto fallan con `editor_closed_unexpectedly: el editor se cerró sin session/close; había N escenas con cambios sin guardar: ...` hasta `session/open` (fail-fast, nunca silencio). `session/close` marca `graceful_close` para que la desconexión NO marque error. 4 tests nuevos (24/24 OK). Costo: ~0ms por mutación (insert HashSet) + ~20ms solo en flush. |
+| 2026-08-07 | **visual/capture: render OFF-SCREEN de la ESCENA, NO del viewport del editor** | `get_editor_viewport_2d/3d().get_texture().get_image()` devuelve el placeholder **2×2** (la textura del editor no es un render target accesible) → capturas inservibles. Fix: `_render_scene_offscreen()` en `visual_handlers.gd` — clona el root sin scripts (`duplicate(DUPLICATE_GROUPS)`), lo mete en un `SubViewport` dedicado (`UPDATE_ALWAYS`; `own_world_3d`+Environment BG_COLOR en 3D, `transparent_bg` en 2D), replica el framing del editor (`get_camera_2d/3d()` → cámara nueva en el clon), `await` 2× `RenderingServer.frame_post_draw`, captura y `queue_free`. **`source`**: `"scene"` (default, fiable) | `"viewport"` (editor: gizmos/grid/selección, con fallback automático a scene si sale 2×2). Animación (`animation:` seek) se aplica al player del CLON (escena real intacta) o al real en viewport. **Soporte coroutine en dispatcher**: `dispatcher.execute` completa `GDScriptFunctionState` (detectado por `get_class()`, NO `is` — no es tipo usable en Godot 4) + `editor_plugin._on_tool_invoke` hace `await`. Handlers con `await` = Handler coroutine. Verificado: `--check-only` 3 scripts + grafo completo headless 0 errores; 24+2+1 tests Rust (schema `visual.source`); clippy limpio; release 9.4MB; binario responde initialize+tools/list. |
 
 ---
 

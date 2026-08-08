@@ -270,7 +270,7 @@ func _on_error(message: String) -> void:
 func _on_tool_invoke(request_id: String, tool_name: String, args: Dictionary) -> void:
 	if _dispatcher == null or _ws_client == null:
 		return
-	var result: Dictionary = _dispatcher.execute(tool_name, args)
+	var result: Dictionary = await _dispatcher.execute(tool_name, args)
 	var success: bool = result.get("ok", false)
 	if success:
 		var payload: Dictionary = result.duplicate(true)

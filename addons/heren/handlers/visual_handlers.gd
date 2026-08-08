@@ -167,13 +167,25 @@ func _ascii_build(node: Node, prefix: String, is_last: bool, depth: int, lines: 
 
 # ---------------------------------------------------------------- NIVEL 2/3: capture
 
-func _capture_viewport(viewport: Viewport) -> Dictionary:
-	if viewport == null:
+# ---------------------------------------------------------------- captura
+# Fix 2026-08-07: el viewport del EDITOR devuelve 2x2 (placeholder) con
+# get_texture().get_image() → captura inservible. Render off-screen de la
+# ESCENA en un SubViewport dedicado = fiable. `source: scene|viewport`.
+
+const OFFSCREEN_SIZE := Vector2i(1280, 720)
+
+
+func _is_tiny_image(img: Image) -> bool:
+	# El placeholder 2x2 de un render target no renderizado es inservible.
+	return img == null or (img.get_width() <= 2 and img.get_height() <= 2)
+
+
+func _encode_image(img: Image, max_side: int) -> Dictionary:
+	if _is_tiny_image(img):
 		return {}
-	var img: Image = viewport.get_texture().get_image()
-	if img == null:
-		return {}
-	# Flip: viewport texture es Y-invertida en Godot 4.
+	if max_side > 0:
+		img = _resize_image(img, max_side)
+	# Flip: la textura del viewport es Y-invertida en Godot 4.
 	img.flip_y()
 	var png := img.save_png_to_buffer()
 	if png.is_empty():
@@ -184,6 +196,118 @@ func _capture_viewport(viewport: Viewport) -> Dictionary:
 		"__image_w": img.get_width(),
 		"__image_h": img.get_height(),
 	}
+
+
+# Captura el viewport REAL del editor (lo que el usuario ve: gizmos, grid,
+# selección). Puede devolver {} (2x2) si el editor no expone su render target
+# → el caller hace fallback a scene.
+func _capture_editor_viewport(ei: EditorInterface, mode: String, max_side: int, anim_info: Dictionary, root: Node) -> Dictionary:
+	var viewport: Viewport = null
+	if mode == "3d":
+		viewport = ei.get_editor_viewport_3d()
+	else:
+		viewport = ei.get_editor_viewport_2d()
+	if viewport == null:
+		return {}
+	# P1: seek del AnimationPlayer REAL antes de capturar (el editor muestra
+	# el frame concreto; el off-screen lo hace sobre el clon, escena intacta).
+	if not anim_info.is_empty() and root != null:
+		var player := _resolve_animation_player(root, anim_info.get("player_path", ""))
+		if player != null:
+			var anim_name: String = str(anim_info.get("anim_name", ""))
+			if anim_name == "" or player.has_animation(anim_name):
+				if anim_name != "":
+					player.current_animation = anim_name
+				player.seek(float(anim_info.get("time", 0.0)), true)
+				player.pause()
+	RenderingServer.force_draw(true)
+	var img: Image = viewport.get_texture().get_image()
+	return _encode_image(img, max_side)
+
+
+# Render OFF-SCREEN de la ESCENA real (no el viewport del editor): SubViewport
+# dedicado, clon del root sin scripts, framing replicado de la cámara del
+# editor (2D/3D). Fiable siempre; no depende del estado del editor.
+func _render_scene_offscreen(ei: EditorInterface, root: Node, mode: String, max_side: int, anim_info: Dictionary) -> Dictionary:
+	if root == null:
+		return {}
+	var is_3d := mode == "3d"
+	var size := OFFSCREEN_SIZE
+	var max_side_opt := max_side if max_side > 0 else 2048
+	if max(size.x, size.y) > max_side_opt:
+		var scale := float(max_side_opt) / float(max(size.x, size.y))
+		size = Vector2i(max(64, int(size.x * scale)), max(64, int(size.y * scale)))
+	var svp := SubViewport.new()
+	svp.size = size
+	svp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	if is_3d:
+		svp.own_world_3d = true
+		svp.world_3d = World3D.new()
+		var env := Environment.new()
+		env.background_mode = Environment.BG_COLOR
+		env.background_color = Color(0.11, 0.12, 0.14)
+		svp.world_3d.environment = env
+	else:
+		svp.transparent_bg = true
+
+	var clone := root.duplicate(Node.DUPLICATE_GROUPS)
+	if clone == null:
+		return {}
+	# Replicar el framing de la cámara del editor sobre el clon.
+	_fit_camera(ei, clone, is_3d)
+	# P1: animación → seek al player del CLON (la escena real intacta).
+	_apply_anim_to_clone(root, clone, anim_info)
+	get_tree().root.add_child(svp)
+	svp.add_child(clone)
+
+	# Esperar a que el renderer dibuje al menos 2 frames del SubViewport.
+	RenderingServer.force_draw(true)
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+
+	var img: Image = svp.get_texture().get_image()
+	var out := _encode_image(img, max_side)
+	svp.queue_free()
+	return out
+
+
+func _fit_camera(ei: EditorInterface, clone: Node, is_3d: bool) -> void:
+	if is_3d:
+		var vp3 := ei.get_editor_viewport_3d()
+		var cam := vp3.get_camera_3d() if vp3 != null else null
+		var new_cam := Camera3D.new()
+		if cam != null:
+			new_cam.global_transform = cam.global_transform
+		else:
+			new_cam.transform = Transform3D(Basis(), Vector3(0, 2, 8))
+		new_cam.current = true
+		clone.add_child(new_cam)
+	else:
+		var vp2 := ei.get_editor_viewport_2d()
+		var cam2d := vp2.get_camera_2d() if vp2 != null else null
+		if cam2d != null:
+			var new_cam := Camera2D.new()
+			new_cam.global_transform = cam2d.global_transform
+			new_cam.zoom = cam2d.zoom
+			new_cam.make_current()
+			clone.add_child(new_cam)
+
+
+func _apply_anim_to_clone(root: Node, clone: Node, anim_info: Dictionary) -> void:
+	if anim_info.is_empty():
+		return
+	var player := _resolve_animation_player(root, anim_info.get("player_path", ""))
+	if player == null:
+		return
+	var rel := root.get_path_to(player)
+	var player_clone: AnimationPlayer = clone.get_node_or_null(rel) as AnimationPlayer
+	if player_clone == null:
+		return
+	var anim_name: String = str(anim_info.get("anim_name", ""))
+	if anim_name != "" and player_clone.has_animation(anim_name):
+		player_clone.current_animation = anim_name
+	player_clone.seek(float(anim_info.get("time", 0.0)), true)
+	player_clone.pause()
 
 
 func _resize_image(img: Image, max_side: int) -> Image:
@@ -204,52 +328,32 @@ func handle_capture(args: Dictionary) -> Dictionary:
 		return {"ok": false, "error": "no editor interface"}
 	var mode: String = str(args.get("viewport", "2d"))
 	var max_side: int = int(args.get("max_side", 0))
-	var viewport: Viewport = null
-	if mode == "3d":
-		viewport = ei.get_editor_viewport_3d()
-	else:
-		viewport = ei.get_editor_viewport_2d()
-	if viewport == null:
-		return {"ok": false, "error": "viewport not available: " + mode}
-
-	# P1: si se pasa `animation` {player_path, anim_name, time}, hacer seek
-	# ANTES de capturar — el agente ve un frame concreto sin llamadas extra.
+	var source: String = str(args.get("source", "scene"))
+	if source != "scene" and source != "viewport":
+		source = "scene"
 	var anim_info: Dictionary = _args_dict(args, "animation")
-	if not anim_info.is_empty():
-		var root := _scene_root(args)
-		if root != null:
-			var player := _resolve_animation_player(root, anim_info.get("player_path", ""))
-			if player != null:
-				var anim_name: String = str(anim_info.get("anim_name", ""))
-				if anim_name == "" or player.has_animation(anim_name):
-					if anim_name != "":
-						player.current_animation = anim_name
-					player.seek(float(anim_info.get("time", 0.0)), true)
-					player.pause()
-
-	# Forzar sync de rendering antes de capturar.
-	RenderingServer.force_draw(true)
-
-	var img: Image = viewport.get_texture().get_image()
-	if img == null:
-		return {"ok": false, "error": "capture failed: no image from viewport"}
-	img.flip_y()
-	if max_side > 0:
-		img = _resize_image(img, max_side)
-	var png := img.save_png_to_buffer()
-	if png.is_empty():
-		return {"ok": false, "error": "capture failed: png encode"}
 	var root := _scene_root(args)
+
+	var img_result: Dictionary = {}
+	var used_source := source
+	if source == "viewport":
+		img_result = await _capture_editor_viewport(ei, mode, max_side, anim_info, root)
+		if img_result.is_empty():
+			# El viewport del editor no expone render target (2x2) → escena.
+			used_source = "scene"
+			img_result = await _render_scene_offscreen(ei, root, mode, max_side, anim_info)
+	else:
+		img_result = await _render_scene_offscreen(ei, root, mode, max_side, anim_info)
+	if img_result.is_empty():
+		return {"ok": false, "error": "capture failed: no image (source: " + used_source + ")"}
 	var out := {
 		"ok": true,
 		"viewport": mode,
-		"__image_base64": Marshalls.raw_to_base64(png),
-		"__image_format": "png",
-		"__image_w": img.get_width(),
-		"__image_h": img.get_height(),
+		"source": used_source,
 		"scene": root.name if root else "",
 		"node_count": root.get_child_count() + 1 if root else 0,
 	}
+	out.merge(img_result)
 	if not anim_info.is_empty():
 		out["animation"] = {
 			"player_path": anim_info.get("player_path", ""),
@@ -292,35 +396,34 @@ func handle_capture_node(args: Dictionary) -> Dictionary:
 	if node == null:
 		return {"ok": false, "error": "node_not_found: " + node_path}
 
-	# La captura se hace del viewport 2D/3D; el framing es metadato de bbox.
+	# Captura de la escena (off-screen) o del viewport del editor; el framing
+	# del nodo es metadato de bbox/pos.
 	var mode: String = str(args.get("viewport", "2d"))
 	var max_side: int = int(args.get("max_side", 0))
-	var viewport: Viewport = null
-	if mode == "3d":
-		viewport = ei.get_editor_viewport_3d()
+	var source: String = str(args.get("source", "scene"))
+	if source != "scene" and source != "viewport":
+		source = "scene"
+	var img_result: Dictionary = {}
+	var used_source := source
+	if source == "viewport":
+		img_result = await _capture_editor_viewport(ei, mode, max_side, {}, root)
+		if img_result.is_empty():
+			used_source = "scene"
+			img_result = await _render_scene_offscreen(ei, root, mode, max_side, {})
 	else:
-		viewport = ei.get_editor_viewport_2d()
-	if viewport == null:
-		return {"ok": false, "error": "viewport not available: " + mode}
-	RenderingServer.force_draw(true)
-	var img: Image = viewport.get_texture().get_image()
-	if img == null:
+		img_result = await _render_scene_offscreen(ei, root, mode, max_side, {})
+	if img_result.is_empty():
 		return {"ok": false, "error": "capture failed"}
-	img.flip_y()
-	if max_side > 0:
-		img = _resize_image(img, max_side)
-	var png := img.save_png_to_buffer()
-	return {
+	var out := {
 		"ok": true,
 		"node_path": node_path,
 		"viewport": mode,
-		"__image_base64": Marshalls.raw_to_base64(png),
-		"__image_format": "png",
-		"__image_w": img.get_width(),
-		"__image_h": img.get_height(),
+		"source": used_source,
 		"bbox": _node_bbox(node),
 		"pos": _node_pos(node),
 	}
+	out.merge(img_result)
+	return out
 
 
 # ---------------------------------------------------------------- previews
