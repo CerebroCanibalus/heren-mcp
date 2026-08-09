@@ -200,8 +200,9 @@ func handle_is_playing(args: Dictionary) -> Dictionary:
 
 func handle_get_editor_errors(args: Dictionary) -> Dictionary:
 	# v4.5: errores de RUNTIME capturados del debugger (mensaje `error` con
-	# stack trace). Los errores del editor en reposo (sin juego) no son
-	# accesibles por API pública — ver nota en get_editor_errors de v4.
+	# stack trace + `output` con el texto formateado del panel Output).
+	# Los errores del editor en reposo (sin juego) no son accesibles por API
+	# pública — ver nota en get_editor_errors de v4.
 	if _dbg_plugin == null:
 		return {
 			"ok": true,
@@ -214,9 +215,41 @@ func handle_get_editor_errors(args: Dictionary) -> Dictionary:
 	var errors: Array = _dbg_plugin.last_errors
 	if errors.size() > limit:
 		errors = errors.slice(errors.size() - limit)
+	# output_errors: texto formateado `E hh:mm:ss:mmm file:line @ func(): msg`
+	# + stack — EXACTAMENTE lo que muestra el panel Output del editor.
+	var output_errors: Array = _dbg_plugin.last_output_errors
+	if output_errors.size() > limit:
+		output_errors = output_errors.slice(output_errors.size() - limit)
 	return {
 		"ok": true,
 		"errors": errors,
 		"count": _dbg_plugin.last_errors.size(),
-		"note": "errores de runtime capturados del depurador (mensaje error, con stack). Los del editor en reposo no son accesibles por API pública.",
+		"output_errors": output_errors,
+		"output_count": _dbg_plugin.last_output_errors.size(),
+		"hook_ok": _dbg_plugin._hooked,
+		"note": "errores de runtime del depurador: errors = estructurados (mensaje error), output_errors = texto del panel Output (mensaje output, level=2). Los del editor en reposo no son accesibles por API pública.",
+	}
+
+
+func handle_output(args: Dictionary) -> Dictionary:
+	# v4.5: salida del panel Output del juego en ejecución (print + errores
+	# formateados `E hh:mm:ss:mmm`). filter: all|error (default error).
+	if _dbg_plugin == null:
+		return {"ok": false, "error": "debugger plugin not registered"}
+	_dbg_plugin.ensure_hooked()
+	var filter := str(args.get("filter", "error"))
+	var limit := int(args.get("limit", 100))
+	var lines: Array = []
+	if filter == "all":
+		lines = _dbg_plugin.last_output
+	else:
+		lines = _dbg_plugin.last_output_errors
+	if lines.size() > limit:
+		lines = lines.slice(lines.size() - limit)
+	return {
+		"ok": true,
+		"filter": filter,
+		"lines": lines,
+		"count": lines.size(),
+		"hook_ok": _dbg_plugin._hooked,
 	}

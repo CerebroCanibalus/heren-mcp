@@ -22,8 +22,10 @@ extends EditorDebuggerPlugin
 
 var _editor_plugin: EditorPlugin
 var _session_ids: Array[int] = []
-var _default_debugger: Node = null
+var _hooked_debuggers: Array = []  # ScriptEditorDebugger ya conectados (multi-sesión)
 var _hooked: bool = false
+var _hook_retries: int = 0
+var _hook_timer: SceneTreeTimer = null
 
 # --- Breakpoints registrados por el agente (key "path:line") -------------
 var breakpoints: Dictionary = {}
@@ -36,11 +38,13 @@ var last_vars: Array = []
 var vars_pending: bool = false
 var last_errors: Array = []
 var last_output: Array = []
+var last_output_errors: Array = []  # SOLO líneas de error (level==2) del output
 var profiler_running: bool = false
 var profiler_frames: Array = []
 var _sig_map: Dictionary = {}  # sig_id -> "path::function"
 
 const MAX_BUFFER := 200
+const HOOK_MAX_RETRIES := 30  # 30s a 1s/retry: el dock puede montarse al primer play
 
 
 func setup(plugin: EditorPlugin) -> void:
@@ -207,13 +211,33 @@ func _on_session_stopped(_session_id: int) -> void:
 # ---------------------------------------------------- captura ScriptEditorDebugger
 
 func _hook_default_debugger() -> void:
-	if _hooked:
-		return
+	# Conecta a TODOS los ScriptEditorDebugger del TabContainer del dock
+	# "Debugger" (multi-sesión, no solo tab 0). Si el dock aún no está
+	# montado, programa reintentos (HOOK_MAX_RETRIES × 1s) — el dock se
+	# monta al primer play o al abrir el panel inferior.
 	var dbg := _find_default_debugger()
 	if dbg == null:
+		if _hook_retries < HOOK_MAX_RETRIES:
+			_hook_retries += 1
+			if _hook_timer == null:
+				_hook_timer = _editor_plugin.get_tree().create_timer(1.0)
+				_hook_timer.timeout.connect(_on_hook_retry)
 		return
 	_hooked = true
-	_default_debugger = dbg
+	for child in dbg.get_children():
+		if child.is_class("ScriptEditorDebugger"):
+			_hook_one(child)
+
+
+func _on_hook_retry() -> void:
+	_hook_timer = null
+	_hook_default_debugger()
+
+
+func _hook_one(dbg: Node) -> void:
+	if dbg in _hooked_debuggers:
+		return
+	_hooked_debuggers.append(dbg)
 	if not dbg.is_connected("debug_data", _on_debug_data):
 		dbg.connect("debug_data", _on_debug_data)
 
@@ -221,7 +245,7 @@ func _hook_default_debugger() -> void:
 func _find_default_debugger() -> Node:
 	# El run local usa la primera sesión inactiva del dock "Debugger"
 	# (EditorDebuggerNode, tab 0 = get_default_debugger()). Localizarla por
-	# árbol: dock class EditorDebuggerNode → TabContainer → primer hijo.
+	# árbol: dock class EditorDebuggerNode → TabContainer → hijo.
 	if _editor_plugin == null:
 		return null
 	var root := _editor_plugin.get_editor_interface().get_base_control()
@@ -237,10 +261,7 @@ func _find_default_debugger() -> Node:
 			break
 	if tabs == null or tabs.get_child_count() == 0:
 		return null
-	var dbg := tabs.get_child(0)
-	if dbg == null or not dbg.is_class("ScriptEditorDebugger"):
-		return null
-	return dbg
+	return tabs
 
 
 func _find_class(node: Node, cls: String) -> Node:
@@ -402,9 +423,19 @@ func _store_output(data: Array) -> void:
 	if not (msgs is PackedStringArray) or not (types is PackedInt32Array):
 		return
 	for i in msgs.size():
-		last_output.append({"text": msgs[i], "level": int(types[i])})
+		var text: String = msgs[i]
+		var level: int = int(types[i])
+		# El formato `E hh:mm:ss:mmm ...` del panel Output del editor viene del
+		# RemoteDebugger con MESSAGE_TYPE_ERROR (2) — son los errores de runtime
+		# del juego con stack completo. MESSAGE_TYPE_LOG=0, LOG_RICH=1, ERROR=2.
+		var entry := {"text": text, "level": level}
+		last_output.append(entry)
+		if level == 2:
+			last_output_errors.append(entry)
 	if last_output.size() > MAX_BUFFER:
 		last_output = last_output.slice(last_output.size() - MAX_BUFFER)
+	if last_output_errors.size() > MAX_BUFFER:
+		last_output_errors = last_output_errors.slice(last_output_errors.size() - MAX_BUFFER)
 
 
 func _jsonable(v) -> Variant:
