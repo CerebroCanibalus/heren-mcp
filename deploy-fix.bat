@@ -15,7 +15,11 @@ if not exist "%SRC%" (
 )
 
 echo [1/2] Renombrando binario en uso (los procesos activos siguen con su imagen)...
-if exist "%DST%.old" del /f /q "%DST%.old" > nul 2>&1
+rem Cadena de rename: .old2 limpio -> .old -> .old2 ; exe vivo -> .old ; copia nueva.
+rem (el .old anterior puede estar BLOQUEADO por un server vivo -> renombrarlo a .old2
+rem  en vez de borrarlo; Windows permite renombrar archivos en uso.)
+if exist "%DST%.old2" del /f /q "%DST%.old2" > nul 2>&1
+if exist "%DST%.old" ren "%DST%.old" "heren-server.exe.old2" > nul 2>&1
 ren "%DST%" "heren-server.exe.old"
 if errorlevel 1 (
     echo [ERROR] No se pudo renombrar %DST%

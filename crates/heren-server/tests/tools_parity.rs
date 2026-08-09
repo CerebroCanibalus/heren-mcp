@@ -4,11 +4,14 @@
 use flojo_mcp::prelude::*;
 use heren_server::Heren;
 
-/// Lista de tools esperadas (paridad con `src/heren/v4/bridge.py`).
+/// Lista de tools esperadas (paridad con `src/heren/v4/bridge.py` + v4.6 split).
+/// v4.6: `visual` → `visual_text` + `visual_image`; `node` → `node` + `node_query` + `node_props`.
 const EXPECTED_TOOLS: &[&str] = &[
     "session",
     "scene",
     "node",
+    "node_query",
+    "node_props",
     "resource",
     "project",
     "shader",
@@ -19,7 +22,8 @@ const EXPECTED_TOOLS: &[&str] = &[
     "validate",
     "signal",
     "orchestrate",
-    "visual",
+    "visual_text",
+    "visual_image",
     "health",
 ];
 

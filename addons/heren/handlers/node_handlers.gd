@@ -3,11 +3,11 @@ extends Node
 
 # Heren MCP v4 - Node handlers (Fase 2).
 # CRUD completo de nodos sobre la escena VIVA del editor (ADR-002):
-# la escena editada es el cache — no hay scene_cache aparte.
+# la escena editada es el cache â€” no hay scene_cache aparte.
 # Todas las mutaciones pasan por EditorUndoRedoManager (Ctrl+Z undoable).
 #
 # Actions (heredadas de v3 node_tool.py, sin session_id/scene_path:
-# el editor ya sabe en qué escena está):
+# el editor ya sabe en quÃ© escena estÃ¡):
 #   add, remove, set_prop, set_props, get_prop, get_info, get_children,
 #   find, duplicate, rename, move, set_owner, reorder,
 #   array_append, array_remove
@@ -36,7 +36,7 @@ func _scene_root(args: Dictionary = {}) -> Node:
 	var ei := _editor_interface()
 	if ei == null:
 		return null
-	# Registry (escena creada por MCP en memoria) → pestaña → disco.
+	# Registry (escena creada por MCP en memoria) â†’ pestaÃ±a â†’ disco.
 	return HerenSceneRegistryScript.resolve_root(ei, str(args.get("scene_path", "")))
 
 
@@ -49,6 +49,30 @@ func _resolve_node(root: Node, node_path: Variant) -> Node:
 	if normalized == "":
 		return null
 	return root.get_node_or_null(NodePath(normalized))
+
+
+## v4.6 (orientaciÃ³n continua): si `node_path` no resuelve, devuelve los hijos
+## del padre MÃS CERCANO resoluble â€” el agente se recupera sin llamada extra.
+func _not_found_hint(root: Node, node_path: Variant) -> Dictionary:
+	var hint := {"ok": false, "error": "node_not_found: " + str(node_path)}
+	if root == null or node_path == null:
+		return hint
+	var normalized := HerenCoordsScript.normalize_node_path(node_path, root)
+	if normalized == "" or normalized == ".":
+		return hint
+	# Recortar segmentos de atrÃ¡s hasta encontrar un padre resoluble.
+	var segments := normalized.split("/")
+	while segments.size() > 1:
+		segments.pop_back()
+		var parent := root.get_node_or_null(NodePath("/".join(segments)))
+		if parent != null:
+			var children: Array = []
+			for child in parent.get_children():
+				children.append(_node_path_relative(child, root))
+			hint["parent"] = _node_path_relative(parent, root)
+			hint["parent_children"] = children
+			return hint
+	return hint
 
 
 func _node_path_relative(node: Node, root: Node) -> String:
@@ -89,7 +113,7 @@ func _get_children_list(root: Node, node: Node, recursive: bool, out: Array, dep
 			"type": child.get_class(),
 			"path": _node_path_relative(child, root),
 		}
-		# owner vacío es el caso común → omitirlo (ahorra ~10B/nodo en listas grandes)
+		# owner vacÃ­o es el caso comÃºn â†’ omitirlo (ahorra ~10B/nodo en listas grandes)
 		var owner_path := _node_path_relative(child.get_owner(), root) if child.get_owner() else ""
 		if owner_path != "":
 			entry["owner"] = owner_path
@@ -127,9 +151,16 @@ func handle_add(args: Dictionary) -> Dictionary:
 
 	# Apply properties (deserialized via unified coords).
 	var properties := _args_dict(args, "properties")
+	var inline_warnings: Array[String] = []
 	for prop_name in properties.keys():
 		if prop_name in node:
-			node.set(prop_name, HerenCoordsScript.deserialize_value(properties[prop_name]))
+			var raw_value: Variant = properties[prop_name]
+			var prop_value: Variant = HerenCoordsScript.deserialize_value(raw_value)
+			if prop_value is Resource and prop_value.resource_path == "" \
+					and raw_value is Dictionary and raw_value.get("__type", "") == "Resource":
+				# v4.6: recurso inline â†’ se incrustarÃ¡ al guardar (sub_resource).
+				inline_warnings.append("resource_incrusted_inline: %s â€” pasa path string (res://...) para ext_resource" % prop_name)
+			node.set(prop_name, prop_value)
 
 	# Optional script.
 	if args.has("script") and str(args.get("script", "")) != "":
@@ -153,20 +184,21 @@ func handle_add(args: Dictionary) -> Dictionary:
 		"node_path": _node_path_relative(node, root),
 		"count": _count_scene_nodes(root),
 		"coords": _node_coords(node, root),
+		"inline_resources": inline_warnings,
 	}
 
 
 # ------------------------------------------------------------- coords proactivas
-# §13.6 NIVEL 0: cada mutación devuelve las coordenadas del nodo afectado
+# Â§13.6 NIVEL 0: cada mutaciÃ³n devuelve las coordenadas del nodo afectado
 # (pos + bbox + parent + size/height/scale/rotation/visible) para que el
-# agente sepa DÓNDE y CUÁNTO quedó sin llamada extra (§9.4 coords enriquecidas).
+# agente sepa DÃ“NDE y CUÃNTO quedÃ³ sin llamada extra (Â§9.4 coords enriquecidas).
 
 func _node_coords(node: Node, root: Node) -> Dictionary:
 	var out := {
 		"parent_path": _node_path_relative(node.get_parent(), root) if node.get_parent() else "",
 		"visible": node.is_visible_in_tree() if node is Node and node.has_method("is_visible_in_tree") else true,
 	}
-	# Posición + transformación (2D y 3D) + scale + rotation en grados (legible).
+	# PosiciÃ³n + transformaciÃ³n (2D y 3D) + scale + rotation en grados (legible).
 	if node is CanvasItem:
 		var ci := node as CanvasItem
 		out["pos"] = HerenCoordsScript.serialize_value(ci.global_position, true)
@@ -286,7 +318,7 @@ func handle_remove(args: Dictionary) -> Dictionary:
 
 	var node := _resolve_node(root, node_path)
 	if node == null:
-		return {"ok": false, "error": "node_not_found: " + str(node_path)}
+		return _not_found_hint(root, node_path)
 	if node == root:
 		return {"ok": false, "error": "cannot_remove_root"}
 
@@ -323,7 +355,7 @@ func handle_set_prop(args: Dictionary) -> Dictionary:
 
 	var node := _resolve_node(root, node_path)
 	if node == null:
-		return {"ok": false, "error": "node_not_found: " + str(node_path)}
+		return _not_found_hint(root, node_path)
 	if property not in node:
 		return {"ok": false, "error": "property_not_found: " + property}
 
@@ -334,6 +366,12 @@ func handle_set_prop(args: Dictionary) -> Dictionary:
 			prop_type = int(prop.type)
 			break
 	var new_value: Variant = HerenCoordsScript.deserialize_typed(args.get("value", null), prop_type, old_value)
+	var warning: String = ""
+	if new_value is Resource and new_value.resource_path == "":
+		# v4.6: recurso inline SIN resource_path â†’ Godot lo INCUSTRA al guardar
+		# (sub_resource). Si el agente querÃ­a referencia externa, debiÃ³ pasar
+		# el path string "res://...". Avisamos, no fallamos.
+		warning = "resource_incrusted_inline: %s â€” pasa un path string (res://...) para referencia externa (ext_resource)" % property
 	if new_value is Resource:
 		HerenCoordsScript.ensure_resource_local_recursive(new_value)
 
@@ -342,7 +380,7 @@ func handle_set_prop(args: Dictionary) -> Dictionary:
 	_undo_redo.add_undo_property(node, property, old_value)
 	_undo_redo.commit_action()
 
-	return {
+	var result := {
 		"ok": true,
 		"node_path": _node_path_relative(node, root),
 		"property": property,
@@ -350,6 +388,9 @@ func handle_set_prop(args: Dictionary) -> Dictionary:
 		"new_value": HerenCoordsScript.serialize_value(new_value, true),
 		"coords": _node_coords(node, root),
 	}
+	if warning != "":
+		result["warning"] = warning
+	return result
 
 
 func handle_set_props(args: Dictionary) -> Dictionary:
@@ -363,7 +404,7 @@ func handle_set_props(args: Dictionary) -> Dictionary:
 
 	var node := _resolve_node(root, node_path)
 	if node == null:
-		return {"ok": false, "error": "node_not_found: " + str(node_path)}
+		return _not_found_hint(root, node_path)
 
 	var applied: Array = []
 	_undo_redo.begin_action("Heren Set Props %s" % node.name)
@@ -395,7 +436,7 @@ func handle_get_prop(args: Dictionary) -> Dictionary:
 
 	var node := _resolve_node(root, node_path)
 	if node == null:
-		return {"ok": false, "error": "node_not_found: " + str(node_path)}
+		return _not_found_hint(root, node_path)
 	if property not in node:
 		return {"ok": false, "error": "property_not_found: " + property}
 
@@ -417,7 +458,7 @@ func handle_get_info(args: Dictionary) -> Dictionary:
 
 	var node := _resolve_node(root, node_path)
 	if node == null:
-		return {"ok": false, "error": "node_not_found: " + str(node_path)}
+		return _not_found_hint(root, node_path)
 
 	var children := []
 	_get_children_list(root, node, false, children)
@@ -444,7 +485,7 @@ func handle_get_children(args: Dictionary) -> Dictionary:
 
 	var node := _resolve_node(root, node_path)
 	if node == null:
-		return {"ok": false, "error": "node_not_found: " + str(node_path)}
+		return _not_found_hint(root, node_path)
 
 	var children := []
 	_get_children_list(root, node, recursive, children)
@@ -470,7 +511,7 @@ func handle_find(args: Dictionary) -> Dictionary:
 	var property_value: Variant = args.get("property_value", null)
 	var results := []
 
-	# Iterative stack traversal (no recursive lambdas — GDScript limitation).
+	# Iterative stack traversal (no recursive lambdas â€” GDScript limitation).
 	var stack: Array[Node] = [root]
 	while not stack.is_empty():
 		var node := stack.pop_back()
@@ -513,7 +554,7 @@ func handle_duplicate(args: Dictionary) -> Dictionary:
 
 	var node := _resolve_node(root, node_path)
 	if node == null:
-		return {"ok": false, "error": "node_not_found: " + str(node_path)}
+		return _not_found_hint(root, node_path)
 	if node == root:
 		return {"ok": false, "error": "cannot_duplicate_root"}
 
@@ -541,8 +582,8 @@ func handle_duplicate(args: Dictionary) -> Dictionary:
 	}
 
 
-## Instancia una escena .tscn (o PackedScene .res) como hijo del árbol.
-## GEN_EDIT_STATE_INSTANCE → el editor la trata como instancia externa editable
+## Instancia una escena .tscn (o PackedScene .res) como hijo del Ã¡rbol.
+## GEN_EDIT_STATE_INSTANCE â†’ el editor la trata como instancia externa editable
 ## (ExtResource en pack, no copia inline). owner = root para que pack() la incluya.
 func handle_instantiate(args: Dictionary) -> Dictionary:
 	var root := _scene_root(args)
@@ -573,7 +614,7 @@ func handle_instantiate(args: Dictionary) -> Dictionary:
 	if node_name != "":
 		instance.name = node_name
 
-	# Propiedades post-instanciación (coords unificadas).
+	# Propiedades post-instanciaciÃ³n (coords unificadas).
 	var properties := _args_dict(args, "properties")
 	for prop_name in properties.keys():
 		if prop_name in instance:
@@ -614,7 +655,7 @@ func handle_rename(args: Dictionary) -> Dictionary:
 
 	var node := _resolve_node(root, node_path)
 	if node == null:
-		return {"ok": false, "error": "node_not_found: " + str(node_path)}
+		return _not_found_hint(root, node_path)
 	var old_name := node.name
 
 	_undo_redo.begin_action("Heren Rename %s" % old_name)
@@ -626,6 +667,7 @@ func handle_rename(args: Dictionary) -> Dictionary:
 		"ok": true,
 		"old_name": old_name,
 		"new_name": new_name,
+		"previous_path": str(node_path),
 		"node_path": _node_path_relative(node, root),
 	}
 
@@ -641,7 +683,7 @@ func handle_move(args: Dictionary) -> Dictionary:
 
 	var node := _resolve_node(root, node_path)
 	if node == null:
-		return {"ok": false, "error": "node_not_found: " + str(node_path)}
+		return _not_found_hint(root, node_path)
 	if node == root:
 		return {"ok": false, "error": "cannot_move_root"}
 
@@ -666,7 +708,9 @@ func handle_move(args: Dictionary) -> Dictionary:
 	return {
 		"ok": true,
 		"node_path": _node_path_relative(node, root),
+		"previous_path": str(node_path),
 		"new_parent": _node_path_relative(new_parent, root),
+		"old_parent": _node_path_relative(old_parent, root),
 	}
 
 
@@ -681,7 +725,7 @@ func handle_set_owner(args: Dictionary) -> Dictionary:
 
 	var node := _resolve_node(root, node_path)
 	if node == null:
-		return {"ok": false, "error": "node_not_found: " + str(node_path)}
+		return _not_found_hint(root, node_path)
 	var owner := _resolve_node(root, owner_path)
 	if owner == null:
 		return {"ok": false, "error": "owner_not_found: " + str(owner_path)}
@@ -712,7 +756,7 @@ func handle_reorder(args: Dictionary) -> Dictionary:
 
 	var node := _resolve_node(root, node_path)
 	if node == null:
-		return {"ok": false, "error": "node_not_found: " + str(node_path)}
+		return _not_found_hint(root, node_path)
 	var parent := node.get_parent()
 	if parent == null:
 		return {"ok": false, "error": "no_parent"}
@@ -742,7 +786,7 @@ func handle_array_append(args: Dictionary) -> Dictionary:
 
 	var node := _resolve_node(root, node_path)
 	if node == null:
-		return {"ok": false, "error": "node_not_found: " + str(node_path)}
+		return _not_found_hint(root, node_path)
 	var current: Variant = node.get(property_name)
 	if current == null or not (current is Array or current is PackedInt32Array):
 		return {"ok": false, "error": "property_not_array: " + property_name}
@@ -775,7 +819,7 @@ func handle_array_remove(args: Dictionary) -> Dictionary:
 
 	var node := _resolve_node(root, node_path)
 	if node == null:
-		return {"ok": false, "error": "node_not_found: " + str(node_path)}
+		return _not_found_hint(root, node_path)
 	var current: Variant = node.get(property_name)
 	if current == null or not (current is Array or current is PackedInt32Array):
 		return {"ok": false, "error": "property_not_array: " + property_name}
