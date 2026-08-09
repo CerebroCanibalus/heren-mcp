@@ -4,24 +4,30 @@ Complete reference for all Heren MCP tools and their actions.
 
 ## Tools Overview
 
-Heren MCP provides **15 centralized tools** that cover all Godot operations:
+Heren MCP provides **18 centralized tools** (v4.6) that cover all Godot operations.
+**Only `action` is required** in every tool — all other args are optional with
+per-action defaults in the plugin (no more `-32602 required` errors).
 
 | Tool | Description | Actions |
 |------|-------------|---------|
-| `session` | Session management | `open`, `close`, `list`, `info`, `health` |
-| `scene` | Scene operations | `get_tree`, `save`, `load`, `unload`, `list_loaded`, `screenshot`, `create`, `delete`, `rename` |
-| `node` | Node operations | `add`, `remove`, `set_prop`, `get_prop`, `duplicate`, `rename`, `move` |
-| `batch` | Batch execution | `execute` |
-| `resource` | Resource management | `create`, `read`, `update`, `delete`, `list` |
-| `animation` | Animations | `create_player`, `create`, `add_track`, `add_key`, `state_machine` |
-| `skeleton` | Skeletons 2D/3D | `create`, `add_bone`, `set_rest`, `skin`, `attachment` |
-| `shader` | Shaders & materials | `create`, `edit`, `validate`, `material`, `uniform` |
+| `session` | Sessions + unified debugger | `open`, `reopen`, `close`, `list`, `info`, `health`, `diagnose` |
+| `scene` | Scenes against the real editor | `get_open_scenes`, `get_edited_scene_root`, `open`, `save`, `create`, `unload` |
+| `node` | Node MUTATIONS | `add`, `instantiate`, `remove`, `duplicate`, `rename`, `move`, `set_owner`, `reorder` |
+| `node_query` | Node READS (no dirty) | `get_info`, `get_children`, `get_prop`, `find` |
+| `node_props` | Node PROPERTIES | `set_prop`, `set_props`, `array_append`, `array_remove` |
+| `resource` | Resources & scripts | `create`, `read`, `update`, `delete`, `list`, `create_script`, `read_script`, `edit_script` |
+| `project` | Project configuration | `create`, `setup_plugin`, `setting` (op get/set/list/delete/set_multi), `autoload`, `remove_autoload`, `input_map`, `shader_global` |
+| `shader` | Shaders & materials | `create`, `edit`, `get`, `inspect`, `validate`, `material`, `uniform`, `apply` |
+| `animation` | Animations | `create_player`, `create`, `add_track`, `add_key`, `state_machine`, `play`, `stop`, `seek`, `speed`, `get_*`, `remove_*`, `update_*`, `one_shot`, `tween`, `record`, `from_path`, `loop_pose`, `preview`, `curve`, `capture_pose`, `tree_*`, `duplicate`, `delete`, `rename`, `reverse`, `blend_pose`, `retarget` |
+| `skeleton` | Skeletons 2D/3D | `skeleton_create`, `skeleton_add_bone`, `skeleton_set_rest`, `skeleton_skin`, `skeleton_attachment`, `skeleton_get_*`, `skeleton_set_pose`, `skeleton_ik`, `skeleton_fabrik`, `capture_pose` |
 | `tilemap` | TileMaps & TileSets | `inspect_set`, `inspect_map`, `set_cell`, `terrain`, `pattern` |
-| `project` | Project configuration | `setting`, `autoload`, `remove_autoload`, `shader_global` |
-| `debug` | Debugging | `breakpoint`, `stack_trace`, `watch`, `console` |
-| `validate` | Validation | `scene`, `script`, `node`, `resource` |
 | `signal` | Node signals | `connect`, `disconnect`, `list`, `set_script` |
-| `global` | Global configuration | `autoload`, `project_setting`, `shader_global` |
+| `validate` | Validation | `scene`, `script`, `node`, `resource` |
+| `debug` | Debugging with real editor | `status`, `breakpoint`, `control`, `stack`, `vars`, `profiler`, `run_scene`, `stop_scene`, `is_playing`, `get_editor_errors`, `output` |
+| `orchestrate` | Batch operations | (multiple ops; `plan` inline or `plan_file`) |
+| `visual_text` | Textual vision (LEVEL 0-1) | `coords`, `summary`, `ascii` |
+| `visual_image` | Image vision (LEVEL 2-3) | `capture`, `node` |
+| `health` | Health check | server + editor status |
 
 
 ---

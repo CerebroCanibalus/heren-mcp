@@ -1,5 +1,56 @@
 # Changelog — Heren MCP
 
+# Changelog - Heren MCP
+
+## [4.6.0] - 2026-08-08 - 🧭 REDISEÑO DEL TOOLSET (fin del laberinto)
+
+### ✅ 18 tools, solo action required
+
+El agente ya no adivina qué args aplican a qué acción: TODOS los parámetros son
+opcionales (Option<>) con defaults por action en el plugin. Antes visual exigía
+clear/viewport en summary; animation exigía 39 requireds; ahora solo action es
+required (verificado en el binario desplegado).
+
+### 🔀 Split de tools (el server mapea al MISMO handler interno - plugin intacto)
+
+- node → node (mutaciones: add/instantiate/remove/duplicate/rename/move/set_owner/reorder)
+  + node_query (lecturas: get_info/get_children/get_prop/find - no marcan dirty)
+  + node_props (props: set_prop/set_props/array_*)
+- visual → visual_text (coords/summary/ascii - NIVEL 0-1, sin imagen)
+  + visual_image (capture/node - NIVEL 2-3, image_content base64)
+- budget/cache ELIMINADOS (handlers inexistentes - eran action fantasma)
+
+### 🔍 Debug con errores reales (verificado contra source Godot 4.7)
+
+- debug/get_editor_errors → errores estructurados + output_errors (texto del
+  panel Output: E hh:mm:ss:mmm file:line @ func(): msg + stack)
+- NUEVA action debug/output (filter=error|all, limit)
+- Hook robusto: reintentos 30x1s + conecta a TODOS los ScriptEditorDebugger
+  (multi-sesión). EditorDebuggerPlugin._capture NO recibe mensajes sin : - el
+  camino real es el signal debug_data (sed.cpp _parse_message).
+
+### 🧭 Orientación continua
+
+- Errores node_not_found incluyen parent_children[] del padre resoluble más
+  cercano - el agente se recupera sin llamada extra.
+- rename/move devuelven previous_path/old_parent.
+
+### 🛡️ Anti-incrustado de recursos
+
+- Recursos inline sin resource_path → warning resource_incrusted_inline en
+  node/add y node_props/set_prop (nunca fallo silencioso).
+- Regla de oro: recursos SIEMPRE por PATH (res://...) para ext_resource.
+
+### 🔧 Otros
+
+- session/diagnose (v4.4.2): debugger unificado - integridad plugin
+  (ok/stale/missing/orphan) + grafo headless en sandbox + estado editor.
+- Fix raíz sync: collect_files preserva prefijo handlers/ (el "plugin
+  up-to-date" mentiroso que dejaba handlers viejos → SCRIPT ERROR).
+- Detección de editor por doble clic (project.godot en cmdline + backslash).
+- deploy-fix.bat con cadena de rename (.old bloqueado → .old2).
+- 32 tests Rust OK, clippy limpio, grafo headless OK.
+
 ## [4.2.0] — 2026-08-04 — 🦀 SERVER RUST (FlojoMCP) + E2E COMPLETO
 
 ### 🏗️ El MCP ahora es Rust

@@ -15,13 +15,13 @@
 
 ---
 
-# ⚡ Heren Godot MCP v4.3
+# ⚡ Heren Godot MCP v4.6
 
 🔥 **Heren Godot MCP** — *Plus Ultra*: ir más allá. 🌍
 
 Servidor MCP de alto rendimiento para **Godot Engine 4.x** que permite a IAs y asistentes controlar el editor real directamente: crear escenas, manipular nodos, gestionar recursos, conectar señales, animar, esqueletos, shaders y validar código. **Todo contra el editor vivo, con Undo/Redo real.**
 
-**📢 v4.3**: MCP 100% **Rust** (7 MB, sin runtime), construido sobre **[FlojoMCP](https://github.com/CerebroCanibalus/flojomcp)** — el framework MCP en Rust de alto rendimiento. Conexión directa al **Editor Godot** mediante un plugin (EditorPlugin) con auto-reconexión y auto-lanzamiento del editor. **v4.3**: `setting` con op get/set/list/delete/set_multi + restart-aware, `input_map` con persistencia real a project.godot (multi-bind, joypad motion), `session/reopen`, instanciación de escenas como nodos hijos, y plugin que se re-sincroniza SIEMPRE al abrir sesión.
+**📢 v4.6**: Toolset rediseñado — **18 tools, solo `action` required** (fin del laberinto de schemas: ya no hay parámetros required absurdos; el agente no adivina). `node` dividida en mutaciones/lecturas/props (`node`/`node_query`/`node_props`), `visual` en textual/imagen (`visual_text`/`visual_image`). **`debug/output` + `get_editor_errors`** exponen los errores de runtime del juego con formato del panel (E hh:mm:ss:mmm + stack). **`session/diagnose`** = debugger unificado (integridad plugin + grafo headless + estado editor). Orientación continua: `node_not_found` devuelve `parent_children[]`, `rename`/`move` devuelven `previous_path`/`old_parent`. Anti-incrustado: recursos inline sin path → warning `resource_incrusted_inline`. 100% **Rust** sobre **[FlojoMCP](https://github.com/CerebroCanibalus/flojomcp)**.
 
 ---
 
@@ -32,8 +32,9 @@ Servidor MCP de alto rendimiento para **Godot Engine 4.x** que permite a IAs y a
 | ⚡ **Server en Rust (FlojoMCP)** | `heren-server.exe` de **~7 MB**, sin Python ni Node.js. Arranque instantáneo, schemas en compile-time |
 | 🎯 **Editor real, no daemon** | Se conecta al **EditorPlugin** dentro del Godot abierto — Undo/Redo, viewports 2D/3D reales, EditorFileSystem |
 | 🔄 **Auto-launch del editor** | `session/open` lanza Godot, instala el plugin, habilita `[editor_plugins]` y espera la conexión WS. Reutiliza el editor abierto; relanza limpio si hay uno zombie |
-| 🛠️ **15 tools centralizadas** | Escenas, nodos, recursos, scripts, señales, animaciones, esqueletos, shaders, tilemaps, validación y debug |
-| 👀 **Sistema de visión** | Jerarquía de costo: coordenadas textuales → resumen/ASCII → captura de los viewports 2D/3D reales del editor, con presupuesto de tokens |
+| 🛠️ **18 tools centralizadas** | Escenas, nodos (mutaciones/lecturas/props), recursos, scripts, señales, animaciones, esqueletos, shaders, tilemaps, validación y debug — **solo `action` required**, schemas sin trampas |
+| 👀 **Sistema de visión** | `visual_text` (coords/summary/ascii, ~20-150 tok) + `visual_image` (capture/nodo, render off-screen de la escena real) — jerarquía de costo sin quemar contexto |
+| 🔍 **Debug real con errores** | `debug/output` + `get_editor_errors` exponen los errores de runtime del juego (formato del panel Output, con stack) + `session/diagnose` para integridad del plugin |
 | ↩️ **Undo/Redo integrado** | Cada mutación pasa por `EditorUndoRedoManager` — Ctrl+Z deshace lo que la IA creó |
 | ⚡ **`orchestrate`** | Ejecuta múltiples operaciones en una sola llamada, con plan en archivo para planes complejos |
 | 🏗️ **Crea proyectos desde cero** | `project/create` genera project.godot + escena main sin necesitar editor |
@@ -62,8 +63,10 @@ Comparamos contra los MCPs de Godot más usados, con datos verificados de sus re
 **Por qué Heren gana donde gana:**
 - **Undo/Redo real**: toda mutación pasa por `EditorUndoRedoManager` — el Ctrl+Z del usuario deshace lo que la IA creó. Coding-Solo reescribe archivos desde CLI (sin deshacer); GoPeak no lo expone.
 - **Editor real, no archivos**: el plugin vive dentro del editor que el usuario ve (viewports, EditorFileSystem, play con breakpoints). GoPeak también usa bridge con addons, pero sus GAPS en animación/señales/tilemap son nuestros dominios.
-- **Profundidad por dominio**: 15 tools centralizadas con ~60+ acciones frente a decenas de tools de 1 función. Una llamada `animation/one_shot` crea animación completa; en GoPeak sería imposible (no hay animación).
-- **Sistema de visión con costo**: no solo capturas — jerarquía de costo (coords textuales ~20 tok → ASCII → imagen) con presupuesto de tokens, para no quemar contexto.
+- **Profundidad por dominio**: 18 tools centralizadas con ~70+ acciones frente a decenas de tools de 1 función. Una llamada `animation/one_shot` crea animación completa; en GoPeak sería imposible (no hay animación).
+- **Sistema de visión con costo**: no solo capturas — jerarquía de costo (coords textuales ~20 tok → ASCII → imagen) con `visual_text`/`visual_image` separadas, para no quemar contexto.
+- **Schemas sin trampas**: solo `action` required en todas las tools — el agente nunca recibe `-32602 required` por parámetros que no aplican a su acción.
+- **Debug con errores reales**: `debug/get_editor_errors` y `debug/output` muestran los errores de runtime del juego (formato del panel Output con stack), y `session/diagnose` diagnostica la salud del plugin entero.
 - **Sin runtime externo**: Rust nativo. Node.js (ambos competidores) exige npm install + versión de Node.
 
 > ⚠️ La comparativa anterior marcaba ❌/⚡ sin verificar. Esta tabla usa datos reales de los repositorios (`.competitors/`). GoPeak es un proyecto sólido en debug/run/LSP/DAP; Coding-Solo es sólido en ejecución de proyectos y captura de output. Donde no competimos es donde ellos destacan; donde competimos, aportamos editor real + undo + dominios profundos.
@@ -143,8 +146,17 @@ node(
     node_name="Player"
 )
 
+# Leer (node_query no muta) + ver la escena sin imagen
+node_query(action="get_children", project_path="D:/MiJuego", node_path=".", recursive=true)
+visual_text(action="summary", project_path="D:/MiJuego")
+
 # Guardar
 scene(action="save", project_path="D:/MiJuego")
+
+# Correr y ver errores de runtime (formato del panel Output)
+debug(action="run_scene", project_path="D:/MiJuego")
+debug(action="get_editor_errors", project_path="D:/MiJuego")
+# → output_errors: ["E 0:00:06:695 global.gd:7 @ get_playstate(): Node not found..."]
 ```
 
 > ⚠️ En OpenCode las tools aparecen con prefijo `godot_` (ej. `godot_session`, `godot_node`, `godot_scene`).
@@ -166,24 +178,29 @@ orchestrate(
 
 ---
 
-## 🛠️ Las 15 Tools (60+ Acciones)
+## 🛠️ Las 18 Tools (70+ Acciones)
+
+> **v4.6**: todas las tools exigen SOLO `action` como required — el resto de args son opcionales con defaults por action en el plugin. Nada de `-32602 required` absurdos.
 
 | Tool | Acciones | ¿Qué hace? |
 |------|----------|-----------|
-| **session** | open, **reopen**, close, list, info, health | Sesiones; abre/relanza limpio (tras settings restart_required)/cierra el editor |
+| **session** | open, **reopen**, close, list, info, health, **diagnose** | Sesiones; `diagnose` = debugger unificado (integridad plugin ok/stale/missing/orphan + grafo headless en sandbox + estado editor) |
 | **scene** | get_open_scenes, get_edited_scene_root, open, save, create, unload | Escenas contra el editor real (SceneRegistry evita escenas fantasma) |
-| **node** | add, **instantiate**, remove, set_prop, get_prop, get_info, get_children, find, duplicate, rename, move, set_owner, reorder, array_append, array_remove | CRUD de nodos + instanciar `.tscn` como hijo (ExtResource, no copia) |
+| **node** | add, instantiate, remove, duplicate, rename, move, set_owner, reorder | **Mutaciones** estructurales. `rename`/`move` devuelven `previous_path`/`old_parent`; errores con `parent_children[]` |
+| **node_query** | get_info, get_children, get_prop, find | **Lecturas** — no mutan la escena, no marcan dirty |
+| **node_props** | set_prop, set_props, array_append, array_remove | **Propiedades** — recursos por PATH (`res://...`); dict inline → warning `resource_incrusted_inline` |
 | **resource** | create, read, update, delete, list, create_script, read_script, edit_script | Recursos `.tres` y scripts `.gd` |
-| **project** | create, setup_plugin, **setting (op get/set/list/delete/set_multi + restart-aware)**, autoload, remove_autoload, **input_map (persistente real: add/get/list/add_event/set_events/remove_event/set_deadzone)**, shader_global | Configuración, input mapping y creación de proyectos |
+| **project** | create, setup_plugin, **setting (op get/set/list/delete/set_multi + restart-aware)**, autoload, remove_autoload, **input_map (persistente real)**, shader_global | Configuración, input mapping y creación de proyectos |
 | **shader** | create, edit, get, inspect, validate, material, uniform, apply | Shaders `.gdshader`, materiales y aplicar shader+material+uniforms en 1 llamada |
 | **animation** | create_player, create, add_track, add_key, state_machine, play, stop, seek, speed, get_animations, get_tracks, get_keyframes, one_shot, tween, record, from_path, loop_pose, preview, curve, capture_pose, blend_pose, retarget, reverse, duplicate, delete, rename, tree_* | Animaciones completas: playback, edición, procedural, IK, batch one-shot |
 | **skeleton** | skeleton_create, skeleton_add_bone, skeleton_set_rest, skeleton_skin, skeleton_attachment, skeleton_get_bones, skeleton_get_pose, skeleton_set_pose, skeleton_ik, skeleton_fabrik, capture_pose | Esqueletos 2D/3D + IK 2D FABRIK e IK 3D |
 | **tilemap** | inspect_set, inspect_map, set_cell, terrain, pattern | TileMaps/TileSets |
 | **signal** | connect, disconnect, list, set_script | Señales (CONNECT_PERSIST, defensivo) |
 | **validate** | scene, script, node, resource | Validación contra la escena viva |
-| **debug** | run_scene, stop_scene, is_playing, get_editor_errors | Depuración con el editor real |
+| **debug** | run_scene, stop_scene, is_playing, get_editor_errors, **output**, status, breakpoint, control, stack, vars, profiler | Depuración con el editor real. `get_editor_errors` → errores estructurados + `output_errors` (formato del panel Output); `output` con filter=error\|all |
 | **orchestrate** | (múltiples ops) | Batch operations, plan en archivo, errores por op sin abortar |
-| **visual** | coords, summary, ascii, capture, node, budget, cache | Sistema de visión (jerarquía de costo) |
+| **visual_text** | coords, summary, ascii | Visión textual NIVEL 0-1 (sin imagen, ~20-150 tok) — usarla SIEMPRE primero |
+| **visual_image** | capture, node | Visión imagen NIVEL 2-3 — render off-screen de la ESCENA real (nunca 2×2), image_content base64 |
 | **health** | server + editor | Health check con proyectos conectados |
 
 ---

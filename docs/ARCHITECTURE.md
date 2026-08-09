@@ -8,7 +8,7 @@ This document describes the architecture and design philosophy of Heren MCP.
 
 Heren MCP follows these core principles:
 
-1. **Centralization**: 15 tools handle ALL Godot operations
+1. **Centralization**: 18 tools handle ALL Godot operations (v4.6: only `action` required â€” no-trap schemas)
 2. **Modularity**: Each tool has multiple actions via the `action` parameter
 3. **Power**: Godot does the heavy lifting; Heren orchestrates
 4. **Speed**: GodotDaemon provides ~20ms operations via persistent WebSocket
@@ -17,38 +17,38 @@ Heren MCP follows these core principles:
 ## System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    MCP Client (OpenCode)                    │
-└──────────────────────┬──────────────────────────────────────┘
-                       │ MCP Protocol
-┌──────────────────────▼──────────────────────────────────────┐
-│                  Heren MCP Server                           │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
-│  │   Tools     │  │  Tools Index│  │  i18n (es/en)       │  │
-│  │  (15 tools) │  │  (Discovery)│  │  (Auto-detect)      │  │
-│  └──────┬──────┘  └─────────────┘  └─────────────────────┘  │
-│         │                                                   │
-│  ┌──────▼──────────────────────────────────────────────┐   │
-│  │              Session Manager (Layer 0)               │   │
-│  │  ┌────────────┐  ┌────────────┐  ┌──────────────┐   │   │
-│  │  │  Sessions  │  │    Cache   │  │  Temp Files  │   │   │
-│  │  │  (Active)  │  │  (LRU+TTL) │  │  (GDScripts) │   │   │
-│  │  └─────┬──────┘  └────────────┘  └──────────────┘   │   │
-│  │        │                                             │   │
-│  │  ┌─────▼──────┐  ┌──────────────┐                   │   │
-│  │  │GodotDaemon │  │ GodotServer  │  (Legacy HTTP)    │   │
-│  │  │(WebSocket) │  │   (HTTP)     │                   │   │
-│  │  └─────┬──────┘  └──────────────┘                   │   │
-│  └────────┼─────────────────────────────────────────────┘   │
-└───────────┼─────────────────────────────────────────────────┘
-            │
-┌───────────▼─────────────────────────────────────────────────┐
-│                 Godot Engine (External)                     │
-│  ┌────────────┐  ┌────────────┐  ┌──────────────────────┐  │
-│  │   Editor   │  │  Projects  │  │  heren_daemon.gd     │  │
-│  │   (CLI)    │  │  (.tscn)   │  │  (WebSocket server)  │  │
-│  └────────────┘  └────────────┘  └──────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚                    MCP Client (OpenCode)                    â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+                       â”‚ MCP Protocol
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚                  Heren MCP Server                           â”‚
+â”‚  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”‚
+â”‚  â”‚   Tools     â”‚  â”‚  Tools Indexâ”‚  â”‚  i18n (es/en)       â”‚  â”‚
+â”‚  â”‚  (18 tools) â”‚  â”‚  (Discovery)â”‚  â”‚  (Auto-detect)      â”‚  â”‚
+â”‚  â””â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”˜  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜  â”‚
+â”‚         â”‚                                                   â”‚
+â”‚  â”Œâ”€â”€â”€â”€â”€â”€â–¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”   â”‚
+â”‚  â”‚              Session Manager (Layer 0)               â”‚   â”‚
+â”‚  â”‚  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”   â”‚   â”‚
+â”‚  â”‚  â”‚  Sessions  â”‚  â”‚    Cache   â”‚  â”‚  Temp Files  â”‚   â”‚   â”‚
+â”‚  â”‚  â”‚  (Active)  â”‚  â”‚  (LRU+TTL) â”‚  â”‚  (GDScripts) â”‚   â”‚   â”‚
+â”‚  â”‚  â””â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”˜  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜   â”‚   â”‚
+â”‚  â”‚        â”‚                                             â”‚   â”‚
+â”‚  â”‚  â”Œâ”€â”€â”€â”€â”€â–¼â”€â”€â”€â”€â”€â”€â”  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”                   â”‚   â”‚
+â”‚  â”‚  â”‚GodotDaemon â”‚  â”‚ GodotServer  â”‚  (Legacy HTTP)    â”‚   â”‚
+â”‚  â”‚  â”‚(WebSocket) â”‚  â”‚   (HTTP)     â”‚                   â”‚   â”‚
+â”‚  â”‚  â””â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”˜  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜                   â”‚   â”‚
+â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜   â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+            â”‚
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚                 Godot Engine (External)                     â”‚
+â”‚  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”‚
+â”‚  â”‚   Editor   â”‚  â”‚  Projects  â”‚  â”‚  heren_daemon.gd     â”‚  â”‚
+â”‚  â”‚   (CLI)    â”‚  â”‚  (.tscn)   â”‚  â”‚  (WebSocket server)  â”‚  â”‚
+â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜  â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
 ## Layer Structure
@@ -102,21 +102,21 @@ Two communication modes:
 ### With Daemon (Fast Path)
 
 ```
-Client → Tool Function → Session Manager → GodotDaemon → Godot Editor
-                                          ↓
+Client â†’ Tool Function â†’ Session Manager â†’ GodotDaemon â†’ Godot Editor
+                                          â†“
                                     WebSocket (~20ms)
-                                          ↓
-Client ← JSON Response ← Session Manager ← GodotDaemon
+                                          â†“
+Client â† JSON Response â† Session Manager â† GodotDaemon
 ```
 
 ### Without Daemon (Fallback Path)
 
 ```
-Client → Tool Function → Session Manager → TemplateEngine → GDScript File
-                                          ↓
+Client â†’ Tool Function â†’ Session Manager â†’ TemplateEngine â†’ GDScript File
+                                          â†“
                                     Godot CLI --script (~370ms)
-                                          ↓
-Client ← JSON Response ← Session Manager ← Godot Output
+                                          â†“
+Client â† JSON Response â† Session Manager â† Godot Output
 ```
 
 ## Cache Strategy
@@ -136,22 +136,22 @@ Client ← JSON Response ← Session Manager ← Godot Output
 
 ```
 1. CREATE
-   └── SessionManager.start_session()
-       ├── Auto-detect Godot executable
-       ├── Start GodotDaemon (if requested)
-       └── Create session with UUID
+   â””â”€â”€ SessionManager.start_session()
+       â”œâ”€â”€ Auto-detect Godot executable
+       â”œâ”€â”€ Start GodotDaemon (if requested)
+       â””â”€â”€ Create session with UUID
 
 2. USE
-   └── Operations via Tools
-       ├── Cache lookup (fast path)
-       ├── Daemon execution (fast path)
-       └── Fallback to scripts (slow path)
+   â””â”€â”€ Operations via Tools
+       â”œâ”€â”€ Cache lookup (fast path)
+       â”œâ”€â”€ Daemon execution (fast path)
+       â””â”€â”€ Fallback to scripts (slow path)
 
 3. DESTROY
-   └── SessionManager.end_session()
-       ├── Stop GodotDaemon
-       ├── Clear caches
-       └── Cleanup temp files
+   â””â”€â”€ SessionManager.end_session()
+       â”œâ”€â”€ Stop GodotDaemon
+       â”œâ”€â”€ Clear caches
+       â””â”€â”€ Cleanup temp files
 ```
 
 ## Internationalization (i18n)
@@ -170,12 +170,12 @@ The system:
 
 ```
 Error Hierarchy:
-├── Session Errors (session_not_found, expired)
-├── Daemon Errors (daemon_not_running, connection_failed)
-├── Scene Errors (scene_not_found, invalid_format)
-├── Node Errors (node_not_found, property_not_found)
-├── Validation Errors (invalid_parameters, script_error)
-└── System Errors (file_not_found, permission_denied)
+â”œâ”€â”€ Session Errors (session_not_found, expired)
+â”œâ”€â”€ Daemon Errors (daemon_not_running, connection_failed)
+â”œâ”€â”€ Scene Errors (scene_not_found, invalid_format)
+â”œâ”€â”€ Node Errors (node_not_found, property_not_found)
+â”œâ”€â”€ Validation Errors (invalid_parameters, script_error)
+â””â”€â”€ System Errors (file_not_found, permission_denied)
 ```
 
 All errors return a consistent format:

@@ -61,7 +61,7 @@ func _not_found_hint(root: Node, node_path: Variant) -> Dictionary:
 	if normalized == "" or normalized == ".":
 		return hint
 	# Recortar segmentos de atrÃ¡s hasta encontrar un padre resoluble.
-	var segments := normalized.split("/")
+	var segments: Array = normalized.split("/")
 	while segments.size() > 1:
 		segments.pop_back()
 		var parent := root.get_node_or_null(NodePath("/".join(segments)))

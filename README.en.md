@@ -15,13 +15,13 @@
 
 ---
 
-# ⚡ Heren Godot MCP v4.2
+# ⚡ Heren Godot MCP v4.6
 
 🔥 **Heren Godot MCP** — *Plus Ultra*: go beyond. 🌍
 
 High-performance MCP server for **Godot Engine 4.x** that lets AI agents control the **real editor** directly: create scenes, manipulate nodes, manage resources, connect signals, animate, rig skeletons, shaders and validate code. **All against the live editor, with real Undo/Redo.**
 
-**📢 v4.2**: MCP is now 100% **Rust** (~7 MB, no runtime), built on **[FlojoMCP](https://github.com/CerebroCanibalus/flojomcp)** — the high-performance MCP framework in Rust. Direct connection to the **Godot Editor** via an EditorPlugin with auto-reconnect and auto-launch.
+**📢 v4.6**: Toolset redesigned — **18 tools, only `action` required** (end of the schema maze: no more absurd required params, agents don't guess). `node` split into mutations/reads/props (`node`/`node_query`/`node_props`), `visual` split into textual/image (`visual_text`/`visual_image`). **`debug/output` + `get_editor_errors`** expose runtime errors with the Output panel format (E hh:mm:ss:mmm + stack). **`session/diagnose`** = unified debugger (plugin integrity + headless graph + editor state). Continuous orientation: `node_not_found` returns `parent_children[]`, `rename`/`move` return `previous_path`/`old_parent`. Anti-inline: resources without path → `resource_incrusted_inline` warning. 100% **Rust** on **[FlojoMCP](https://github.com/CerebroCanibalus/flojomcp)**.
 
 ---
 
@@ -32,8 +32,9 @@ High-performance MCP server for **Godot Engine 4.x** that lets AI agents control
 | ⚡ **Rust server (FlojoMCP)** | `heren-server.exe` ~**7 MB**, no Python or Node.js. Instant startup, compile-time schemas |
 | 🎯 **Real editor, not a daemon** | Connects to the **EditorPlugin** inside the open Godot — Undo/Redo, real 2D/3D viewports, EditorFileSystem |
 | 🔄 **Editor auto-launch** | `session/open` launches Godot, installs the plugin, enables `[editor_plugins]` and waits for the WS connection. Reuses an open editor; cleanly relaunches if a zombie one exists |
-| 🛠️ **15 centralized tools** | Scenes, nodes, resources, scripts, signals, animations, skeletons, shaders, tilemaps, validation, debug |
-| 👀 **Vision system** | Cost hierarchy: textual coordinates → summary/ASCII → capture of the real editor 2D/3D viewports, with a token budget |
+| 🛠️ **18 centralized tools** | Scenes, nodes (mutations/reads/props), resources, scripts, signals, animations, skeletons, shaders, tilemaps, validation, debug — **only `action` required**, no-trap schemas |
+| 👀 **Vision system** | `visual_text` (coords/summary/ascii, ~20-150 tok) + `visual_image` (capture/node, off-screen render of the REAL scene) — cost hierarchy without burning context |
+| 🔍 **Real debugging with errors** | `debug/output` + `get_editor_errors` expose runtime errors (Output panel format, with stack) + `session/diagnose` for plugin integrity |
 | ↩️ **Built-in Undo/Redo** | Every mutation goes through `EditorUndoRedoManager` — Ctrl+Z undoes what the AI created |
 | ⚡ **`orchestrate`** | Runs multiple operations in one call, with a plan file for complex plans |
 | 🏗️ **Create projects from scratch** | `project/create` generates project.godot + main scene without needing an editor |
@@ -155,24 +156,29 @@ orchestrate(
 
 ---
 
-## 🛠️ The 15 Tools (60+ Actions)
+## 🛠️ The 18 Tools (70+ Actions)
+
+> **v4.6**: every tool requires ONLY `action` — all other args are optional with per-action defaults in the plugin. No more absurd `-32602 required` errors.
 
 | Tool | Actions | What it does |
 |------|----------|-----------|
-| **session** | open, close, list, info, health | Session management; open/close/relaunch the editor |
-| **scene** | get_open_scenes, get_edited_scene_root, open, save, create, unload | Scenes against the real editor |
-| **node** | add, remove, set_prop, get_prop, get_info, get_children, find, duplicate, rename, move, set_owner, reorder, array_append, array_remove | Node CRUD with proactive coordinates |
+| **session** | open, **reopen**, close, list, info, health, **diagnose** | Sessions; `diagnose` = unified debugger (plugin integrity ok/stale/missing/orphan + headless graph in sandbox + editor state) |
+| **scene** | get_open_scenes, get_edited_scene_root, open, save, create, unload | Scenes against the real editor (SceneRegistry avoids ghost scenes) |
+| **node** | add, instantiate, remove, duplicate, rename, move, set_owner, reorder | **Mutations**. `rename`/`move` return `previous_path`/`old_parent`; errors include `parent_children[]` |
+| **node_query** | get_info, get_children, get_prop, find | **Reads** — no mutation, no dirty marking |
+| **node_props** | set_prop, set_props, array_append, array_remove | **Properties** — pass resources by PATH (`res://...`); inline dict → `resource_incrusted_inline` warning |
 | **resource** | create, read, update, delete, list, create_script, read_script, edit_script | `.tres` resources and `.gd` scripts |
 | **project** | create, setup_plugin, setting, autoload, remove_autoload, input_map, shader_global | Project config and creation |
-| **shader** | create, edit, validate, material, uniform | `.gdshader` shaders and ShaderMaterial |
-| **animation** | create_player, create, add_track, add_key, state_machine | Animations and state machines |
-| **skeleton** | skeleton_create, skeleton_add_bone, skeleton_set_rest, skeleton_skin, skeleton_attachment | 2D/3D skeletons |
+| **shader** | create, edit, get, inspect, validate, material, uniform, apply | `.gdshader` shaders, materials, one-shot apply |
+| **animation** | create_player, create, add_track, add_key, state_machine, play, stop, seek, speed, get_*, remove_*, update_*, one_shot, tween, record, from_path, loop_pose, preview, curve, capture_pose, tree_*, duplicate, delete, rename, reverse, blend_pose, retarget | Full animation: playback, editing, procedural, IK, one-shot batch |
+| **skeleton** | skeleton_create, skeleton_add_bone, skeleton_set_rest, skeleton_skin, skeleton_attachment, skeleton_get_*, skeleton_set_pose, skeleton_ik, skeleton_fabrik, capture_pose | 2D/3D skeletons + IK 2D FABRIK / IK 3D |
 | **tilemap** | inspect_set, inspect_map, set_cell, terrain, pattern | TileMaps/TileSets |
 | **signal** | connect, disconnect, list, set_script | Signals (CONNECT_PERSIST) |
 | **validate** | scene, script, node, resource | Validation against the live scene |
-| **debug** | run_scene, stop_scene, is_playing, get_editor_errors | Debugging with the real editor |
-| **orchestrate** | (multiple ops) | Batch operations, plan file |
-| **visual** | coords, summary, ascii, capture, node, budget, cache | Vision system (cost hierarchy) |
+| **debug** | run_scene, stop_scene, is_playing, get_editor_errors, **output**, status, breakpoint, control, stack, vars, profiler | Real-editor debugging. `get_editor_errors` → structured + `output_errors` (Output panel format); `output` with filter=error\|all |
+| **orchestrate** | (multiple ops) | Batch operations, plan file, per-op errors |
+| **visual_text** | coords, summary, ascii | Textual vision LEVEL 0-1 (no image, ~20-150 tok) — use it FIRST, always |
+| **visual_image** | capture, node | Image vision LEVEL 2-3 — off-screen render of the REAL scene (never 2×2), image_content base64 |
 | **health** | server + editor | Health check with connected projects |
 
 ---
