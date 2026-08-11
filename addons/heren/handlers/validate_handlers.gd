@@ -1,6 +1,5 @@
 @tool
-extends Node
-
+extends "res://addons/heren/handlers/heren_handler.gd"
 # Heren MCP v4 - Validation handlers (Fase 2).
 # Verifica integridad de escenas, scripts, nodos y recursos (ADR-002):
 # el editor vivo ya tiene la escena en RAM; scripts y recursos se cargan
@@ -14,7 +13,6 @@ extends Node
 
 const HerenCoordsScript := preload("coords.gd")
 
-var _editor_plugin: EditorPlugin
 
 
 func set_editor_plugin(plugin: EditorPlugin) -> void:

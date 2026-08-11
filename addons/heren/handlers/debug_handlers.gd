@@ -1,6 +1,5 @@
 @tool
-extends Node
-
+extends "res://addons/heren/handlers/heren_handler.gd"
 # Heren MCP v4.5 - Debug handlers.
 # Control del editor real (ADR-002) + depurador real (EditorDebuggerSession
 # vía heren_debugger_plugin.gd, registrado con add_debugger_plugin()).
@@ -27,7 +26,6 @@ extends Node
 #   - La evaluación de expresiones (evaluate) devuelve evaluation_return al
 #     integrado; no capturable → no expuesta.
 
-var _editor_plugin: EditorPlugin
 var _dbg_plugin: EditorDebuggerPlugin
 
 

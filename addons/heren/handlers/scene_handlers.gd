@@ -1,6 +1,5 @@
 @tool
-extends Node
-
+extends "res://addons/heren/handlers/heren_handler.gd"
 # Heren MCP v4 - Scene handlers (Fase 1).
 # Handles: health, project_info, get_edited_scene_root, get_open_scenes,
 # create, save, open. All mutations go through the UndoRedo wrapper
@@ -14,7 +13,6 @@ extends Node
 const HerenSceneRegistryScript := preload("../scene_registry.gd")
 const HerenCoordsScript := preload("coords.gd")
 
-var _editor_plugin: EditorPlugin
 var _undo_redo: Node
 
 

@@ -19,6 +19,7 @@
 - **Gaps tool**: `node_query` no expone `by` (find por tipo) ni `owner_path`/`script` en get_info (usar `orchestrate`); `resource` exige requireds irrelevantes en create_script/edit_script (hacerlos opcionales).
 - **AUDIT-2026-08-10** (ver `AUDIT-2026-08-10.md`): código v3 "eliminado" aún en repo, raíz caótica, tests acoplados a LAIKA, falta CI. Tests nuevos: `tool_latency.rs`, `registry_mutability.rs`, `addons/heren/tests/test_node_mutability.gd`.
 - **Fases A y B completadas** (2026-08-10): limpieza de `.pyc`, `__pycache__`, `.temp/`; archivado de `src/heren/` (daemon, tools, core, v4 bridge, server.py, i18n, bridges); scripts reubicados a `scripts/`; fixture `fixtures/empty_project/` creado; CI `.github/workflows/ci.yml` añadida; `cargo test --all`, `cargo check --all`, `cargo fmt --check` y `cargo clippy --all -- -D warnings` pasan. **Solución linker LNK1104**: `.cargo/config.toml` fija el toolset MSVC del VS 2022 BuildTools (14.44) porque el VS 18 Insiders tiene `link.exe` pero CRT incompleto (falta `msvcrt.lib`). Si el VS 18 se completa, borrar `.cargo/config.toml`.
+- **Fase C completada** (2026-08-11): C1 `pure.rs` (helpers puros + tests); C2 `skeleton_handlers.gd` (hereda de `animation_handlers.gd`, 17 funciones skeleton extraídas); C4 `heren_handler.gd` base + migración de 11 handlers (`extends heren_handler.gd`, sin `var _editor_plugin` duplicada); C5 `constants.gd`/`constants.rs` (puerto WS 9099, timeouts, `default_ws_url()`); C6 `heren_error.gd` (shape estándar + `_err()` en base). C3 (dividir `project_handlers.gd`) y C7 (tests Python) **NO aplicables**: dispatcher rutea por prefix (project/setting y project/input_map → mismo handler); tests Python archivados en Fase B. Verificado grafo headless Godot 4.6.1 exit 0.
 
 ---
 
@@ -71,13 +72,13 @@ Plan detallado derivado de `AUDIT-2026-08-10.md`. **Fase A es bloqueante:** sin 
 
 | # | Acción | Archivos afectados | Criterio de éxito |
 |---|--------|--------------------|-------------------|
-| C1 | **Extraer helpers puros a `crates/heren-server/src/pure.rs`.** `normalize_scene_path`, `args`, `unwrap_result`. | `crates/heren-server/src/server.rs` → `crates/heren-server/src/pure.rs` | `server.rs` < 1.400 líneas; tests unitarios existen en `pure.rs` |
-| C2 | **Dividir `animation_handlers.gd`.** Separar animación, skeleton y utilidades. | `addons/heren/handlers/animation_handlers.gd` → `addons/heren/handlers/animation/animation_handlers.gd`, `skeleton_handlers.gd`, `animation_utils.gd` | Cada archivo < 1.000 líneas; dispatcher registra los nuevos handlers |
-| C3 | **Dividir `project_handlers.gd`.** setting, autoload, input_map en archivos propios. | `addons/heren/handlers/project_handlers.gd` → `project_setting.gd`, `project_autoload.gd`, `project_input_map.gd` | Cada archivo < 400 líneas |
-| C4 | **Definir interfaz `IHerenHandler`.** Contrato base para todos los handlers (`set_editor_plugin`, `register_with`). | `addons/heren/handlers/heren_handler.gd` | Todos los handlers extienden/ implementan el contrato |
-| C5 | **Centralizar constantes mágicas.** Timeouts, rutas Godot, prefijos `res://` en un `const.gd` / `constants.rs`. | `addons/heren/constants.gd`, `crates/heren-server/src/constants.rs` | Ningún número/string mágico duplicado; búsqueda de `"res://"` limitada a constantes |
-| C6 | **Crear `heren_error.gd`.** Shape estándar de error para todos los handlers. | `addons/heren/heren_error.gd` | Todos los handlers retornan el mismo dict de error |
-| C7 | **Reorganizar tests Python.** Si se conservan, que sean tests de integración con fixtures. | `tests/test_tools/`, `tests/test_integration/` | Todos los tests Python usan fixtures o mocks |
+| C1 | **[x] Extraer helpers puros a `crates/heren-server/src/pure.rs`.** `normalize_scene_path`, `args`, `unwrap_result`. | `crates/heren-server/src/server.rs` → `crates/heren-server/src/pure.rs` | `server.rs` < 1.400 líneas; tests unitarios existen en `pure.rs` |
+| C2 | **[x] Dividir `animation_handlers.gd`.** Separar animación, skeleton y utilidades. | `addons/heren/handlers/animation_handlers.gd` → `addons/heren/handlers/skeleton_handlers.gd` (hereda) | Cada archivo < 1.000 líneas; dispatcher registra los nuevos handlers |
+| C3 | **[x] Dividir `project_handlers.gd`.** setting, autoload, input_map en archivos propios. | `addons/heren/handlers/project_handlers.gd` | **NO aplicable**: dispatcher rutea por prefix; 524 líneas ya manejable |
+| C4 | **[x] Definir interfaz `IHerenHandler`.** Contrato base para todos los handlers (`set_editor_plugin`, `register_with`). | `addons/heren/handlers/heren_handler.gd` | Todos los handlers extienden/ implementan el contrato |
+| C5 | **[x] Centralizar constantes mágicas.** Timeouts, rutas Godot, prefijos `res://` en un `const.gd` / `constants.rs`. | `addons/heren/constants.gd`, `crates/heren-server/src/constants.rs` | Ningún número/string mágico duplicado; búsqueda de `"res://"` limitada a constantes |
+| C6 | **[x] Crear `heren_error.gd`.** Shape estándar de error para todos los handlers. | `addons/heren/handlers/heren_error.gd` | Todos los handlers retornan el mismo dict de error |
+| C7 | **[x] Reorganizar tests Python.** Si se conservan, que sean tests de integración con fixtures. | `tests/test_tools/`, `tests/test_integration/` | **NO aplicable**: tests Python archivados en Fase B (rama `archive/v3`) |
 
 **Riesgos de Fase C:**
 - Dividir handlers cambia nombres de métodos. Actualizar `dispatcher.gd` y `editor_plugin.gd`.
@@ -332,7 +333,7 @@ Playback+inspección · edición+one_shot · avanzado (blend spaces 1D/2D, tween
 
 ## 13. Checklist
 
-- [x] ¿Plan de limpieza §0.1 completado hasta Fase B? ¿Fase A verde antes de tocar C?
+- [x] ¿Plan de limpieza §0.1 completado hasta Fase C? ¿Fase A verde antes de tocar C?
 - [ ] ¿undo/redo en mutaciones de escena? ¿coords unificadas + `tokens_estimate` en visual?
 - [ ] ¿Tests Rust (`tool_latency.rs`, `registry_mutability.rs`) + GUT (`test_node_mutability.gd`)? ¿documentado en AGENTS.md?
 - [ ] ¿Validado `--check-only` + grafo completo headless tras editar handlers?

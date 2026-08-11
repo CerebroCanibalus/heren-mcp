@@ -490,7 +490,9 @@ pub fn launch_editor(
             "editor running but NOT connected; killing zombie before writing plugin config"
         );
         close_editor(project_path);
-        std::thread::sleep(std::time::Duration::from_millis(1500));
+        std::thread::sleep(std::time::Duration::from_millis(
+            crate::constants::EDITOR_KILL_WAIT_MS,
+        ));
     }
 
     // Escribir enable SOLO ahora (editor muerto o inexistente).

@@ -19,6 +19,7 @@ const DebugHandlersScript := preload("handlers/debug_handlers.gd")
 const HerenDebuggerPluginScript := preload("heren_debugger_plugin.gd")
 const ShaderHandlersScript := preload("handlers/shader_handlers.gd")
 const AnimationHandlersScript := preload("handlers/animation_handlers.gd")
+const SkeletonHandlersScript := preload("handlers/skeleton_handlers.gd")
 const TileMapHandlersScript := preload("handlers/tilemap_handlers.gd")
 const VisualHandlersScript := preload("handlers/visual_handlers.gd")
 
@@ -35,6 +36,7 @@ var _debug_handlers: Node
 var _dbg_plugin: EditorDebuggerPlugin
 var _shader_handlers: Node
 var _animation_handlers: Node
+var _skeleton_handlers: Node
 var _tilemap_handlers: Node
 var _visual_handlers: Node
 
@@ -104,11 +106,16 @@ func _enter_tree() -> void:
 	_shader_handlers.set_editor_plugin(self)
 	add_child(_shader_handlers)
 
-	# Animation + skeleton handlers (skeleton lives here, as in v3 daemon).
+	# Animation + skeleton handlers (skeleton separado en Fase C2, hereda de animation).
 	_animation_handlers = AnimationHandlersScript.new()
 	_animation_handlers.name = "HerenAnimationHandlers"
 	_animation_handlers.set_editor_plugin(self)
 	add_child(_animation_handlers)
+
+	_skeleton_handlers = SkeletonHandlersScript.new()
+	_skeleton_handlers.name = "HerenSkeletonHandlers"
+	_skeleton_handlers.set_editor_plugin(self)
+	add_child(_skeleton_handlers)
 
 	# TileMap handlers.
 	_tilemap_handlers = TileMapHandlersScript.new()
@@ -135,7 +142,7 @@ func _enter_tree() -> void:
 	_dispatcher.register_handler("debug", _debug_handlers)
 	_dispatcher.register_handler("shader", _shader_handlers)
 	_dispatcher.register_handler("animation", _animation_handlers)
-	_dispatcher.register_handler("skeleton", _animation_handlers)
+	_dispatcher.register_handler("skeleton", _skeleton_handlers)
 	_dispatcher.register_handler("tilemap", _tilemap_handlers)
 	_dispatcher.register_handler("visual", _visual_handlers)
 
@@ -179,6 +186,9 @@ func _exit_tree() -> void:
 	if _animation_handlers:
 		_animation_handlers.queue_free()
 		_animation_handlers = null
+	if _skeleton_handlers:
+		_skeleton_handlers.queue_free()
+		_skeleton_handlers = null
 	if _shader_handlers:
 		_shader_handlers.queue_free()
 		_shader_handlers = null

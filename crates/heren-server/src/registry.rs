@@ -298,10 +298,13 @@ impl EditorRegistry {
         tx.unbounded_send(EditorChannel::Send(msg))
             .map_err(|e| format!("ws send failed: {e}"))?;
 
-        let resp = tokio::time::timeout(tokio::time::Duration::from_secs(35), resp_rx)
-            .await
-            .map_err(|_| format!("tool timeout: {tool_name}"))?
-            .map_err(|_| format!("tool cancelled: {tool_name}"))?;
+        let resp = tokio::time::timeout(
+            tokio::time::Duration::from_millis(crate::constants::TOOL_TIMEOUT_MS),
+            resp_rx,
+        )
+        .await
+        .map_err(|_| format!("tool timeout: {tool_name}"))?
+        .map_err(|_| format!("tool cancelled: {tool_name}"))?;
 
         let mut state = self.state.lock().await;
         state.pending.remove(&req_id);

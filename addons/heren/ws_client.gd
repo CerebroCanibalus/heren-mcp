@@ -11,7 +11,9 @@ signal disconnected
 signal tool_invoke_received(request_id: String, tool_name: String, args: Dictionary)
 signal error_reported(message: String)
 
-const DEFAULT_URL := "ws://127.0.0.1:9099"
+const HerenConstants := preload("constants.gd")
+
+const DEFAULT_URL := "ws://127.0.0.1:%d" % HerenConstants.WS_PORT_DEFAULT
 const RECONNECT_DELAY := 2.0
 const MAX_RECONNECT_DELAY := 30.0
 const PING_INTERVAL := 10.0

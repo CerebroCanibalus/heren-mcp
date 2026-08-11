@@ -1,6 +1,5 @@
 @tool
-extends Node
-
+extends "res://addons/heren/handlers/heren_handler.gd"
 # Heren MCP v4 - Signal handlers (Fase 2).
 # Señales y scripts entre nodos de la escena viva (ADR-002).
 # connect usa CONNECT_PERSIST para que pack() serialice la conexión al guardar.
@@ -14,7 +13,6 @@ extends Node
 const HerenCoordsScript := preload("coords.gd")
 const HerenSceneRegistryScript := preload("../scene_registry.gd")
 
-var _editor_plugin: EditorPlugin
 
 
 func set_editor_plugin(plugin: EditorPlugin) -> void:

@@ -1,6 +1,5 @@
 @tool
-extends Node
-
+extends "res://addons/heren/handlers/heren_handler.gd"
 # Heren MCP v4 - Project handlers (Fase 2).
 # Configuración del proyecto vía ProjectSettings + InputMap (ADR-002):
 # el editor vivo aplica y persiste los cambios en project.godot.
@@ -16,7 +15,6 @@ extends Node
 
 const HerenCoordsScript := preload("coords.gd")
 
-var _editor_plugin: EditorPlugin
 
 
 func set_editor_plugin(plugin: EditorPlugin) -> void:

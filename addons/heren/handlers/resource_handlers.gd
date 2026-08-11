@@ -1,6 +1,5 @@
 @tool
-extends Node
-
+extends "res://addons/heren/handlers/heren_handler.gd"
 # Heren MCP v4 - Resource handlers (Fase 2).
 # Recursos .tres y scripts .gd vía EditorFileSystem + ResourceSaver (ADR-002):
 # el editor vivo importa, valida y da tipos. Sin session_id: la operación se
@@ -21,7 +20,6 @@ extends Node
 
 const HerenCoordsScript := preload("coords.gd")
 
-var _editor_plugin: EditorPlugin
 
 
 func set_editor_plugin(plugin: EditorPlugin) -> void:

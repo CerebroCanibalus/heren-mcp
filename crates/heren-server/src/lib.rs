@@ -15,8 +15,10 @@
 //! EditorPlugin v4 (Godot, WS client)
 //! ```
 
+pub mod constants;
 pub mod editor;
 pub mod launcher;
+pub mod pure;
 pub mod registry;
 pub mod server;
 pub mod ws_plugin_server;

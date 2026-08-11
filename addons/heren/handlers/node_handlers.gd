@@ -1,6 +1,5 @@
 @tool
-extends Node
-
+extends "res://addons/heren/handlers/heren_handler.gd"
 # Heren MCP v4 - Node handlers (Fase 2).
 # CRUD completo de nodos sobre la escena VIVA del editor (ADR-002):
 # la escena editada es el cache â€” no hay scene_cache aparte.
@@ -15,7 +14,6 @@ extends Node
 const HerenCoordsScript := preload("coords.gd")
 const HerenSceneRegistryScript := preload("../scene_registry.gd")
 
-var _editor_plugin: EditorPlugin
 var _undo_redo: Node
 
 

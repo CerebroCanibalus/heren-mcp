@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use crate::editor::normalize_project_path;
+use crate::pure::{args, normalize_scene_path, unwrap_result};
 use crate::registry::EditorRegistry;
 
 /// Contexto de escena por proyecto (fix problema sistemÃ¡tico 2026-08-04):
@@ -64,49 +65,7 @@ fn resolve_project(project_path: Option<&str>) -> Result<String, ToolError> {
     }
 }
 
-/// Construye un args dict con los campos no-nulos.
-/// IMPORTANTE (fix C1/C2): las keys None se OMITEN, no se insertan como
-/// Value::Null. Antes `project/setting` get recibÃ­a `"value":null` y
-/// `handle_setting` lo interpretaba como set (borraba el setting); ademÃ¡s
-/// `str(null)` en GDScript = `"<null>"` rompÃ­a los guards `if x == ""`.
-fn args(entries: &[(&str, Option<Value>)]) -> Value {
-    let mut m = serde_json::Map::new();
-    for (k, v) in entries {
-        if let Some(val) = v {
-            m.insert(k.to_string(), val.clone());
-        }
-    }
-    Value::Object(m)
-}
-
-/// Normaliza un scene_path del agente a la forma canÃ³nica de Godot
-/// (`res://` prefix, forward slashes, sin trailing slash). El plugin compara
-/// `scene_file_path` (siempre `res://...` normalizado por Godot) contra la key
-/// del SceneRegistry; si el agente manda `scenes/x.tscn` (sin res://),
-/// backslashes o trailing slash, el match falla â†’ la escena se registra como
-/// fantasma y save/open divergen de la pestaÃ±a real (fix 2026-08-06).
-/// Empty string â†’ sin cambio (las tools lo tratan como "no path").
-fn normalize_scene_path(path: &str) -> String {
-    let s = path.trim();
-    if s.is_empty() {
-        return String::new();
-    }
-    let replaced = s.replace('\\', "/");
-    let trimmed = replaced.trim_end_matches('/').to_string();
-    // `res:/...` (tras convertir backslashes) o `res://...` ya son canÃ³nicos.
-    // Cualquier otro prefijo (`scenes/...`, `../`, absoluto) â†’ anteponer res://
-    if trimmed.starts_with("res://") || trimmed.starts_with("res:/") {
-        // Normalizar `res:/` â†’ `res://` (Godot exige doble slash).
-        if trimmed.starts_with("res:/") && !trimmed.starts_with("res://") {
-            return format!("res://{}", &trimmed[5..]);
-        }
-        trimmed
-    } else {
-        format!("res://{trimmed}")
-    }
-}
-
-/// ReenvÃ­a tools/call al editor y devuelve el resultado desenvuelto.
+/// Reenvía tools/call al editor y devuelve el resultado desenvuelto.
 async fn forward(
     registry: &EditorRegistry,
     project_path: &str,
@@ -140,29 +99,6 @@ async fn forward_mutating(
         }
     }
     Ok(result)
-}
-
-/// Desenvuelve la respuesta del plugin: content[0].text como JSON dict.
-fn unwrap_result(raw: &Value) -> Value {
-    if let Some(content) = raw.get("content").and_then(|c| c.as_array()) {
-        for item in content {
-            if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
-                if let Ok(parsed) = serde_json::from_str::<Value>(text) {
-                    return parsed;
-                }
-            }
-            // Imagen base64 (__image_base64 en el text-stream).
-            if let Some(b64) = item.get("__image_base64").and_then(|b| b.as_str()) {
-                let mut m = serde_json::Map::new();
-                m.insert("__image_base64".into(), Value::String(b64.to_string()));
-                if let Some(fmt) = item.get("__image_format").and_then(|f| f.as_str()) {
-                    m.insert("__image_format".into(), Value::String(fmt.to_string()));
-                }
-                return Value::Object(m);
-            }
-        }
-    }
-    raw.clone()
 }
 
 // ============================================================
@@ -301,7 +237,9 @@ async fn session(
             registry.take_graceful_close(&proj).await;
             if killed {
                 // esperar a que libere el lock
-                std::thread::sleep(std::time::Duration::from_millis(1500));
+                std::thread::sleep(std::time::Duration::from_millis(
+                    crate::constants::EDITOR_KILL_WAIT_MS,
+                ));
             }
             registry.clear_unexpected_close(&proj).await;
             let outcome = crate::launcher::launch_editor(
@@ -449,7 +387,7 @@ fn ws_port() -> u16 {
             .ok()
             .and_then(|a| a.rsplit(':').next().map(|s| s.to_string()))
             .and_then(|p| p.parse().ok())
-            .unwrap_or(9099);
+            .unwrap_or(crate::constants::WS_PORT_BASE);
         // HEREN_WS_ADDR explÃ­cito â†’ respetar sin buscar (el usuario lo fijÃ³).
         if std::env::var("HEREN_WS_ADDR").is_ok() {
             return base;
@@ -1695,73 +1633,4 @@ pub async fn run() -> Result<(), ServerError> {
     // OpenCode 1.18 envÃ­a `{"method":"initialize",...}\n`, NO Content-Length.
     // (`flojo_run_stdio_cl` queda disponible en FlojoMCP para clientes LSP-style.)
     flojo_run_stdio(Heren::new()).await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unwrap_result_parses_text_content() {
-        let raw = json!({
-            "content": [{"type": "text", "text": "{\"ok\":true,\"a\":1}"}],
-            "structuredContent": null
-        });
-        let out = unwrap_result(&raw);
-        assert_eq!(out, json!({"ok": true, "a": 1}));
-    }
-
-    #[test]
-    fn unwrap_result_extracts_image_base64() {
-        let raw = json!({
-            "content": [{"type": "text", "text": "hi", "__image_base64": "AAAA", "__image_format": "png"}]
-        });
-        let out = unwrap_result(&raw);
-        assert_eq!(out["__image_base64"], "AAAA");
-        assert_eq!(out["__image_format"], "png");
-    }
-
-    #[test]
-    fn unwrap_result_passthrough_non_text() {
-        let raw = json!({"raw": [1, 2, 3]});
-        assert_eq!(unwrap_result(&raw), raw);
-    }
-
-    #[test]
-    fn normalize_scene_path_adds_res_prefix() {
-        assert_eq!(
-            normalize_scene_path("scenes/level1.tscn"),
-            "res://scenes/level1.tscn"
-        );
-    }
-
-    #[test]
-    fn normalize_scene_path_converts_backslashes() {
-        assert_eq!(
-            normalize_scene_path("res:\\scenes\\level1.tscn"),
-            "res://scenes/level1.tscn"
-        );
-    }
-
-    #[test]
-    fn normalize_scene_path_strips_trailing_slash() {
-        assert_eq!(
-            normalize_scene_path("res://scenes/level1.tscn/"),
-            "res://scenes/level1.tscn"
-        );
-    }
-
-    #[test]
-    fn normalize_scene_path_keeps_clean() {
-        assert_eq!(
-            normalize_scene_path("res://scenes/level1.tscn"),
-            "res://scenes/level1.tscn"
-        );
-    }
-
-    #[test]
-    fn normalize_scene_path_empty_stays_empty() {
-        assert_eq!(normalize_scene_path(""), "");
-        assert_eq!(normalize_scene_path("   "), "");
-    }
 }

@@ -1,6 +1,5 @@
 @tool
-extends Node
-
+extends "res://addons/heren/handlers/heren_handler.gd"
 # Heren MCP v4 - Shader handlers (Fase 2).
 # Shaders .gdshader y ShaderMaterial sobre la escena viva (ADR-002).
 #
@@ -15,7 +14,6 @@ extends Node
 const HerenCoordsScript := preload("coords.gd")
 const HerenSceneRegistryScript := preload("../scene_registry.gd")
 
-var _editor_plugin: EditorPlugin
 
 
 func set_editor_plugin(plugin: EditorPlugin) -> void:

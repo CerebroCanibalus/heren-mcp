@@ -1,5 +1,27 @@
 # Changelog — Heren MCP
 
+## [Unreleased] - 2026-08-11 - Fase C: reorganización estructural
+
+### 🏗️ Rust
+
+- **C1**: nuevos `crates/heren-server/src/pure.rs` — helpers puros (`normalize_scene_path`, `args`, `unwrap_result`) extraídos de `server.rs` + tests unitarios. `server.rs` de ~1700 → ~1634 líneas.
+
+### 🎮 Plugin GDScript
+
+- **C2**: `animation_handlers.gd` (2531 líneas) dividido — `skeleton_handlers.gd` extraído (17 funciones skeleton, hereda de animation_handlers). Dispatcher registra "skeleton" → skeleton_handlers.
+- **C4**: nuevo `handlers/heren_handler.gd` — contrato base (`set_editor_plugin`, `_editor_interface`, `_args_dict`). 11 handlers migrados de `extends Node` a `extends heren_handler.gd` (eliminada `var _editor_plugin` duplicada).
+- **C5**: `constants.gd` (WS_PORT_DEFAULT, RES_PREFIX, `default_ws_url()`) y `constants.rs` (WS_PORT_BASE, TOOL_TIMEOUT_MS, EDITOR_KILL_WAIT_MS). `ws_client.gd` usa la constante centralizada.
+- **C6**: `handlers/heren_error.gd` — shape estándar de error (`err`/`ok`/`err_with`) + helper `_err()` en la base.
+
+### 🔧 No aplicables (documentado)
+
+- C3 (dividir `project_handlers.gd`): dispatcher rutea por prefix; 524 líneas ya manejable.
+- C7 (tests Python): archivados en Fase B.
+
+Verificado: `cargo test --all` 49 verdes, fmt/clippy limpios, grafo headless Godot 4.6.1 exit 0.
+
+# Changelog - Heren MCP
+
 ## [Unreleased] - 2026-08-10 - Fases A y B de limpieza
 
 ### 📋 Auditoría

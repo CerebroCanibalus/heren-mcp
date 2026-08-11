@@ -1,6 +1,5 @@
 @tool
-extends Node
-
+extends "res://addons/heren/handlers/heren_handler.gd"
 # Heren MCP v4 - TileMap handlers (Fase 2).
 # TileMap/TileSet sobre la escena viva + recursos (ADR-002).
 #
@@ -19,7 +18,6 @@ extends Node
 const HerenCoordsScript := preload("coords.gd")
 const HerenSceneRegistryScript := preload("../scene_registry.gd")
 
-var _editor_plugin: EditorPlugin
 
 
 func set_editor_plugin(plugin: EditorPlugin) -> void:
