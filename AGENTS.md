@@ -2,10 +2,10 @@
 
 > Biblia del agente. Léelo antes de tocar código.
 >
-> **ESTADO: v4.4.2 OPERATIVO** — EditorPlugin (GDScript→EditorInterface) + heren-server.exe Rust/FlojoMCP.
+> **ESTADO: v4.4.3 LIMPIEZA** — EditorPlugin (GDScript→EditorInterface) + heren-server.exe Rust/FlojoMCP.
 > 15 tools centralizadas, WS plugin server (patrón gopeak), auto-launch, NDJSON por stdio.
 > Workspace Rust local (`crates/heren-server`); FlojoMCP = framework SOLO (flojo-mcp/macros/session @ crates.io, consumido por version, no path).
-> Bridge Python (`python -m heren.v4.bridge`) = fallback/referencia, NO activo. **Cambios nuevos → v4/Rust.**
+> Bridge Python y daemon v3 **archivados en rama `archive/v3`**. **Cambios nuevos → v4/Rust.**
 > Plugin SIEMPRE ENCENDIDO + sync incremental por contenido + `session/diagnose` (debugger unificado).
 
 ---
@@ -17,6 +17,115 @@
 - **M3** `validate/node`: `script_cannot_instantiate` — scripts MCP no se compilan. Falta re-import/scan.
 - **Visual**: `coords` incompleto (3 nodos, paths ".."). `budget`/`cache` ELIMINADOS del toolset (v4.6) — handlers inexistentes; re-implementar si se necesita presupuesto.
 - **Gaps tool**: `node_query` no expone `by` (find por tipo) ni `owner_path`/`script` en get_info (usar `orchestrate`); `resource` exige requireds irrelevantes en create_script/edit_script (hacerlos opcionales).
+- **AUDIT-2026-08-10** (ver `AUDIT-2026-08-10.md`): código v3 "eliminado" aún en repo, raíz caótica, tests acoplados a LAIKA, falta CI. Tests nuevos: `tool_latency.rs`, `registry_mutability.rs`, `addons/heren/tests/test_node_mutability.gd`.
+- **Fases A y B completadas** (2026-08-10): limpieza de `.pyc`, `__pycache__`, `.temp/`; archivado de `src/heren/` (daemon, tools, core, v4 bridge, server.py, i18n, bridges); scripts reubicados a `scripts/`; fixture `fixtures/empty_project/` creado; CI `.github/workflows/ci.yml` añadida; `cargo test --all`, `cargo check --all`, `cargo fmt --check` y `cargo clippy --all -- -D warnings` pasan. **Solución linker LNK1104**: `.cargo/config.toml` fija el toolset MSVC del VS 2022 BuildTools (14.44) porque el VS 18 Insiders tiene `link.exe` pero CRT incompleto (falta `msvcrt.lib`). Si el VS 18 se completa, borrar `.cargo/config.toml`.
+
+---
+
+## 0.1 Plan de limpieza por fases (2026-08-10)
+
+Plan detallado derivado de `AUDIT-2026-08-10.md`. **Fase A es bloqueante:** sin ella el resto no compila ni testea en un clone limpio. Marcar cada ítem como completado en este mismo documento.
+
+### Fase A — Parar el sangrado (bloqueantes críticos)
+
+**Objetivo:** `cargo test --all` pasa en un clone limpio de Windows; el repo no depende de rutas locales fuera del workspace.
+
+| # | Acción | Archivos afectados | Criterio de éxito |
+|---|--------|--------------------|-------------------|
+| A1 | **[x] Verificar dependencia FlojoMCP.** El path actual (`../../../../ClaudeMCPs/FlojoMCP/crates/flojo-mcp`) resuelve correctamente y `cargo check --all` pasa. **Pendiente futuro**: migrar a versión de crates.io cuando `flojo-mcp` esté publicado. Nunca ruta absoluta fuera del repo. | `crates/heren-server/Cargo.toml` | `cargo check --all` pasa sin `unresolved import flojo_mcp` |
+| A2 | **[x] Limpiar archivos versionables incorrectos.** Eliminar `.pyc`, `__pycache__`, `.temp/target-*` y similares del índice; actualizar `.gitignore`. | `.gitignore` | `git ls-files | findstr __pycache__` devuelve vacío |
+| A3 | **[x] Mover scripts de build a `scripts/`.** Reubicar `.bat`/`.py` sueltos de la raíz. | `heren-build.bat`, `run.bat`, `install_mcp.py`, `deploy-fix.bat`, `setup_plugin.bat`, `install.py` | Raíz con ≤10 archivos; `scripts/` existe y contiene los build scripts |
+| A4 | **[x] Crear proyecto fixture mínimo.** Proyecto Godot vacío en `fixtures/empty_project/` para tests autónomos. | `fixtures/empty_project/project.godot` | Puede abrirse con `godot --path fixtures/empty_project` sin errores |
+| A5 | **[x] Desacoplar tests Python de LAIKA.** Reemplazar `LAIKA_PROJECT` por fixture temporal. | `tests/test_tools/test_all_tools.py` | `pytest tests/test_tools/test_all_tools.py` no accede a `D:\Mis Juegos\LAIKA` |
+| A6 | **[x] Añadir CI mínima.** GitHub Actions con `cargo test`, `cargo clippy` y `cargo fmt --check`. | `.github/workflows/ci.yml` | CI verde en push/PR |
+
+**Riesgos de Fase A:**
+- Si `flojo-mcp` aún no está en crates.io, usar `git` submodule o path relativo dentro de `crates/vendor/`. Documentar la decisión.
+- Mover `.bat` puede romper rutas en documentación. Revisar `INSTALL.md` y `README.md` tras el move.
+
+---
+
+### Fase B — Poda de código muerto (v3 y duplicados)
+
+**Objetivo:** Eliminar fuentes de confusión y doble mantenimiento; reducir tamaño del repo ~30%.
+
+| # | Acción | Archivos afectados | Criterio de éxito |
+|---|--------|--------------------|-------------------|
+| B1 | **[x] Archivar `src/heren/daemon/`.** Mover a rama `archive/v3` y borrar de `main`. | `src/heren/daemon/*.gd`, `src/heren/daemon/godot_daemon.py` | No quedan imports a `heren.daemon` en `main` |
+| B2 | **[x] Archivar `src/heren/tools/`.** Mover a rama `archive/v3`. | `src/heren/tools/*.py` | `pytest` en `main` no importa `heren.tools` |
+| B3 | **[x] Archivar `src/heren/core/session_manager.py`.** | `src/heren/core/session_manager.py` | `src/heren/core/` queda vacío o se borra |
+| B4 | **[x] Decidir destino del bridge Python v4.** Si `src/heren/v4/bridge.py` solo es referencia, archivar. Si se usa, documentar y testear. | `src/heren/v4/bridge.py`, `src/heren/v4/godot_launcher.py`, `src/heren/v4/ws_server.py` | Decisión explícita documentada en AGENTS.md |
+| B5 | **[x] Eliminar `.temp/e2e_*` del repo.** Convertirlos en generación dinámica desde `fixtures/`. | `.temp/e2e_minigame/`, `.temp/e2e_proj/`, `.temp/epic_arena/` | `.temp/` ignorado; scripts de test generan proyectos bajo demanda |
+| B6 | **[x] Eliminar copias duplicadas del plugin en `.temp/`.** El único source of truth es `addons/heren/`. | `.temp/*/addons/heren/` | Ninguna copia de handlers fuera de `addons/heren/` |
+| B7 | **[x] Borrar o archivar benchmarks/ scripts muertos.** Revisar `benchmarks/test_*.py` y `.gd` obsoletos. | `benchmarks/` | Solo benchmarks activos y documentados |
+
+**Riesgos de Fase B:**
+- Algunos scripts de build (`heren-build.bat`) pueden depender de rutas `.temp/`. Actualizarlos.
+- Si se archiva `bridge.py`, asegurar que `install_mcp.py` apunta a `heren-server.exe`, no al bridge.
+
+---
+
+### Fase C — Reorganización estructural
+
+**Objetivo:** Separar responsabilidades y reducir tamaño de archivos monolito.
+
+| # | Acción | Archivos afectados | Criterio de éxito |
+|---|--------|--------------------|-------------------|
+| C1 | **Extraer helpers puros a `crates/heren-server/src/pure.rs`.** `normalize_scene_path`, `args`, `unwrap_result`. | `crates/heren-server/src/server.rs` → `crates/heren-server/src/pure.rs` | `server.rs` < 1.400 líneas; tests unitarios existen en `pure.rs` |
+| C2 | **Dividir `animation_handlers.gd`.** Separar animación, skeleton y utilidades. | `addons/heren/handlers/animation_handlers.gd` → `addons/heren/handlers/animation/animation_handlers.gd`, `skeleton_handlers.gd`, `animation_utils.gd` | Cada archivo < 1.000 líneas; dispatcher registra los nuevos handlers |
+| C3 | **Dividir `project_handlers.gd`.** setting, autoload, input_map en archivos propios. | `addons/heren/handlers/project_handlers.gd` → `project_setting.gd`, `project_autoload.gd`, `project_input_map.gd` | Cada archivo < 400 líneas |
+| C4 | **Definir interfaz `IHerenHandler`.** Contrato base para todos los handlers (`set_editor_plugin`, `register_with`). | `addons/heren/handlers/heren_handler.gd` | Todos los handlers extienden/ implementan el contrato |
+| C5 | **Centralizar constantes mágicas.** Timeouts, rutas Godot, prefijos `res://` en un `const.gd` / `constants.rs`. | `addons/heren/constants.gd`, `crates/heren-server/src/constants.rs` | Ningún número/string mágico duplicado; búsqueda de `"res://"` limitada a constantes |
+| C6 | **Crear `heren_error.gd`.** Shape estándar de error para todos los handlers. | `addons/heren/heren_error.gd` | Todos los handlers retornan el mismo dict de error |
+| C7 | **Reorganizar tests Python.** Si se conservan, que sean tests de integración con fixtures. | `tests/test_tools/`, `tests/test_integration/` | Todos los tests Python usan fixtures o mocks |
+
+**Riesgos de Fase C:**
+- Dividir handlers cambia nombres de métodos. Actualizar `dispatcher.gd` y `editor_plugin.gd`.
+- Extraer `pure.rs` requiere exportar funciones; preferir `pub(crate)` si solo se usan internamente, o `pub` si los tests las necesitan.
+
+---
+
+### Fase D — Tests y calidad
+
+**Objetivo:** Tener una batería de tests rápidos y CI que eviten regresiones.
+
+| # | Acción | Archivos afectados | Criterio de éxito |
+|---|--------|--------------------|-------------------|
+| D1 | **Completar tests Rust.** Asegurar que `tool_latency.rs` y `registry_mutability.rs` pasan y ajustar umbrales tras baseline. | `crates/heren-server/tests/tool_latency.rs`, `crates/heren-server/tests/registry_mutability.rs` | `cargo test --test tool_latency` y `cargo test --test registry_mutability` verdes |
+| D2 | **Añadir tests GUT.** Instalar GUT en `addons/heren/tests/` o como dev dependency. | `addons/heren/tests/test_node_mutability.gd` | `godot --headless --path addons/heren/tests` ejecuta el test y pasa |
+| D3 | **Clippy pedante.** Activar `#![warn(clippy::pedantic)]` o pasar `-- -W clippy::pedantic`. | `crates/heren-server/src/lib.rs`, `crates/heren-server/src/*.rs` | 0 warnings de clippy en CI |
+| D4 | **Tests de paridad reforzados.** `tools_parity.rs` debe verificar que cada tool tenga `description` no vacía y schema válido. | `crates/heren-server/tests/tools_parity.rs` | Test verifica firma/descripción de cada tool |
+| D5 | **Benchmarks con Criterion.** Migrar benchmarks Python ad-hoc a `criterion` en Rust para mediciones estables. | `crates/heren-server/benches/` | `cargo bench` genera reporte comparativo |
+| D6 | **Validación headless en CI.** Ejecutar `godot --headless --editor --path fixtures/empty_project --quit-after 3` y grep de `SCRIPT ERROR\|Parse Error`. | `.github/workflows/ci.yml` | CI falla si hay parse error en handlers |
+
+**Riesgos de Fase D:**
+- GUT requiere editor de Godot en CI. Usar imagen Docker con Godot o descargar el binario en el workflow.
+- Umbrales de `tool_latency.rs` pueden variar entre debug/release. Ajustar o usar `#[ignore]` para benchmarks.
+
+---
+
+### Fase E — Pulido de UX/contribución
+
+**Objetivo:** Bajar la barrera de entrada para nuevos contribuidores y para el agente de OpenCode.
+
+| # | Acción | Archivos afectados | Criterio de éxito |
+|---|--------|--------------------|-------------------|
+| E1 | **Mejorar `CONTRIBUTING.md`.** Paso a paso: cómo añadir una tool (Rust schema, GDScript handler, tests, docs). | `CONTRIBUTING.md` | Un nuevo contribuidor puede añadir una tool sin preguntar |
+| E2 | **Documentar instalación one-liner.** Release con `heren-server.exe` + instrucciones de `heren-server setup`. | `README.md`, `INSTALL.md` | Instalación en ≤5 comandos |
+| E3 | **Añadir tool `help/introspect`.** Devuelve args relevantes para una `action` concreta. | `crates/heren-server/src/server.rs`, `addons/heren/handlers/...` | El agente recibe un schema reducido por acción |
+| E4 | **Revisar README competitor.** Verificar que `.competitors/` refleja capacidades reales. | `.competitors/*/ANALYSIS.md`, `README.md` | Tabla comparativa sin afirmaciones falsas |
+| E5 | **Decidir política de UIDs.** Documentar si `.uid` se versionan o se ignoran. | `.gitignore`, `AGENTS.md` | Decisión explícita y consistente |
+
+**Riesgos de Fase E:**
+- Añadir `help/introspect` incrementa el surface MCP. Considerar si es realmente necesario o si basta con mejorar `description` por acción.
+
+### Orden recomendado
+
+```
+A1 → A2 → A3 → A4 → A5 → A6 → B1..B7 → C1..C7 → D1..D6 → E1..E5
+```
+
+**Regla de oro:** no entrar en Fase C (refactor) hasta que Fase A (compilación) y Fase B (poda) estén completas y verdes en CI.
 
 ---
 
@@ -56,10 +165,16 @@ OpenCode —STDIO NDJSON→ HerenServer.exe (Rust/FlojoMCP, WS server local 127.
 ```
 crates/heren-server/    # server Rust (src/: editor, launcher, registry, server, ws_plugin_server; tests/)
 addons/heren/           # FUENTE del plugin (copiable a cualquier proyecto)
-scripts: heren-build.bat (VsDevCmd+debug+test+release+clippy) · run.bat · install_mcp.py · deploy-fix.bat (rename exe en uso→copia nuevo)
-src/heren/              # bridge Python (fallback, NO activo)
-.temp/ · tests/ · benchmarks/
+scripts/                # heren-build.bat (VsDevCmd+debug+test+release+clippy) · run.bat · install_mcp.py · deploy-fix.bat
+fixtures/               # proyectos Godot mínimos para tests (empty_project/)
+.temp/ · tests/ · benchmarks/  # tests activos en Rust/GUT; Python v3 archivado en rama archive/v3
 ```
+
+**Notas post-limpieza (v4.4.3):**
+- `src/heren/` quedó vacío y se eliminó. El bridge Python v4 y el daemon v3 viven ahora solo en la rama `archive/v3`.
+- `scripts/` es el único lugar para build scripts; la raíz contiene documentación y configuración del workspace Rust.
+- `tests/` contiene solo `README.md`; los tests activos son `crates/heren-server/tests/` (Rust) y `addons/heren/tests/` (GUT).
+- `benchmarks/` contiene solo `README.md`; los benchmarks Python fueron archivados.
 
 ---
 
@@ -217,10 +332,11 @@ Playback+inspección · edición+one_shot · avanzado (blend spaces 1D/2D, tween
 
 ## 13. Checklist
 
+- [x] ¿Plan de limpieza §0.1 completado hasta Fase B? ¿Fase A verde antes de tocar C?
 - [ ] ¿undo/redo en mutaciones de escena? ¿coords unificadas + `tokens_estimate` en visual?
-- [ ] ¿Tests (Rust) + GUT? ¿documentado en AGENTS.md?
+- [ ] ¿Tests Rust (`tool_latency.rs`, `registry_mutability.rs`) + GUT (`test_node_mutability.gd`)? ¿documentado en AGENTS.md?
 - [ ] ¿Validado `--check-only` + grafo completo headless tras editar handlers?
-- [ ] ¿Cambios al plugin SOLO en `addons/heren/` (nunca LAIKA)? ¿bridge v4 operativo?
+- [ ] ¿Cambios al plugin SOLO en `addons/heren/` (nunca LAIKA)? ¿bridge v4 archivado?
 - [ ] ¿Sesión nueva tras recompilar el server?
 
 ---

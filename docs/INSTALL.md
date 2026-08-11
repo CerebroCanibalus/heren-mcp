@@ -27,8 +27,8 @@ cargo build --release
 # → target/release/heren-server.exe   (~7 MB)
 ```
 
-> 💡 En Windows, `run.bat` ya compila y lanza el server. También hay un
-> `heren-build.bat` que carga VsDevCmd del Build Tools 2022 antes de compilar.
+> 💡 En Windows, `scripts/run.bat` ya compila y lanza el server. También hay un
+> `scripts/heren-build.bat` que carga VsDevCmd del Build Tools 2022 antes de compilar.
 
 ---
 

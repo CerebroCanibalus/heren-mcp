@@ -1,4 +1,4 @@
-//! Launcher del editor Godot — port de `src/heren/v4/godot_launcher.py`.
+//! Launcher del editor Godot — port del bridge Python v4 (archivado en `archive/v3`).
 //!
 //! Auto-launch en `session/open`: encuentra el ejecutable Godot, instala el
 //! plugin v4 en el proyecto si falta, lo habilita en project.godot, y lanza
@@ -148,7 +148,10 @@ pub fn ensure_plugin_installed(project_path: &str) -> (bool, String) {
             ),
         )
     } else if changed {
-        (true, format!("synced {} file(s) from {}", src_files.len(), src.display()))
+        (
+            true,
+            format!("synced {} file(s) from {}", src_files.len(), src.display()),
+        )
     } else {
         (false, "plugin up-to-date (no changes)".into())
     }
@@ -189,7 +192,12 @@ fn files_differ(a: &Path, b: &Path) -> bool {
 
 /// Lee la versión del plugin instalado en un proyecto (addons/heren/plugin.cfg).
 pub fn read_plugin_version(project_path: &str) -> Option<String> {
-    read_cfg_version(&Path::new(project_path).join("addons").join("heren").join("plugin.cfg"))
+    read_cfg_version(
+        &Path::new(project_path)
+            .join("addons")
+            .join("heren")
+            .join("plugin.cfg"),
+    )
 }
 
 /// Lee la versión del plugin source (heren-mcp/addons/heren).
@@ -573,9 +581,15 @@ pub fn plugin_integrity(project_path: &str) -> Vec<PluginFileStatus> {
         let (status, installed_size) = if !to.exists() {
             ("missing".to_string(), None)
         } else if files_differ(&from, &to) {
-            ("stale".to_string(), std::fs::metadata(&to).ok().map(|m| m.len()))
+            (
+                "stale".to_string(),
+                std::fs::metadata(&to).ok().map(|m| m.len()),
+            )
         } else {
-            ("ok".to_string(), std::fs::metadata(&to).ok().map(|m| m.len()))
+            (
+                "ok".to_string(),
+                std::fs::metadata(&to).ok().map(|m| m.len()),
+            )
         };
         out.push(PluginFileStatus {
             rel: rel.to_string_lossy().replace('\\', "/"),
@@ -797,7 +811,10 @@ mod tests {
         );
         // El filtro del proceso debe aceptar esta línea.
         let is_editor_of_proj = cmd.contains("project.godot") && cmd.contains(&proj_norm);
-        assert!(is_editor_of_proj, "debe detectarse como editor del proyecto");
+        assert!(
+            is_editor_of_proj,
+            "debe detectarse como editor del proyecto"
+        );
         let pid: u32 = parts[2].trim().parse().expect("PID debe parsear a u32");
         assert_eq!(pid, 16200);
     }
@@ -921,9 +938,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         write_project(
             &dir,
-            &format!(
-                "[application]\nconfig/name=\"test\"\n\n[editor_plugins]\n{CANONICAL}\n"
-            ),
+            &format!("[application]\nconfig/name=\"test\"\n\n[editor_plugins]\n{CANONICAL}\n"),
         );
         let result = enable_plugin_in_project(dir.to_str().unwrap());
         assert!(
@@ -970,7 +985,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         // Proyecto inexistente → Err real (no Ok(false)).
         let result = enable_plugin_in_project(&dir.join("nope").to_string_lossy());
-        assert!(result.is_err(), "proyecto inexistente = Err real: {result:?}");
+        assert!(
+            result.is_err(),
+            "proyecto inexistente = Err real: {result:?}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -979,7 +997,8 @@ mod tests {
     /// Usa el SOURCE real (plugin_source default) como referencia y un
     /// proyecto fake con los mismos archivos: plugin.cfg ok + handler stale.
     #[test]
-    fn integrity_detects_stale_and_orphan() {        let src = plugin_source();
+    fn integrity_detects_stale_and_orphan() {
+        let src = plugin_source();
         if !src.join("plugin.cfg").exists() {
             eprintln!("skip: plugin source no disponible");
             return;
@@ -1005,13 +1024,19 @@ mod tests {
         );
         // Corromper 1 handler (como project_rat: core nuevo + handler viejo).
         std::fs::write(
-            proj.join("addons").join("heren").join("handlers").join("debug_handlers.gd"),
+            proj.join("addons")
+                .join("heren")
+                .join("handlers")
+                .join("debug_handlers.gd"),
             "func old_api() -> void:\n\tpass\n",
         )
         .unwrap();
         // Orphan: archivo que no existe en source.
         std::fs::write(
-            proj.join("addons").join("heren").join("handlers").join("ghost.gd.uid"),
+            proj.join("addons")
+                .join("heren")
+                .join("handlers")
+                .join("ghost.gd.uid"),
             "uid://x",
         )
         .unwrap();
@@ -1022,7 +1047,9 @@ mod tests {
             matches!(plugin_cfg.map(|f| f.status.as_str()), Some("ok")),
             "plugin.cfg debe estar ok: {report:?}"
         );
-        let dbg = report.iter().find(|f| f.rel == "handlers/debug_handlers.gd");
+        let dbg = report
+            .iter()
+            .find(|f| f.rel == "handlers/debug_handlers.gd");
         assert!(
             matches!(dbg.map(|f| f.status.as_str()), Some("stale")),
             "debug_handlers.gd debe estar stale (mezcla toxica): {report:?}"

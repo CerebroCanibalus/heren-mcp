@@ -1,1 +1,0 @@
-# Heren MCP Benchmarks

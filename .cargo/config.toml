@@ -1,0 +1,19 @@
+# Cargo config del workspace Heren MCP.
+#
+# PROBLEMA: el VS 18 Insiders (Community 2026 Preview) tiene link.exe (14.51)
+# pero está INCOMPLETO (le falta lib/x64/msvcrt.lib). rustc/cc lo detecta como
+# el toolset más nuevo y falla con LNK1104. El VS 2022 BuildTools está completo.
+#
+# SOLUCIÓN: fijar el toolset MSVC del VS 2022 BuildTools (14.44.35207) para que
+# cargo no dependa de la detección automática ni de VsDevCmd. Ver rutas con:
+#   cmd /c "call \"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat\" -arch=x64 && set LIB"
+#
+# Si el VS 18 se completa algún día, borrar este archivo.
+
+[target.x86_64-pc-windows-msvc]
+linker = "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.44.35207/bin/HostX64/x64/link.exe"
+
+[env]
+# Rutas LIB del toolset MSVC 14.44 + Windows SDK 10.0.26100.0 + NETFXSDK 4.8.
+# (Las dobles barras en TOML = una barra literal de Windows.)
+LIB = "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.44.35207/lib/x64;C:/Program Files (x86)/Windows Kits/NETFXSDK/4.8/lib/um/x64;C:/Program Files (x86)/Windows Kits/10/lib/10.0.26100.0/ucrt/x64;C:/Program Files (x86)/Windows Kits/10/lib/10.0.26100.0/um/x64"

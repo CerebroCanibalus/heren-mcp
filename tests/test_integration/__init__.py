@@ -1,1 +1,0 @@
-# Heren MCP Test Integration

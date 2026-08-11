@@ -127,7 +127,10 @@ impl EditorRegistry {
     pub async fn editor_plugin_version(&self, project_path: &str) -> Option<String> {
         let key = normalize_project_path(project_path);
         let state = self.state.lock().await;
-        state.editors.get(&key).and_then(|h| h.plugin_version.clone())
+        state
+            .editors
+            .get(&key)
+            .and_then(|h| h.plugin_version.clone())
     }
 
     /// Proyectos con editor vivo.

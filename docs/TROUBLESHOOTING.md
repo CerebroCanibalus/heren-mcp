@@ -318,7 +318,9 @@ If your issue isn't listed here:
 1. Check the logs for detailed error messages
 2. Run with debug logging:
    ```bash
-   python -m heren.server --log-level DEBUG
+   heren-server.exe --log-level DEBUG
+   # o, si compilas desde fuente:
+   cargo run --bin heren-server -- --log-level DEBUG
    ```
 
 3. Check if it's a known issue in the project repository

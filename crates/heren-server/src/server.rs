@@ -479,11 +479,22 @@ async fn scene(
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref())?;
     let registry = EditorRegistry::global();
-    let explicit_path = scene_path.clone().map(|p| normalize_scene_path(&p)).unwrap_or_default();
+    let explicit_path = scene_path
+        .clone()
+        .map(|p| normalize_scene_path(&p))
+        .unwrap_or_default();
     let scene_path = scene_path.as_deref().map(normalize_scene_path);
     let a = args(&[
-        ("scene_path", scene_path.as_deref().map(|s| Value::String(s.to_string()))),
-        ("output_path", output_path.map(|p| normalize_scene_path(&p)).map(Value::String)),
+        (
+            "scene_path",
+            scene_path.as_deref().map(|s| Value::String(s.to_string())),
+        ),
+        (
+            "output_path",
+            output_path
+                .map(|p| normalize_scene_path(&p))
+                .map(Value::String),
+        ),
         ("root_type", root_type.map(Value::String)),
         ("root_name", root_name.map(Value::String)),
     ]);
@@ -557,11 +568,17 @@ async fn node(
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref())?;
     let registry = EditorRegistry::global();
-    let scene_path = scene_path.as_deref().map(normalize_scene_path).unwrap_or_default();
+    let scene_path = scene_path
+        .as_deref()
+        .map(normalize_scene_path)
+        .unwrap_or_default();
     let a = apply_scene_context(
         &proj,
         args(&[
-            ("scene_path", (!scene_path.is_empty()).then(|| Value::String(scene_path.clone()))),
+            (
+                "scene_path",
+                (!scene_path.is_empty()).then(|| Value::String(scene_path.clone())),
+            ),
             ("node_path", node_path.map(Value::String)),
             ("node_type", node_type.map(Value::String)),
             ("node_name", node_name.map(Value::String)),
@@ -591,11 +608,17 @@ async fn node_query(
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref())?;
     let registry = EditorRegistry::global();
-    let scene_path = scene_path.as_deref().map(normalize_scene_path).unwrap_or_default();
+    let scene_path = scene_path
+        .as_deref()
+        .map(normalize_scene_path)
+        .unwrap_or_default();
     let a = apply_scene_context(
         &proj,
         args(&[
-            ("scene_path", (!scene_path.is_empty()).then(|| Value::String(scene_path.clone()))),
+            (
+                "scene_path",
+                (!scene_path.is_empty()).then(|| Value::String(scene_path.clone())),
+            ),
             ("node_path", node_path.map(Value::String)),
             ("property_name", property_name.map(Value::String)),
             ("recursive", recursive.map(|v| json!(v))),
@@ -621,11 +644,17 @@ async fn node_props(
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref())?;
     let registry = EditorRegistry::global();
-    let scene_path = scene_path.as_deref().map(normalize_scene_path).unwrap_or_default();
+    let scene_path = scene_path
+        .as_deref()
+        .map(normalize_scene_path)
+        .unwrap_or_default();
     let a = apply_scene_context(
         &proj,
         args(&[
-            ("scene_path", (!scene_path.is_empty()).then(|| Value::String(scene_path.clone()))),
+            (
+                "scene_path",
+                (!scene_path.is_empty()).then(|| Value::String(scene_path.clone())),
+            ),
             ("node_path", node_path.map(Value::String)),
             ("property_name", property_name.map(Value::String)),
             ("value", value),
@@ -633,7 +662,10 @@ async fn node_props(
             ("index", index.map(|i| json!(i))),
         ]),
     );
-    let mutating = matches!(action.as_str(), "set_prop" | "set_props" | "array_append" | "array_remove");
+    let mutating = matches!(
+        action.as_str(),
+        "set_prop" | "set_props" | "array_append" | "array_remove"
+    );
     if mutating {
         forward_mutating(registry, &proj, &format!("node/{action}"), a, &scene_path).await
     } else {
@@ -910,11 +942,17 @@ async fn shader(
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref())?;
     let registry = EditorRegistry::global();
-    let scene_path = scene_path.as_deref().map(normalize_scene_path).unwrap_or_default();
+    let scene_path = scene_path
+        .as_deref()
+        .map(normalize_scene_path)
+        .unwrap_or_default();
     let a = apply_scene_context(
         &proj,
         args(&[
-            ("scene_path", (!scene_path.is_empty()).then(|| Value::String(scene_path.clone()))),
+            (
+                "scene_path",
+                (!scene_path.is_empty()).then(|| Value::String(scene_path.clone())),
+            ),
             ("shader_path", shader_path.map(Value::String)),
             ("shader_type", shader_type.map(Value::String)),
             ("code", code.map(Value::String)),
@@ -1022,11 +1060,17 @@ async fn animation(
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref())?;
     let registry = EditorRegistry::global();
-    let scene_path = scene_path.as_deref().map(normalize_scene_path).unwrap_or_default();
+    let scene_path = scene_path
+        .as_deref()
+        .map(normalize_scene_path)
+        .unwrap_or_default();
     let a = apply_scene_context(
         &proj,
         args(&[
-            ("scene_path", (!scene_path.is_empty()).then(|| Value::String(scene_path.clone()))),
+            (
+                "scene_path",
+                (!scene_path.is_empty()).then(|| Value::String(scene_path.clone())),
+            ),
             ("parent_path", parent_path.map(Value::String)),
             ("player_name", player_name.map(Value::String)),
             ("player_path", player_path.map(Value::String)),
@@ -1101,14 +1145,40 @@ async fn animation(
     // 2026-08-07); las de lectura (get_*/preview) no mutan el Ã¡rbol.
     let mutating = matches!(
         action.as_str(),
-        "create_player" | "create" | "add_track" | "add_key" | "state_machine"
-            | "remove_track" | "remove_key" | "update_key" | "update_props" | "one_shot"
-            | "record" | "from_path" | "loop_pose" | "capture_pose" | "tree_activate"
-            | "tree_travel" | "tree_set_param" | "duplicate" | "delete" | "rename"
-            | "reverse" | "blend_pose" | "retarget" | "tween"
+        "create_player"
+            | "create"
+            | "add_track"
+            | "add_key"
+            | "state_machine"
+            | "remove_track"
+            | "remove_key"
+            | "update_key"
+            | "update_props"
+            | "one_shot"
+            | "record"
+            | "from_path"
+            | "loop_pose"
+            | "capture_pose"
+            | "tree_activate"
+            | "tree_travel"
+            | "tree_set_param"
+            | "duplicate"
+            | "delete"
+            | "rename"
+            | "reverse"
+            | "blend_pose"
+            | "retarget"
+            | "tween"
     );
     if mutating {
-        forward_mutating(registry, &proj, &format!("animation/{action}"), a, &scene_path).await
+        forward_mutating(
+            registry,
+            &proj,
+            &format!("animation/{action}"),
+            a,
+            &scene_path,
+        )
+        .await
     } else {
         forward(registry, &proj, &format!("animation/{action}"), a).await
     }
@@ -1203,7 +1273,9 @@ async fn skeleton(
 // TILEMAP
 // ============================================================
 
-#[tool(description = "TileMaps/TileSets (v4.6): inspect_set|inspect_map|set_cell|terrain|pattern. TODOS los args opcionales (defaults por action).")]
+#[tool(
+    description = "TileMaps/TileSets (v4.6): inspect_set|inspect_map|set_cell|terrain|pattern. TODOS los args opcionales (defaults por action)."
+)]
 #[allow(clippy::too_many_arguments)]
 async fn tilemap(
     action: String,
@@ -1224,11 +1296,17 @@ async fn tilemap(
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref())?;
     let registry = EditorRegistry::global();
-    let scene_path = scene_path.as_deref().map(normalize_scene_path).unwrap_or_default();
+    let scene_path = scene_path
+        .as_deref()
+        .map(normalize_scene_path)
+        .unwrap_or_default();
     let a = apply_scene_context(
         &proj,
         args(&[
-            ("scene_path", (!scene_path.is_empty()).then(|| Value::String(scene_path.clone()))),
+            (
+                "scene_path",
+                (!scene_path.is_empty()).then(|| Value::String(scene_path.clone())),
+            ),
             ("tileset_path", tileset_path.map(Value::String)),
             ("tilemap_path", tilemap_path.map(Value::String)),
             ("layer", layer.map(|v| json!(v))),
@@ -1246,7 +1324,14 @@ async fn tilemap(
     // Tilemap: set_cell/terrain/pattern mutan el mapa (dirty); inspect_* no.
     let mutating = matches!(action.as_str(), "set_cell" | "terrain" | "pattern");
     if mutating {
-        forward_mutating(registry, &proj, &format!("tilemap/{action}"), a, &scene_path).await
+        forward_mutating(
+            registry,
+            &proj,
+            &format!("tilemap/{action}"),
+            a,
+            &scene_path,
+        )
+        .await
     } else {
         forward(registry, &proj, &format!("tilemap/{action}"), a).await
     }
@@ -1278,7 +1363,13 @@ async fn debug(
     let proj = resolve_project(project_path.as_deref())?;
     let registry = EditorRegistry::global();
     let a = args(&[
-        ("scene_path", scene_path.as_deref().map(normalize_scene_path).map(Value::String)),
+        (
+            "scene_path",
+            scene_path
+                .as_deref()
+                .map(normalize_scene_path)
+                .map(Value::String),
+        ),
         ("op", op.map(Value::String)),
         ("path", path.map(Value::String)),
         ("line", line.map(|v| json!(v))),
@@ -1309,7 +1400,13 @@ async fn validate(
     let proj = resolve_project(project_path.as_deref())?;
     let registry = EditorRegistry::global();
     let a = args(&[
-        ("scene_path", scene_path.as_deref().map(normalize_scene_path).map(Value::String)),
+        (
+            "scene_path",
+            scene_path
+                .as_deref()
+                .map(normalize_scene_path)
+                .map(Value::String),
+        ),
         ("script_path", script_path.map(Value::String)),
         ("node_path", node_path.map(Value::String)),
         ("resource_path", resource_path.map(Value::String)),
@@ -1336,11 +1433,17 @@ async fn signal(
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref())?;
     let registry = EditorRegistry::global();
-    let scene_path = scene_path.as_deref().map(normalize_scene_path).unwrap_or_default();
+    let scene_path = scene_path
+        .as_deref()
+        .map(normalize_scene_path)
+        .unwrap_or_default();
     let a = apply_scene_context(
         &proj,
         args(&[
-            ("scene_path", (!scene_path.is_empty()).then(|| Value::String(scene_path.clone()))),
+            (
+                "scene_path",
+                (!scene_path.is_empty()).then(|| Value::String(scene_path.clone())),
+            ),
             ("from_node", from_node.map(Value::String)),
             ("to_node", to_node.map(Value::String)),
             ("signal_name", signal_name.map(Value::String)),
@@ -1487,7 +1590,13 @@ async fn visual_text(
     let a = apply_scene_context(
         &proj,
         args(&[
-            ("scene_path", scene_path.as_deref().map(normalize_scene_path).map(Value::String)),
+            (
+                "scene_path",
+                scene_path
+                    .as_deref()
+                    .map(normalize_scene_path)
+                    .map(Value::String),
+            ),
             ("max_depth", max_depth.map(|v| json!(v))),
         ]),
     );
@@ -1522,7 +1631,13 @@ async fn visual_image(
     let a = apply_scene_context(
         &proj,
         args(&[
-            ("scene_path", scene_path.as_deref().map(normalize_scene_path).map(Value::String)),
+            (
+                "scene_path",
+                scene_path
+                    .as_deref()
+                    .map(normalize_scene_path)
+                    .map(Value::String),
+            ),
             ("viewport", viewport.map(Value::String)),
             ("source", source.map(Value::String)),
             ("max_side", max_side.map(|v| json!(v))),
@@ -1614,22 +1729,34 @@ mod tests {
 
     #[test]
     fn normalize_scene_path_adds_res_prefix() {
-        assert_eq!(normalize_scene_path("scenes/level1.tscn"), "res://scenes/level1.tscn");
+        assert_eq!(
+            normalize_scene_path("scenes/level1.tscn"),
+            "res://scenes/level1.tscn"
+        );
     }
 
     #[test]
     fn normalize_scene_path_converts_backslashes() {
-        assert_eq!(normalize_scene_path("res:\\scenes\\level1.tscn"), "res://scenes/level1.tscn");
+        assert_eq!(
+            normalize_scene_path("res:\\scenes\\level1.tscn"),
+            "res://scenes/level1.tscn"
+        );
     }
 
     #[test]
     fn normalize_scene_path_strips_trailing_slash() {
-        assert_eq!(normalize_scene_path("res://scenes/level1.tscn/"), "res://scenes/level1.tscn");
+        assert_eq!(
+            normalize_scene_path("res://scenes/level1.tscn/"),
+            "res://scenes/level1.tscn"
+        );
     }
 
     #[test]
     fn normalize_scene_path_keeps_clean() {
-        assert_eq!(normalize_scene_path("res://scenes/level1.tscn"), "res://scenes/level1.tscn");
+        assert_eq!(
+            normalize_scene_path("res://scenes/level1.tscn"),
+            "res://scenes/level1.tscn"
+        );
     }
 
     #[test]

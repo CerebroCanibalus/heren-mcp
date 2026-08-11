@@ -1,6 +1,6 @@
 //! WS plugin server — el EditorPlugin Godot conecta aquí (patrón gopeak).
 //!
-//! Port de `src/heren/v4/ws_server.py` (flujo de conexión del plugin):
+//! WebSocket plugin server — port del bridge Python v4 (archivado en `archive/v3`).
 //! 1. El plugin conecta como WS client e inmediatamente manda
 //!    `notifications/godot_ready` con su `project_path`.
 //! 2. El server registra el editor en el `EditorRegistry` (project_path → canal).
@@ -157,7 +157,9 @@ async fn handle_frame(
                 "godot_ready"
             );
             // El registry.register toma el tx (canal de salida).
-            registry.register_ctrl(key.clone(), tx.clone(), plugin_version).await;
+            registry
+                .register_ctrl(key.clone(), tx.clone(), plugin_version)
+                .await;
             *project_path = Some(key);
         }
         "notifications/ping" | "notifications/pong" => {

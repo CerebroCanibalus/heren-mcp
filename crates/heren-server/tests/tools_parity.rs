@@ -4,7 +4,8 @@
 use flojo_mcp::prelude::*;
 use heren_server::Heren;
 
-/// Lista de tools esperadas (paridad con `src/heren/v4/bridge.py` + v4.6 split).
+/// Lista de tools esperadas (paridad con bridge Python v4 archivado en
+/// `archive/v3` + v4.6 split).
 /// v4.6: `visual` → `visual_text` + `visual_image`; `node` → `node` + `node_query` + `node_props`.
 const EXPECTED_TOOLS: &[&str] = &[
     "session",

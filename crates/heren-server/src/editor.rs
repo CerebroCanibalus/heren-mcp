@@ -1,4 +1,4 @@
-//! Editor connection types — port de `src/heren/v4/ws_server.py`.
+//! Editor connection types — port del bridge Python v4 (archivado en `archive/v3`).
 //!
 //! Un editor conectado = proyecto (project_path canónico) + canal WS.
 

@@ -19,6 +19,8 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+.pytest_cache/
+.ruff_cache/
 
 # Virtual environments
 venv/
@@ -32,7 +34,6 @@ ENV/
 *.swo
 
 # Godot
-.import/
 export.cfg
 export_presets.cfg
 *.tmp
@@ -53,14 +54,6 @@ Thumbs.db
 
 # Temp/testing
 .temp/
-*.check.py
-check_*.py
-run_daemon*.bat
-test_daemon*.bat
-
-check_syntax.bat
-test_daemon_output.py
-
 
 # Rust workspace (heren-server)
 target/
@@ -68,3 +61,8 @@ crates/heren-server/target/
 
 # OpenCode local state (memory plugin garbage)
 .opencode/
+
+# Godot UIDs: los .uid de recursos propios se versionan; los autogenerados del
+# .godot/ y reimportaciones se ignoran. Decisión explícita en AGENTS.md.
+.godot/
+.import/

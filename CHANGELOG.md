@@ -1,5 +1,38 @@
 # Changelog — Heren MCP
 
+## [Unreleased] - 2026-08-10 - Fases A y B de limpieza
+
+### 📋 Auditoría
+
+- Nuevo `AUDIT-2026-08-10.md`: crítica de diseño, mantenibilidad, workflow y confort; bloqueantes críticos; propuesta de reorganización.
+- Registrados en `AGENTS.md` pendientes derivados del audit.
+
+### 🧹 Fases A y B: limpieza de sangrado y poda de código muerto
+
+- **Fase A:**
+  - Limpieza de `.pyc`, `__pycache__`, `.temp/` y actualización de `.gitignore`.
+  - Scripts de build reubicados de raíz a `scripts/` (`heren-build.bat`, `run.bat`, `install_mcp.py`, `deploy-fix.bat`, `setup_plugin.bat`, `install_plugin.py`, `ws_test_server.py`).
+  - Nuevo fixture `fixtures/empty_project/project.godot` para tests autónomos.
+  - CI mínima en `.github/workflows/ci.yml` (Rust fmt/clippy/test, Godot headless, Python lint).
+  - Verificado: `cargo test --all` pasa (47 tests). Dependencia `flojo-mcp` por path resuelve correctamente.
+
+- **Fix linker LNK1104 (`msvcrt.lib` no encontrado):**
+  - Causa: VS 18 Insiders (Community 2026 Preview) tiene `link.exe` (MSVC 14.51) pero está INCOMPLETO — falta `lib/x64/msvcrt.lib`. rustc/cc lo detecta como el toolset más nuevo y falla al linkear.
+  - Fix: nuevo `.cargo/config.toml` fija el toolset del VS 2022 BuildTools (MSVC 14.44.35207 + Windows SDK 10.0.26100.0) como linker y `LIB` explícito. Cargo ya no depende de VsDevCmd ni de la detección automática.
+  - Si el VS 18 se completa algún día (componente `Microsoft.VisualStudio.Component.VC.Tools.x86.x64`), borrar `.cargo/config.toml`.
+
+- **Fase B:**
+  - Creada rama local `archive/v3` con todo el código Python/daemon v3.
+  - Eliminado de `main`: `src/heren/daemon/`, `src/heren/tools/`, `src/heren/core/session_manager.py`, `src/heren/v4/`, `src/heren/server.py`, `src/heren/i18n/`, `src/heren/bridges/`, `src/heren/__init__.py`.
+  - Eliminados tests y benchmarks Python obsoletos (`tests/test_*/`, `benchmarks/*.py`).
+  - Creados `tests/README.md` y `benchmarks/README.md` explicando dónde están los tests activos.
+
+### 🧪 Tests nuevos
+
+- `crates/heren-server/tests/tool_latency.rs`: benchmarks de latencia para `list_tools`, validación de schemas y serialización de args (no requieren editor vivo).
+- `crates/heren-server/tests/registry_mutability.rs`: tests de mutabilidad de `EditorRegistry` — dirty tracking, aislamiento por proyecto, unexpected_close y concurrencia.
+- `addons/heren/tests/test_node_mutability.gd`: esqueleto de test GDScript para mutaciones de nodos con undo/redo (requiere editor/GUT).
+
 # Changelog - Heren MCP
 
 ## [4.6.0] - 2026-08-08 - 🧭 REDISEÑO DEL TOOLSET (fin del laberinto)

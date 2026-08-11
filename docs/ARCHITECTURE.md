@@ -199,10 +199,10 @@ def my_tool(action: str, **kwargs) -> dict:
 ```
 
 New tools can be added by:
-1. Creating a module in `src/heren/tools/`
-2. Implementing the tool function
-3. Registering in `server.py`
-4. Registering the new tool in `server.py`
+1. Adding the tool schema and dispatcher entry in `crates/heren-server/src/server.rs`
+2. Implementing the handler in `addons/heren/handlers/<domain>_handlers.gd`
+3. Registering the handler node in `addons/heren/editor_plugin.gd`
+4. Adding parity tests in `crates/heren-server/tests/tools_parity.rs`
 
 ## Performance Benchmarks
 
