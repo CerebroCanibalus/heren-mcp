@@ -25,6 +25,7 @@ const EXPECTED_TOOLS: &[&str] = &[
     "orchestrate",
     "visual_text",
     "visual_image",
+    "help",
     "health",
 ];
 
@@ -49,6 +50,27 @@ async fn all_bridge_tools_exposed() {
             tool.name
         );
     }
+}
+
+#[tokio::test]
+async fn help_tool_is_exposed_with_schema() {
+    let tester = FlojoTester::with_context(Heren::new(), Context::default());
+    let tools = tester.list_tools().await.expect("list_tools");
+
+    let help = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "help")
+        .expect("help tool debe estar expuesta");
+    let desc = help.description.as_ref().map_or("", |d| d.as_ref());
+    assert!(!desc.trim().is_empty(), "help debe tener description");
+
+    // El schema de help debe tener el parámetro `tool`.
+    let schema = serde_json::to_value(&help.input_schema).unwrap();
+    let props = schema.get("properties").and_then(|p| p.as_object());
+    assert!(
+        props.map(|p| p.contains_key("tool")).unwrap_or(false),
+        "help debe tener parámetro 'tool'"
+    );
 }
 
 #[tokio::test]
@@ -77,8 +99,9 @@ async fn all_tools_have_non_empty_descriptions_and_action() {
     let tools = tester.list_tools().await.expect("list_tools");
 
     // Excepciones legítimas que no siguen el patrón "1 tool N acciones":
-    // orchestrate (usa plan/plan_file) y health (solo project_path).
-    const TOOLS_WITHOUT_ACTION: &[&str] = &["orchestrate", "health"];
+    // orchestrate (usa plan/plan_file), health (solo project_path) y
+    // help/introspect (usa tool, no action).
+    const TOOLS_WITHOUT_ACTION: &[&str] = &["orchestrate", "health", "help"];
 
     for tool in &tools {
         // description no vacía — el agente depende de ella para saber qué args

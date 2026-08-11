@@ -88,14 +88,14 @@ git clone https://github.com/CerebroCanibalus/heren-mcp.git
 cd heren-mcp
 
 # Opcion A: instalador automatico (compila + registra MCP + verifica)
-python install_mcp.py
+python scripts/install_mcp.py
 
 # Opcion B: manual
 cargo build --release
 # → target/release/heren-server.exe
 ```
 
-> `install_mcp.py` compila el server, registra el MCP `heren` en tu
+> `scripts/install_mcp.py` compila el server, registra el MCP `heren` en tu
 > `opencode.jsonc` (detecta rutas) y verifica el arranque. Ver
 > [docs/INSTALL.md](docs/INSTALL.md).
 

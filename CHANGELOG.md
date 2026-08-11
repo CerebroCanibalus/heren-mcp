@@ -1,5 +1,22 @@
 # Changelog — Heren MCP
 
+## [Unreleased] - 2026-08-11 - Fase E: UX/contribución
+
+### 🆕 Tool help/introspect
+
+- Nueva tool `help` (E3): sin tool → lista todas las tools expuestas; con `tool='X'` → devuelve `description` + `parameters` (schema reducido). Sin mapeo manual (usa `list_tools` del toolset). Añadida a `EXPECTED_TOOLS` y a excepciones de `action` en tests.
+
+### 📚 Documentación/UX
+
+- **E1**: `CONTRIBUTING.md` reescrito para stack Rust+GDScript (el viejo describía Python v3 archivado). Incluye guía paso a paso "cómo añadir una tool" (Rust schema → GDScript handler → registro → tests).
+- **E2**: README apunta a `scripts/install_mcp.py` (movido en Fase A).
+- **E5**: política UIDs — **NO se versionan `.uid`** (`.gitignore: *.uid`; autogenerados por Godot, versionarlos corrompe referencias cross-project).
+- **E4**: comparativa de competidores confirmada (nota honesta ya en README).
+
+Verificado: 51 tests Rust + 5 GDScript verdes, fmt/clippy limpios.
+
+# Changelog - Heren MCP
+
 ## [Unreleased] - 2026-08-11 - Fase D: tests y calidad
 
 ### 🧪 Tests

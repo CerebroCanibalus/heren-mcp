@@ -1623,6 +1623,55 @@ async fn health(project_path: Option<String>) -> Result<Value, ToolError> {
     }))
 }
 
+// ============================================================
+// HELP (introspect) — Fase E3
+// ============================================================
+
+/// Devuelve las tools del server y, si se pide una concreta, su descripción y
+/// los parámetros de su schema (para saber qué args aplican a qué action).
+/// Sin tool concreta → lista todas las tools expuestas.
+#[tool(
+    description = "Ayuda/introspect del toolset: devuelve la lista de tools y, para una tool concreta, su description y los parametros (properties) del schema. Uso: help(tool='node_query') devuelve los args de node_query; help() lista todas."
+)]
+async fn help(tool: Option<String>) -> Result<Value, ToolError> {
+    use flojo_mcp::prelude::{Context, FlojoTester};
+    let tester = FlojoTester::with_context(Heren::new(), Context::default());
+    let tools = tester
+        .list_tools()
+        .await
+        .map_err(|e| ToolError::internal(format!("list_tools: {e}")))?;
+
+    if let Some(name) = tool.filter(|n| !n.trim().is_empty()) {
+        let t = tools
+            .iter()
+            .find(|t| t.name.as_ref() == name)
+            .ok_or_else(|| ToolError::invalid_params(format!("tool desconocida: {name}")))?;
+        let schema = serde_json::to_value(&t.input_schema)
+            .map_err(|e| ToolError::internal(format!("schema: {e}")))?;
+        return Ok(json!({
+            "ok": true,
+            "tool": name,
+            "description": t.description.as_ref().map_or("", |d| d.as_ref()),
+            "parameters": schema.get("properties").cloned().unwrap_or_else(|| json!({})),
+        }));
+    }
+
+    let list: Vec<Value> = tools
+        .iter()
+        .map(|t| {
+            json!({
+                "name": t.name,
+                "description": t.description.as_ref().map_or("", |d| d.as_ref()),
+            })
+        })
+        .collect();
+    Ok(json!({
+        "ok": true,
+        "tools": list,
+        "count": list.len(),
+    }))
+}
+
 /// Punto de entrada del binario.
 pub async fn run() -> Result<(), ServerError> {
     EditorRegistry::init_global();

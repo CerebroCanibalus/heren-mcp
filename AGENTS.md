@@ -21,6 +21,7 @@
 - **Fases A y B completadas** (2026-08-10): limpieza de `.pyc`, `__pycache__`, `.temp/`; archivado de `src/heren/` (daemon, tools, core, v4 bridge, server.py, i18n, bridges); scripts reubicados a `scripts/`; fixture `fixtures/empty_project/` creado; CI `.github/workflows/ci.yml` añadida; `cargo test --all`, `cargo check --all`, `cargo fmt --check` y `cargo clippy --all -- -D warnings` pasan. **Solución linker LNK1104**: `.cargo/config.toml` fija el toolset MSVC del VS 2022 BuildTools (14.44) porque el VS 18 Insiders tiene `link.exe` pero CRT incompleto (falta `msvcrt.lib`). Si el VS 18 se completa, borrar `.cargo/config.toml`.
 - **Fase C completada** (2026-08-11): C1 `pure.rs` (helpers puros + tests); C2 `skeleton_handlers.gd` (hereda de `animation_handlers.gd`, 17 funciones skeleton extraídas); C4 `heren_handler.gd` base + migración de 11 handlers (`extends heren_handler.gd`, sin `var _editor_plugin` duplicada); C5 `constants.gd`/`constants.rs` (puerto WS 9099, timeouts, `default_ws_url()`); C6 `heren_error.gd` (shape estándar + `_err()` en base). C3 (dividir `project_handlers.gd`) y C7 (tests Python) **NO aplicables**: dispatcher rutea por prefix (project/setting y project/input_map → mismo handler); tests Python archivados en Fase B. Verificado grafo headless Godot 4.6.1 exit 0.
 - **Fase D completada** (2026-08-11): D2 `addons/heren/tests/run_tests.gd` (runner GDScript headless, 5 tests de coords/constants/heren_error, ejecutable con `godot --headless --script`); D3 clippy pedantic activo (`#![warn(clippy::pedantic)]` con allows de estilo doc/must_use; lints de código corregidos con `cargo clippy --fix`); D4 `tools_parity.rs` verifica description no vacía + `action` en schema; D5 `benches/pure_helpers.rs` (Criterion, `cargo check --benches` pasa; enlazado requiere cerrar sesiones MCP que bloquean el exe release); D6 CI ejecuta grafo headless con grep de SCRIPT ERROR + runner GDScript. D1 ya verde (tool_latency/registry_mutability). 50 tests Rust + 5 GDScript verdes.
+- **Fase E completada** (2026-08-11): E5 política UIDs (**NO versionar `.uid`**, `.gitignore: *.uid`); E1 `CONTRIBUTING.md` reescrito para stack Rust+GDScript (guía paso a paso "cómo añadir una tool"); E2 README/INSTALL apuntan a `scripts/install_mcp.py`; E3 nueva tool `help` (introspect: lista tools + description + parameters por tool); E4 comparativa competidores confirmada (nota honesta ya en README, datos de `.competitors/`). 51 tests Rust + 5 GDScript verdes.
 
 ---
 
@@ -112,11 +113,11 @@ Plan detallado derivado de `AUDIT-2026-08-10.md`. **Fase A es bloqueante:** sin 
 
 | # | Acción | Archivos afectados | Criterio de éxito |
 |---|--------|--------------------|-------------------|
-| E1 | **Mejorar `CONTRIBUTING.md`.** Paso a paso: cómo añadir una tool (Rust schema, GDScript handler, tests, docs). | `CONTRIBUTING.md` | Un nuevo contribuidor puede añadir una tool sin preguntar |
-| E2 | **Documentar instalación one-liner.** Release con `heren-server.exe` + instrucciones de `heren-server setup`. | `README.md`, `INSTALL.md` | Instalación en ≤5 comandos |
-| E3 | **Añadir tool `help/introspect`.** Devuelve args relevantes para una `action` concreta. | `crates/heren-server/src/server.rs`, `addons/heren/handlers/...` | El agente recibe un schema reducido por acción |
-| E4 | **Revisar README competitor.** Verificar que `.competitors/` refleja capacidades reales. | `.competitors/*/ANALYSIS.md`, `README.md` | Tabla comparativa sin afirmaciones falsas |
-| E5 | **Decidir política de UIDs.** Documentar si `.uid` se versionan o se ignoran. | `.gitignore`, `AGENTS.md` | Decisión explícita y consistente |
+| E1 | **[x] Mejorar `CONTRIBUTING.md`.** Paso a paso: cómo añadir una tool (Rust schema, GDScript handler, tests, docs). | `CONTRIBUTING.md` | Un nuevo contribuidor puede añadir una tool sin preguntar |
+| E2 | **[x] Documentar instalación one-liner.** Release con `heren-server.exe` + instrucciones de `heren-server setup`. | `README.md`, `INSTALL.md` | Instalación en ≤5 comandos |
+| E3 | **[x] Añadir tool `help/introspect`.** Devuelve args relevantes para una `action` concreta. | `crates/heren-server/src/server.rs`, `addons/heren/handlers/...` | El agente recibe un schema reducido por acción |
+| E4 | **[x] Revisar README competitor.** Verificar que `.competitors/` refleja capacidades reales. | `.competitors/*/ANALYSIS.md`, `README.md` | Tabla comparativa sin afirmaciones falsas |
+| E5 | **[x] Decidir política de UIDs.** Documentar si `.uid` se versionan o se ignoran. | `.gitignore`, `AGENTS.md` | Decisión explícita y consistente |
 
 **Riesgos de Fase E:**
 - Añadir `help/introspect` incrementa el surface MCP. Considerar si es realmente necesario o si basta con mejorar `description` por acción.
@@ -208,6 +209,7 @@ fixtures/               # proyectos Godot mínimos para tests (empty_project/)
 | 14 | `visual_text` | coords, summary, ascii (NIVEL 0-1, sin imagen, barato) | Visión textual |
 | 14b | `visual_image` | capture, node (NIVEL 2-3, image_content base64) | Visión imagen |
 | 15 | `health` | server + editor status | Health |
+| 16 | `help` | introspect (lista tools + description + parameters por tool) | Ayuda/introspect |
 
 **Notas:** `node/instantiate` = instancia EXTERNA (`instance=ExtResource`, no copia inline). `coords proactivas` en toda mutación (§7). `animation`+`skeleton` comparten `animation_handlers.gd`. `session/diagnose` = integridad plugin (ok/stale/missing/orphan) + grafo headless en sandbox + estado editor. **v4.6 split de tools**: `node_query`/`node_props`/`visual_text`/`visual_image` = schemas MINIMALES (el server mapea al mismo handler interno `node/*`/`visual/*`). Errores `node_not_found` incluyen `parent_children` (orientación). `rename`/`move` devuelven `previous_path`/`old_parent`. Recursos: pasar PATH string (`res://...`) para ext_resource; dict inline SIN path → warning `resource_incrusted_inline` (se incrustará al guardar).
 **Comparativa competidores** (README "Frente a otros MCPs"): datos VERIFICADOS de `.competitors/`. NUNCA marcar ❌ capacidad que el competidor SÍ tiene; usar sus propios análisis (gopeak `ANALYSIS.md`); re-verificar contra repos al actualizar.
@@ -287,6 +289,7 @@ Playback+inspección · edición+one_shot · avanzado (blend spaces 1D/2D, tween
 | **Visual off-screen** | `get_editor_viewport().get_texture().get_image()` = placeholder 2×2 → `_render_scene_offscreen()`: clona root sin scripts en SubViewport (UPDATE_ALWAYS, own_world_3d+Environment BG_COLOR 3D, transparent 2D), framing de la cámara del editor, 2×`frame_post_draw`. `source:"scene"` (default) \| `"viewport"` (fallback auto si 2×2). Dispatcher completa GDScriptFunctionState (`get_class()`, NO `is`). |
 | **Shader** | 🚨 `Shader.get_errors()` NO EXISTE en 4.7 (`has_method=false`; `var x := sh.get_errors()` = "Cannot infer" = Parse Error → TODO el plugin muerto). Fix: `_shader_structural_issues()` + heurística uniforms (declara pero lista vacía = error). `sh.get_mode()` no `.mode`. **Lección: validar APIs con `has_method()`.** |
 | **Resources** | Sub-recursos inline viajan COMPLETOS (`{"__type":"Resource", resource_class, props}` con filtro STORAGE) — StyleBoxFlat/Curve/Gradient en Theme sobreviven round-trip. Strings `res://`/`user://` → string plano (nunca deserializar: UID sintético corrompía project.godot). |
+| **Política UIDs (E5)** | **NO se versionan `.uid`** (`.gitignore: *.uid`). Godot los genera al importar; versionarlos corrompe referencias cross-project (el plugin se copia a proyectos ajenos con sus propios UIDs). El plugin usa paths `res://` estables, no UIDs. |
 | **project** | `create` sin editor (escribe project.godot directo — evita circular dependency). `setting` con `op` + `restart_required` (prefijos read-at-startup) / `applied_runtime` (viewport, max_fps). `input_map` persistencia REAL: `ProjectSettings.set_setting("input/<action>", {deadzone, events})` — InputMap/ProjectSettings.save() solo RAM. |
 | **Skeleton** | 🚨 Skeleton2D NO tiene find_bone/set_bone_rest (API falsa): huesos = Bone2D hijos `.rest=Transform2D`. `BoneAttachment2D` NO existe (Node2D hijo — Parse Error rompía el plugin). `set_bone_weights(find_bone(), PackedFloat32Array)` (índice, no nombre). IK 2D = FABRIK propio (Godot no tiene nativo). |
 | **Handlers** | `signal/list` defensivo (conn as Dictionary, `.get()`, key `"signal"`). `material.resource_name` (Resource NO tiene `.name`). `_ensure_parent_dir()` antes de escribir. `undo_redo add_do_method` con `callv` (expande Array). Escribir .gd/.tscn/.godot sin BOM (`UTF8Encoding($false)`). |
@@ -334,7 +337,7 @@ Playback+inspección · edición+one_shot · avanzado (blend spaces 1D/2D, tween
 
 ## 13. Checklist
 
-- [x] ¿Plan de limpieza §0.1 completado hasta Fase D? ¿Fase A verde antes de tocar C?
+- [x] ¿Plan de limpieza §0.1 completado hasta Fase E? ¿Fase A verde antes de tocar C?
 - [ ] ¿undo/redo en mutaciones de escena? ¿coords unificadas + `tokens_estimate` en visual?
 - [x] ¿Tests Rust (`tool_latency.rs`, `registry_mutability.rs`) + GDScript (`run_tests.gd`)? ¿documentado en AGENTS.md?
 - [ ] ¿Validado `--check-only` + grafo completo headless tras editar handlers?

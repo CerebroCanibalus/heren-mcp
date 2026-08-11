@@ -1,261 +1,260 @@
 # Contributing to Heren MCP
 
-¡Gracias por tu interés en contribuir a Heren MCP! / Thank you for your interest in contributing to Heren MCP!
+¡Gracias por tu interés en contribuir! / Thank you for your interest in contributing!
 
-## 🌍 Languages / Idiomas
-
-- **Español**: La documentación principal está en español para servir a la comunidad iberoamericana.
-- **English**: This guide is bilingual to welcome all contributors.
+> ⚠️ **Stack actual (v4)**: server **Rust** (FlojoMCP) + plugin **GDScript** (Godot 4.6+).
+> El bridge Python v3 fue archivado en la rama `archive/v3`. NO añadas código Python.
 
 ---
 
-## 🚀 Cómo empezar / How to Get Started
+## 🚀 Cómo empezar / Getting Started
 
-### 1. Clonar el repositorio / Clone the repository
+### 1. Clonar / Clone
 
 ```bash
 git clone https://github.com/CerebroCanibalus/heren-mcp.git
 cd heren-mcp
 ```
 
-### 2. Crear entorno virtual / Create virtual environment
+### 2. Compilar el server Rust / Build the Rust server
 
 ```bash
-# Windows (PowerShell)
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-
-# Linux/macOS
-python -m venv venv
-source venv/bin/activate
+# Windows (recomendado: usa el toolset MSVC correcto)
+scripts/heren-build.bat        # VsDevCmd + debug + test + release + clippy
+# o directamente:
+cargo build --release
 ```
 
-### 3. Instalar dependencias / Install dependencies
+> 💡 El `.cargo/config.toml` fija el toolset MSVC del VS 2022 BuildTools (el VS
+> 18 Insiders tiene `link.exe` pero CRT incompleto — ver GOTCHA en `AGENTS.md`).
+
+### 3. Correr tests / Run tests
 
 ```bash
-pip install -e ".[dev]"
+cargo test --all          # tests Rust (unit + integration)
+cargo clippy --all -- -D warnings   # lints (pedantic activo)
+cargo fmt --all -- --check          # formato
 ```
 
-Esto instalará:
-- Todas las dependencias de producción
-- Dependencias de desarrollo (pytest, black, flake8, mypy)
-- El paquete en modo editable
+### 4. Validar el plugin GDScript / Validate the GDScript plugin
+
+Requiere Godot 4.6+ en `GODOT_EXE` o PATH:
+
+```bash
+# 1. Copiar el plugin al fixture (bajo demanda)
+cp -r addons fixtures/empty_project/
+
+# 2. Grafo headless (detecta parse errors que rompen TODO el plugin)
+godot --headless --editor --path fixtures/empty_project --quit-after 40
+
+# 3. Tests GDScript unitarios (helpers puros)
+godot --headless --path fixtures/empty_project --script res://addons/heren/tests/run_tests.gd
+
+# 4. Limpiar el fixture (no versionar la copia)
+rm -rf fixtures/empty_project/addons fixtures/empty_project/.godot
+```
+
+> 🔴 **Regla de oro**: un parse error en un handler rompe TODO el plugin (el
+> editor no conecta sin error visible). SIEMPRE valida el grafo headless tras
+> editar handlers GDScript.
 
 ---
 
-## 🧪 Cómo correr tests / How to Run Tests
+## 🛠️ Cómo añadir una tool / How to Add a Tool
 
-### Tests completos / Full test suite
+Heren MCP usa el patrón **"1 tool, N acciones"** (`action` requerida). Para añadir
+una tool sigues 4 capas:
 
-```bash
-pytest tests/ -v
+### Paso 1 — Schema en Rust (`crates/heren-server/src/server.rs`)
+
+Añade una función `async fn` con el atributo `#[tool(...)]`. Todos los args
+excepto `action` son `Option<>` (el plugin aplica defaults):
+
+```rust
+#[tool(description = "MiTool (v4): op1|op2 - descripción. TODOS los args opcionales (defaults por action).")]
+async fn mi_tool(
+    action: String,
+    scene_path: Option<String>,
+    project_path: Option<String>,
+    // ... más args Option<>
+) -> Result<Value, ToolError> {
+    let proj = resolve_project(project_path.as_deref())?;
+    let registry = EditorRegistry::global();
+    let scene_path = scene_path.as_deref().map(normalize_scene_path).unwrap_or_default();
+    let a = apply_scene_context(&proj, args(&[
+        ("scene_path", (!scene_path.is_empty()).then(|| Value::String(scene_path.clone()))),
+        // ...
+    ]));
+    let mutating = matches!(action.as_str(), "op1" | "op2");
+    if mutating {
+        forward_mutating(registry, &proj, &format!("mi_tool/{action}"), a, &scene_path).await
+    } else {
+        forward(registry, &proj, &format!("mi_tool/{action}"), a).await
+    }
+}
 ```
 
-### Tests con cobertura / Tests with coverage
+### Paso 2 — Handler en GDScript (`addons/heren/handlers/`)
 
-```bash
-pytest tests/ --cov=heren --cov-report=html
+Crea o edita el handler. Todos extienden `heren_handler.gd` (contrato base):
+
+```gdscript
+extends "res://addons/heren/handlers/heren_handler.gd"
+# @tool heredado de la base
+
+func handle_mi_tool(args: Dictionary) -> Dictionary:
+    var action: String = args.get("action", "")
+    match action:
+        "op1":
+            return _op1(args)
+        "op2":
+            return _op2(args)
+        _:
+            return _err("action desconocida: " + action)
 ```
 
-### Tests específicos / Specific tests
+> Los errores SIEMPRE devuelven `_err("mensaje")` → shape `{"ok": false, "error": ...}`.
+> Los éxitos devuelven `{"ok": true, ...}`.
 
-```bash
-pytest tests/test_session.py -v
-pytest tests/test_scene.py::test_create_scene -v
+### Paso 3 — Registrar en `editor_plugin.gd` y `dispatcher.gd`
+
+```gdscript
+# editor_plugin.gd
+const MiToolHandlersScript := preload("handlers/mi_tool_handlers.gd")
+var _mi_tool_handlers: Node
+# en _enter_tree:
+_mi_tool_handlers = MiToolHandlersScript.new()
+_mi_tool_handlers.set_editor_plugin(self)
+add_child(_mi_tool_handlers)
+_dispatcher.register_handler("mi_tool", _mi_tool_handlers)
+# en _exit_tree: queue_free + null
 ```
 
-### Benchmarks
+### Paso 4 — Tests
 
 ```bash
-python benchmarks/run_benchmarks.py
+# Rust: añade la tool a EXPECTED_TOOLS en tests/tools_parity.rs
+# + valida schema/description (el test all_tools_have_non_empty_descriptions lo exige)
+cargo test --all
+
+# GDScript: añade helpers puros a addons/heren/tests/run_tests.gd si aplica
 ```
+
+**Checklist de tool nueva:**
+
+- [ ] Schema `#[tool]` con `description` y args `Option<>`
+- [ ] Handler `handle_<tool>` que extiende `heren_handler.gd`
+- [ ] Registrado en `editor_plugin.gd` (crear + dispatcher + cleanup)
+- [ ] Añadido a `EXPECTED_TOOLS` en `tests/tools_parity.rs`
+- [ ] `cargo test --all`, `cargo clippy -D warnings`, `cargo fmt --check` pasan
+- [ ] Grafo headless Godot valida sin `SCRIPT ERROR|Parse Error`
+- [ ] Documentado en `README.md` (tabla de tools) y `AGENTS.md` (§6)
 
 ---
 
-## 🐛 Cómo reportar bugs / How to Report Bugs
+## 🧪 Tests / Tests
 
-### Antes de reportar / Before reporting
+| Suite | Comando | Qué cubre |
+|-------|---------|-----------|
+| Rust unit | `cargo test --lib` | helpers puros, registry, launcher |
+| Rust integration | `cargo test --all` | paridad tools, latencia, mutabilidad, WS |
+| GDScript unit | `godot --headless --script .../run_tests.gd` | coords, constants, heren_error |
+| Benchmarks | `cargo bench --bench tools` | latencia list_tools, serialización schemas |
 
-1. Busca en [Issues](https://github.com/CerebroCanibalus/heren-mcp/issues) si ya existe
-2. Intenta reproducir con la última versión
-3. Prueba con el daemon desactivado para aislar el problema
+---
 
-### Plantilla de bug / Bug template
+## 🐛 Cómo reportar bugs / Reporting Bugs
+
+Busca en [Issues](https://github.com/CerebroCanibalus/heren-mcp/issues) antes.
 
 ```markdown
-**Descripción:** Breve descripción del problema
+**Descripción:** breve descripción
 
-**Pasos para reproducir:**
-1. Paso 1
-2. Paso 2
-3. Paso 3
+**Pasos para reproducir:** 1. ... 2. ...
 
-**Comportamiento esperado:** Qué debería pasar
-
-**Comportamiento actual:** Qué pasa realmente
+**Esperado:** ... **Actual:** ...
 
 **Entorno:**
-- OS: Windows 11 / Ubuntu 22.04 / macOS 14
-- Python: 3.11.4
+- OS: Windows 11 / Ubuntu 22.04
+- Rust: stable (rustc --version)
 - Godot: 4.6.1-stable
-- Versión Heren MCP: 1.0.0
+- Versión Heren MCP: 4.6.0
 
-**Logs:**
-```
-Pega aquí los logs relevantes
-```
-
-**Configuración MCP:**
-```json
-Tu configuración de mcpServers
-```
+**Logs:** (usar HEREN_LOG_FILE) y **Configuración MCP:**
 ```
 
 ---
 
-## 💡 Cómo proponer features / How to Propose Features
+## 📝 Estilo / Code Style
 
-1. Abre un [Issue](https://github.com/CerebroCanibalus/heren-mcp/issues/new) con el tag `enhancement`
-2. Describe el problema que resuelve
-3. Explica el uso esperado
-4. Si es posible, incluye ejemplos de código
+### Rust
 
-### Características deseables / Desired features
+- `cargo clippy --all -- -D warnings` (pedantic activo, `#![warn(clippy::pedantic)]`).
+- `cargo fmt --all` antes de commitear.
+- Errores con `thiserror`/`ToolError`, nunca `unwrap()` en producción.
+- SAFE por defecto; `unsafe` solo con comentario `SAFETY`.
 
-- Soporte para Godot 3.x (backport)
-- Más herramientas de debugging (profiling, memory analysis)
-- Integración con CI/CD
-- GUI para configuración
+### GDScript
 
----
-
-## 📝 Estilo de código / Code Style
-
-### Python (PEP 8 + Black)
-
-```bash
-# Formatear código
-black heren/ tests/
-
-# Verificar estilo
-flake8 heren/ tests/
-
-# Type checking
-mypy heren/
-```
-
-### Reglas específicas / Specific rules
-
-- **Máximo 120 caracteres** por línea
-- **Docstrings** en Google style para todas las funciones públicas
-- **Type hints** obligatorios para parámetros y retornos
-- **Comentarios** en español para lógica compleja
-- **Nombres de variables** en inglés (consistencia con Godot)
-
-### Ejemplo / Example
-
-```python
-def create_scene(
-    session_id: str,
-    scene_path: str,
-    root_type: str = "Node2D",
-    root_name: str = "Root"
-) -> dict:
-    """Crea una nueva escena en el proyecto.
-
-    Args:
-        session_id: ID de sesión activa.
-        scene_path: Ruta de la escena (e.g., "res://Player.tscn").
-        root_type: Tipo del nodo raíz.
-        root_name: Nombre del nodo raíz.
-
-    Returns:
-        Dict con success y scene_path.
-    """
-    # Validación de parámetros
-    if not scene_path.endswith(".tscn"):
-        raise ValueError("La escena debe tener extensión .tscn")
-    
-    # ... implementación
-```
+- Tabs (Godot default), nombres `snake_case`, `_` para métodos privados.
+- Toda clase handler extiende `heren_handler.gd` y usa `_err()` para errores.
+- Comentarios en español para lógica compleja.
 
 ### Commits
 
-Usa [Conventional Commits](https://www.conventionalcommits.org/):
+Conventional Commits:
 
 ```
-feat: añadir soporte para TileMap terrain painting
-fix: corregir fallback cuando daemon no responde
-docs: actualizar README con ejemplos de batch
-test: añadir benchmarks para scene_tool
-refactor: simplificar manejo de errores en WebSocket
+feat(tool): añadir mi_tool con ops op1/op2
+fix(plugin): corregir parse error en node_handlers
+test(core): añadir benchmarks para list_tools
+refactor(cleanup): Fase X — descripción
+docs: actualizar CONTRIBUTING con guía de tools
 ```
 
 ---
 
-## 🔧 Estructura del proyecto / Project Structure
+## 🔧 Estructura / Project Structure
 
 ```
 heren-mcp/
-├── heren/              # Código fuente principal
-│   ├── __init__.py
-│   ├── server.py       # Servidor MCP
-│   ├── session.py      # Gestión de sesiones
-│   ├── tools/          # Implementación de tools
-│   ├── daemon/         # Código del daemon GDScript
-│   └── cache.py        # Sistema de cache
-├── tests/              # Tests
-│   ├── test_session.py
-│   ├── test_scene.py
-│   └── conftest.py
-├── docs/               # Documentación
-├── benchmarks/         # Benchmarks
-├── scripts/            # Scripts útiles
-├── pyproject.toml      # Configuración del proyecto
-├── LICENSE
-├── CHANGELOG.md
-└── README.md
+├── crates/heren-server/        # server Rust (src/: editor, launcher, pure, registry, server, ws_plugin_server)
+│   ├── src/pure.rs             # helpers puros + tests
+│   ├── src/constants.rs        # constantes (puerto, timeouts)
+│   └── tests/                  # tools_parity, tool_latency, registry_mutability, ws_plugin
+├── addons/heren/               # plugin Godot (FUENTE DE VERDAD)
+│   ├── handlers/               # heren_handler.gd (base) + handlers por dominio
+│   ├── constants.gd            # constantes del plugin
+│   └── tests/                  # run_tests.gd (unit headless)
+├── scripts/                    # heren-build.bat, install_mcp.py, run.bat...
+├── fixtures/empty_project/     # proyecto Godot mínimo para tests
+├── docs/                       # API, INSTALL, ARCHITECTURE, TROUBLESHOOTING
+└── .github/workflows/ci.yml    # CI (Rust + Godot headless + ruff)
 ```
 
 ---
 
-## 🏆 Cómo contribuir código / How to Contribute Code
+## 🏆 Flujo de contribución / Contribution Flow
 
-1. **Fork** el repositorio
-2. **Crea una rama** para tu feature: `git checkout -b feat/mi-feature`
-3. **Haz commits** siguiendo Conventional Commits
-4. **Añade tests** para tu código
-5. **Asegúrate** de que todos los tests pasan: `pytest`
-6. **Actualiza** la documentación si es necesario
-7. **Abre un Pull Request** con descripción clara
+1. **Fork** y **rama**: `git checkout -b feat/mi-tool`
+2. **Commits** Conventional Commits
+3. **Tests**: todos verdes (Rust + GDScript + grafo headless)
+4. **CI** pasa (`.github/workflows/ci.yml`)
+5. **Actualiza** `README.md`, `AGENTS.md`, `CHANGELOG.md`
+6. **PR** con descripción clara
 
-### Checklist del PR / PR Checklist
+### Checklist del PR
 
-- [ ] Código pasa `black`, `flake8`, y `mypy`
-- [ ] Tests añadidos y pasando
-- [ ] Documentación actualizada
-- [ ] CHANGELOG.md actualizado
+- [ ] `cargo test --all`, `cargo clippy -D warnings`, `cargo fmt --check` verdes
+- [ ] Grafo headless Godot sin `SCRIPT ERROR|Parse Error`
+- [ ] Tests añadidos
+- [ ] Documentación actualizada (README + AGENTS + CHANGELOG)
 - [ ] No hay breaking changes sin justificación
-
----
-
-## 🌐 Comunidad / Community
-
-- **Issues**: [github.com/CerebroCanibalus/heren-mcp/issues](https://github.com/CerebroCanibalus/heren-mcp/issues)
-- **Discussions**: Usa GitHub Discussions para preguntas generales
-- **Discord**: [link-to-discord] (próximamente)
 
 ---
 
 ## 📜 Código de conducta / Code of Conduct
 
 Este proyecto sigue el [Contributor Covenant](https://www.contributor-covenant.org/version/2/1/code_of_conduct/).
-
-- Sé respetuoso/a con todos los contribuidores
-- Acepta críticas constructivas
-- Enfócate en lo que es mejor para la comunidad
-- Muestra empatía hacia otros miembros
-
----
 
 ¡Gracias por contribuir! / Thank you for contributing! 🎉

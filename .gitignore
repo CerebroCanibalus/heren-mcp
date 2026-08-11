@@ -62,7 +62,10 @@ crates/heren-server/target/
 # OpenCode local state (memory plugin garbage)
 .opencode/
 
-# Godot UIDs: los .uid de recursos propios se versionan; los autogenerados del
-# .godot/ y reimportaciones se ignoran. Decisión explícita en AGENTS.md.
+# Godot: archivos autogenerados e importación NO se versionan.
+# Los .uid son autogenerados por Godot al importar; versionarlos puede
+# corromper referencias cross-project (ver AGENTS.md §10 — UID sintético
+# corrompía project.godot). Decisión explícita en AGENTS.md.
 .godot/
 .import/
+*.uid

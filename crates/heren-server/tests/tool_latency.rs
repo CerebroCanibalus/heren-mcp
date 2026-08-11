@@ -180,9 +180,9 @@ fn tool_call_argument_marshalling_latency_is_acceptable() {
 #[test]
 fn schema_enforces_action_parameter() {
     // Sanity: las tools centralizadas deben exponer `action`. Excepciones
-    // legítimas (no son "1 tool N acciones"): `orchestrate` (usa plan/plan_file)
-    // y `health` (solo project_path).
-    const TOOLS_WITHOUT_ACTION: &[&str] = &["orchestrate", "health"];
+    // legítimas (no son "1 tool N acciones"): `orchestrate` (usa plan/plan_file),
+    // `health` (solo project_path) y `help` (introspect, usa tool).
+    const TOOLS_WITHOUT_ACTION: &[&str] = &["orchestrate", "health", "help"];
 
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     rt.block_on(async {
