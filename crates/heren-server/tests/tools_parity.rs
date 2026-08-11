@@ -70,3 +70,36 @@ async fn all_tools_have_valid_schemas() {
         );
     }
 }
+
+#[tokio::test]
+async fn all_tools_have_non_empty_descriptions_and_action() {
+    let tester = FlojoTester::with_context(Heren::new(), Context::default());
+    let tools = tester.list_tools().await.expect("list_tools");
+
+    // Excepciones legítimas que no siguen el patrón "1 tool N acciones":
+    // orchestrate (usa plan/plan_file) y health (solo project_path).
+    const TOOLS_WITHOUT_ACTION: &[&str] = &["orchestrate", "health"];
+
+    for tool in &tools {
+        // description no vacía — el agente depende de ella para saber qué args
+        // aplicar a cada action.
+        let desc = tool.description.as_ref().map_or("", |d| d.as_ref());
+        assert!(
+            !desc.trim().is_empty(),
+            "tool '{}' tiene description vacía",
+            tool.name
+        );
+
+        // Toda tool centralizada expone `action` en su schema (salvo excepciones).
+        if TOOLS_WITHOUT_ACTION.contains(&tool.name.as_ref()) {
+            continue;
+        }
+        let schema = serde_json::to_value(&tool.input_schema).unwrap();
+        let props = schema.get("properties").and_then(|p| p.as_object());
+        assert!(
+            props.map(|p| p.contains_key("action")).unwrap_or(false),
+            "tool '{}' no expone parametro 'action' en su schema",
+            tool.name
+        );
+    }
+}

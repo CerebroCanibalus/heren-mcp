@@ -93,7 +93,10 @@ async fn forward_mutating(
     let result = forward(registry, project_path, tool_name, args).await?;
     // Marcar dirty solo si la mutaciÃ³n tuvo Ã©xito (ok=true) y hay scene_path.
     if !scene_path.is_empty() {
-        let ok = result.get("ok").and_then(|o| o.as_bool()).unwrap_or(false);
+        let ok = result
+            .get("ok")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
         if ok {
             registry.mark_dirty(project_path, scene_path).await;
         }
@@ -385,7 +388,7 @@ fn ws_port() -> u16 {
     *PORT.get_or_init(|| {
         let base = std::env::var("HEREN_WS_ADDR")
             .ok()
-            .and_then(|a| a.rsplit(':').next().map(|s| s.to_string()))
+            .and_then(|a| a.rsplit(':').next().map(std::string::ToString::to_string))
             .and_then(|p| p.parse().ok())
             .unwrap_or(crate::constants::WS_PORT_BASE);
         // HEREN_WS_ADDR explÃ­cito â†’ respetar sin buscar (el usuario lo fijÃ³).
@@ -455,7 +458,10 @@ async fn scene(
             if dirty.iter().any(|d| d == p) {
                 let saved = forward(registry, &proj, "scene/save", json!({"scene_path": p})).await;
                 if let Ok(v) = &saved {
-                    if v.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
+                    if v.get("ok")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false)
+                    {
                         registry.clean_dirty(&proj, p).await;
                     }
                 }
@@ -467,7 +473,11 @@ async fn scene(
         "save" => {
             // Persistencia 2026-08-07: guardar limpia el dirty de esa escena.
             if let Some(p) = scene_path.as_deref() {
-                if result.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
+                if result
+                    .get("ok")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false)
+                {
                     registry.clean_dirty(&proj, p).await;
                 }
             }
@@ -1416,7 +1426,6 @@ async fn orchestrate(
     let proj = resolve_project(project_path.as_deref())?;
     let registry = EditorRegistry::global();
     let on_error = on_error.as_deref().unwrap_or("continue");
-    let _auto_save = _auto_save.unwrap_or(false);
 
     // plan puede venir inline (Value) o por archivo (plan_file) â€” la ruta
     // plan_file evita el JSON gigante en el tool-call (dicts anidados).
@@ -1479,7 +1488,10 @@ async fn orchestrate(
             }
         };
         let result = unwrap_result(&raw);
-        let ok = result.get("ok").and_then(|o| o.as_bool()).unwrap_or(false);
+        let ok = result
+            .get("ok")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
         results.insert(i.to_string(), result);
         if on_error == "stop" && !ok {
             break;
@@ -1489,7 +1501,11 @@ async fn orchestrate(
     let count = results.len();
     let errors = results
         .values()
-        .filter(|r| !r.get("ok").and_then(|o| o.as_bool()).unwrap_or(false))
+        .filter(|r| {
+            !r.get("ok")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+        })
         .count();
     Ok(json!({
         "ok": true,

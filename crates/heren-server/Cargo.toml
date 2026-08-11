@@ -32,3 +32,8 @@ path = "src/main.rs"
 [dev-dependencies]
 tokio-tungstenite = "0.26"
 futures = "0.3"
+criterion = "0.5"
+
+[[bench]]
+name = "pure_helpers"
+harness = false

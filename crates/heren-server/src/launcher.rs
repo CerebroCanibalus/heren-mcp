@@ -30,9 +30,8 @@ const GODOT_DIRS: &[&str] = &[
 /// Ruta del plugin (source of truth: heren-mcp/addons/heren).
 pub fn plugin_source() -> PathBuf {
     // Se pasa por env HEREN_PLUGIN_SOURCE o default conocido.
-    std::env::var("HEREN_PLUGIN_SOURCE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
+    std::env::var("HEREN_PLUGIN_SOURCE").map_or_else(
+        |_| {
             // Fallback: resolver relativo a un par de dirs conocidos.
             let candidates = [
                 "D:\\Mis Juegos\\GodotMCP\\heren-mcp\\addons\\heren",
@@ -43,7 +42,9 @@ pub fn plugin_source() -> PathBuf {
                 .map(PathBuf::from)
                 .find(|p| p.join("plugin.cfg").exists())
                 .unwrap_or_default()
-        })
+        },
+        PathBuf::from,
+    )
 }
 
 /// Resuelve el ejecutable Godot (env GODOT_EXE > GODOT_PATH > PATH > dirs).
@@ -515,7 +516,7 @@ pub fn launch_editor(
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
     match cmd.spawn() {
         Ok(_) => LaunchOutcome {
@@ -692,7 +693,12 @@ pub fn validate_plugin_graph(project_path: &str, godot_path: Option<&str>) -> Gr
                 })
                 .map(|l| l.trim().to_string())
                 .collect();
-            let tail: Vec<String> = text.lines().rev().take(10).map(|l| l.to_string()).collect();
+            let tail: Vec<String> = text
+                .lines()
+                .rev()
+                .take(10)
+                .map(std::string::ToString::to_string)
+                .collect();
             GraphValidation {
                 ok: errors.is_empty(),
                 errors,
@@ -719,7 +725,7 @@ pub fn read_last_project(project_path: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
     v.get("last_project")
         .and_then(|p| p.as_str())
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
 }
 
 /// Escribe last_project (1 clave, ADR-004).

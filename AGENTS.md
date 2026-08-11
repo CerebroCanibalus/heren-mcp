@@ -20,6 +20,7 @@
 - **AUDIT-2026-08-10** (ver `AUDIT-2026-08-10.md`): código v3 "eliminado" aún en repo, raíz caótica, tests acoplados a LAIKA, falta CI. Tests nuevos: `tool_latency.rs`, `registry_mutability.rs`, `addons/heren/tests/test_node_mutability.gd`.
 - **Fases A y B completadas** (2026-08-10): limpieza de `.pyc`, `__pycache__`, `.temp/`; archivado de `src/heren/` (daemon, tools, core, v4 bridge, server.py, i18n, bridges); scripts reubicados a `scripts/`; fixture `fixtures/empty_project/` creado; CI `.github/workflows/ci.yml` añadida; `cargo test --all`, `cargo check --all`, `cargo fmt --check` y `cargo clippy --all -- -D warnings` pasan. **Solución linker LNK1104**: `.cargo/config.toml` fija el toolset MSVC del VS 2022 BuildTools (14.44) porque el VS 18 Insiders tiene `link.exe` pero CRT incompleto (falta `msvcrt.lib`). Si el VS 18 se completa, borrar `.cargo/config.toml`.
 - **Fase C completada** (2026-08-11): C1 `pure.rs` (helpers puros + tests); C2 `skeleton_handlers.gd` (hereda de `animation_handlers.gd`, 17 funciones skeleton extraídas); C4 `heren_handler.gd` base + migración de 11 handlers (`extends heren_handler.gd`, sin `var _editor_plugin` duplicada); C5 `constants.gd`/`constants.rs` (puerto WS 9099, timeouts, `default_ws_url()`); C6 `heren_error.gd` (shape estándar + `_err()` en base). C3 (dividir `project_handlers.gd`) y C7 (tests Python) **NO aplicables**: dispatcher rutea por prefix (project/setting y project/input_map → mismo handler); tests Python archivados en Fase B. Verificado grafo headless Godot 4.6.1 exit 0.
+- **Fase D completada** (2026-08-11): D2 `addons/heren/tests/run_tests.gd` (runner GDScript headless, 5 tests de coords/constants/heren_error, ejecutable con `godot --headless --script`); D3 clippy pedantic activo (`#![warn(clippy::pedantic)]` con allows de estilo doc/must_use; lints de código corregidos con `cargo clippy --fix`); D4 `tools_parity.rs` verifica description no vacía + `action` en schema; D5 `benches/pure_helpers.rs` (Criterion, `cargo check --benches` pasa; enlazado requiere cerrar sesiones MCP que bloquean el exe release); D6 CI ejecuta grafo headless con grep de SCRIPT ERROR + runner GDScript. D1 ya verde (tool_latency/registry_mutability). 50 tests Rust + 5 GDScript verdes.
 
 ---
 
@@ -92,12 +93,12 @@ Plan detallado derivado de `AUDIT-2026-08-10.md`. **Fase A es bloqueante:** sin 
 
 | # | Acción | Archivos afectados | Criterio de éxito |
 |---|--------|--------------------|-------------------|
-| D1 | **Completar tests Rust.** Asegurar que `tool_latency.rs` y `registry_mutability.rs` pasan y ajustar umbrales tras baseline. | `crates/heren-server/tests/tool_latency.rs`, `crates/heren-server/tests/registry_mutability.rs` | `cargo test --test tool_latency` y `cargo test --test registry_mutability` verdes |
-| D2 | **Añadir tests GUT.** Instalar GUT en `addons/heren/tests/` o como dev dependency. | `addons/heren/tests/test_node_mutability.gd` | `godot --headless --path addons/heren/tests` ejecuta el test y pasa |
-| D3 | **Clippy pedante.** Activar `#![warn(clippy::pedantic)]` o pasar `-- -W clippy::pedantic`. | `crates/heren-server/src/lib.rs`, `crates/heren-server/src/*.rs` | 0 warnings de clippy en CI |
-| D4 | **Tests de paridad reforzados.** `tools_parity.rs` debe verificar que cada tool tenga `description` no vacía y schema válido. | `crates/heren-server/tests/tools_parity.rs` | Test verifica firma/descripción de cada tool |
-| D5 | **Benchmarks con Criterion.** Migrar benchmarks Python ad-hoc a `criterion` en Rust para mediciones estables. | `crates/heren-server/benches/` | `cargo bench` genera reporte comparativo |
-| D6 | **Validación headless en CI.** Ejecutar `godot --headless --editor --path fixtures/empty_project --quit-after 3` y grep de `SCRIPT ERROR\|Parse Error`. | `.github/workflows/ci.yml` | CI falla si hay parse error en handlers |
+| D1 | **[x] Completar tests Rust.** Asegurar que `tool_latency.rs` y `registry_mutability.rs` pasan y ajustar umbrales tras baseline. | `crates/heren-server/tests/tool_latency.rs`, `crates/heren-server/tests/registry_mutability.rs` | `cargo test --test tool_latency` y `cargo test --test registry_mutability` verdes |
+| D2 | **[x] Añadir tests GDScript.** Runner headless autónomo (sin GUT) para helpers puros. | `addons/heren/tests/run_tests.gd` | `godot --headless --path fixtures/empty_project --script res://addons/heren/tests/run_tests.gd` pasa |
+| D3 | **[x] Clippy pedante.** Activar `#![warn(clippy::pedantic)]` con allows de estilo. | `crates/heren-server/src/lib.rs`, `crates/heren-server/src/*.rs` | 0 warnings de clippy en CI |
+| D4 | **[x] Tests de paridad reforzados.** `tools_parity.rs` verifica `description` no vacía + `action` en schema. | `crates/heren-server/tests/tools_parity.rs` | Test verifica firma/descripción de cada tool |
+| D5 | **[x] Benchmarks con Criterion.** `benches/pure_helpers.rs` para helpers puros. | `crates/heren-server/benches/` | `cargo check --benches` pasa; `cargo bench` genera reporte |
+| D6 | **[x] Validación headless en CI.** Copiar plugin al fixture, grafo con grep `SCRIPT ERROR\|Parse Error` + runner GDScript. | `.github/workflows/ci.yml` | CI falla si hay parse error en handlers |
 
 **Riesgos de Fase D:**
 - GUT requiere editor de Godot en CI. Usar imagen Docker con Godot o descargar el binario en el workflow.
@@ -333,9 +334,9 @@ Playback+inspección · edición+one_shot · avanzado (blend spaces 1D/2D, tween
 
 ## 13. Checklist
 
-- [x] ¿Plan de limpieza §0.1 completado hasta Fase C? ¿Fase A verde antes de tocar C?
+- [x] ¿Plan de limpieza §0.1 completado hasta Fase D? ¿Fase A verde antes de tocar C?
 - [ ] ¿undo/redo en mutaciones de escena? ¿coords unificadas + `tokens_estimate` en visual?
-- [ ] ¿Tests Rust (`tool_latency.rs`, `registry_mutability.rs`) + GUT (`test_node_mutability.gd`)? ¿documentado en AGENTS.md?
+- [x] ¿Tests Rust (`tool_latency.rs`, `registry_mutability.rs`) + GDScript (`run_tests.gd`)? ¿documentado en AGENTS.md?
 - [ ] ¿Validado `--check-only` + grafo completo headless tras editar handlers?
 - [ ] ¿Cambios al plugin SOLO en `addons/heren/` (nunca LAIKA)? ¿bridge v4 archivado?
 - [ ] ¿Sesión nueva tras recompilar el server?

@@ -149,7 +149,7 @@ async fn handle_frame(
             let plugin_version = params
                 .get("plugin_version")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+                .map(std::string::ToString::to_string);
             let key = normalize_project_path(&path);
             info!(
                 project_path = %key,

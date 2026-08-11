@@ -49,20 +49,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download Godot 4.7.1
+      - name: Download Godot 4.6.1
         run: |
-          wget -q https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_linux.x86_64.zip
-          unzip -q Godot_v4.7.1-stable_linux.x86_64.zip
-          mv Godot_v4.7.1-stable_linux.x86_64 godot
+          wget -q https://github.com/godotengine/godot/releases/download/4.6.1-stable/Godot_v4.6.1-stable_linux.x86_64.zip
+          unzip -q Godot_v4.6.1-stable_linux.x86_64.zip
+          mv Godot_v4.6.1-stable_linux.x86_64 godot
           chmod +x godot
           sudo mv godot /usr/local/bin/godot
 
-      - name: Validate empty fixture project opens
-        run: godot --headless --path fixtures/empty_project --quit-after 50
+      - name: Copy plugin into fixture
+        run: cp -r addons fixtures/empty_project/
 
-      # TODO: instalar GUT y correr addons/heren/tests/ cuando esté configurado.
-      # - name: Run GUT tests
-      #   run: godot --headless --path addons/heren/tests --script res://addons/gut/gut_cmdln.gd
+      - name: Validate plugin graph headless (parse errors break it)
+        run: |
+          godot --headless --editor --path fixtures/empty_project --quit-after 60 2>&1 | tee /tmp/godot-graph.log
+          if grep -E "SCRIPT ERROR|Parse Error" /tmp/godot-graph.log; then
+            echo "::error::Plugin graph has parse errors"
+            exit 1
+          fi
+
+      - name: Run GDScript unit tests
+        run: |
+          godot --headless --path fixtures/empty_project --script res://addons/heren/tests/run_tests.gd 2>&1 | tee /tmp/godot-tests.log
+          if ! grep -q "RESULT: 5 passed, 0 failed" /tmp/godot-tests.log; then
+            echo "::error::GDScript unit tests failed"
+            exit 1
+          fi
 
   python-lint:
     name: Python lint (active scripts)

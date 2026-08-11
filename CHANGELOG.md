@@ -1,5 +1,22 @@
 # Changelog — Heren MCP
 
+## [Unreleased] - 2026-08-11 - Fase D: tests y calidad
+
+### 🧪 Tests
+
+- **D2**: `addons/heren/tests/run_tests.gd` — runner GDScript headless (sin GUT) para helpers puros (coords serialize/deserialize, constants.default_ws_url, heren_error). 5 tests.
+- **D4**: `tools_parity.rs` reforzado — verifica `description` no vacía + `action` en schema (excepto orchestrate/health).
+
+### 🔧 Calidad
+
+- **D3**: clippy pedantic activo (`#![warn(clippy::pedantic)]` con allows de estilo doc/must_use); lints de código corregidos (`cargo clippy --fix`).
+- **D5**: `benches/pure_helpers.rs` — benchmarks Criterion (normalize_scene_path, args builder, unwrap_result).
+- **D6**: CI ejecuta grafo headless con grep `SCRIPT ERROR\|Parse Error` + runner GDScript.
+
+Verificado: 50 tests Rust + 5 GDScript verdes, fmt/clippy limpios, grafo headless Godot 4.6.1 exit 0.
+
+# Changelog - Heren MCP
+
 ## [Unreleased] - 2026-08-11 - Fase C: reorganización estructural
 
 ### 🏗️ Rust

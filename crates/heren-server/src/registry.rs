@@ -319,7 +319,7 @@ impl EditorRegistry {
         for key in &candidates {
             if let Some(tx) = state.pending.remove(key) {
                 if let Some(err) = resp.error {
-                    let _ = tx.send(Err(err.message.to_string()));
+                    let _ = tx.send(Err(err.message.clone()));
                 } else {
                     let _ = tx.send(Ok(resp.result.unwrap_or(Value::Null)));
                 }
@@ -363,7 +363,7 @@ fn id_candidates(id: &Value) -> Vec<String> {
     // "1.0" -> "1"
     if let Ok(f) = raw.parse::<f64>() {
         if f.fract() == 0.0 {
-            out.push(format!("{:.0}", f));
+            out.push(format!("{f:.0}"));
         }
     }
     out
