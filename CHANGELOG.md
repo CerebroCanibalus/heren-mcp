@@ -1,5 +1,30 @@
 # Changelog — Heren MCP
 
+## [Unreleased] - 2026-08-14 - Fase F: tipos semánticos
+
+### 🎯 Schemas JSON descriptivos
+
+**Problema**: 42 propiedades `Option<serde_json::Value>` generaban schemas vacíos `{}` sin descripción. Los clientes MCP (OpenCode, APIs de modelos) no podían validar ni guiar al usuario sobre qué tipo de datos espera el parámetro.
+
+**Solución**: Migración a tipos semánticos de FlojoMCP:
+- `GodotVariant`: cualquier valor (dict, array, string, number, bool, Vector2/3, Color, Transform, etc.)
+- `GodotDict`: Dictionary `{key: value}` donde key es string
+- `Vector2`, `Vector3`, `Color`, `Transform2D`, `Transform3D`, etc.
+
+**Resultado**:
+- Antes: 42 propiedades con schema vacío `{}` sin descripción
+- Después: 0 propiedades vacías; todas con `$ref` a definiciones descriptivas
+- Los schemas ahora incluyen `definitions` con `description` y `type` apropiados
+
+**Cambios técnicos**:
+- 26 propiedades → `Option<GodotDict>` (properties, values, uniforms, parameters, nodes, connections, points, tracks, to, from, transform, bones, chain, target_position, magnet, weights, target_pose, rest_transform, bone_weights, compare, coords, atlas_coords, cells, region, plan, animation)
+- 5 propiedades → `Option<GodotVariant>` (value, events, event, states, transitions)
+- 41 conversiones `.map(Into::into)` añadidas para interoperar con `args()` que espera `Value`
+
+**Dependencias**: FlojoMCP actualizado con `types.rs` (16 tipos semánticos) y `From<GodotDict/GodotArray> for Value`.
+
+Verificado: 51 tests Rust + 5 GDScript verdes, fmt/clippy limpios.
+
 ## [Unreleased] - 2026-08-11 - Fase E: UX/contribución
 
 ### 🆕 Tool help/introspect
