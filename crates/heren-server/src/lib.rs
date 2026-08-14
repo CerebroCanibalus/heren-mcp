@@ -1,4 +1,4 @@
-//! Heren MCP v4 — bridge Rust (FlojoMCP dogfooding).
+﻿//! Heren MCP v4 — bridge Rust (FlojoMCP dogfooding).
 //!
 //! Arquitectura (paridad con bridge Python v4):
 //!
@@ -44,3 +44,4 @@ pub mod ws_plugin_server;
 pub use registry::EditorRegistry;
 pub use server::Heren;
 pub use server::run;
+
