@@ -396,17 +396,73 @@ func handle_set_prop(args: Dictionary) -> Dictionary:
 	_undo_redo.add_undo_property(node, property, old_value)
 	_undo_redo.commit_action()
 
+	# Fase 3 (rediseño 2026-08-15): VERIFICAR que el valor se aplicó realmente.
+	# El agente necesita saber INMEDIATAMENTE si su cambio no persistió (ej:
+	# NodePath que quedó ""), no descubrirlo 3 saves después.
+	var applied: Variant = node.get(property)
+	var applied_ok := _values_match(applied, new_value)
+
+	# Registrar la op para replay (si el disco cambia antes del save).
+	# Usamos el scene_path del root para identificar la escena.
+	var scene_path := str(root.scene_file_path)
+	if scene_path != "":
+		HerenSceneRegistryScript.record_op(scene_path, {
+			"kind": "set_prop",
+			"node_path": _node_path_relative(node, root),
+			"property": property,
+			"value": new_value,
+		})
+
 	var result := {
-		"ok": true,
+		"ok": applied_ok,
 		"node_path": _node_path_relative(node, root),
 		"property": property,
 		"old_value": HerenCoordsScript.serialize_value(old_value, true),
 		"new_value": HerenCoordsScript.serialize_value(new_value, true),
+		"applied_value": HerenCoordsScript.serialize_value(applied, true),
 		"coords": _node_coords(node, root),
 	}
+	if not applied_ok:
+		result["error"] = "set_prop_failed: value not applied — expected %s, got %s" % [
+			str(new_value), str(applied)]
 	if warning != "":
 		result["warning"] = warning
 	return result
+
+
+## Compara dos valores para verificar que un set_prop se aplicó.
+## Godot puede normalizar el valor (int→float, Vector2→Vector3, NodePath
+## absoluto vs relativo), así que comparamos de forma tolerante.
+static func _values_match(a: Variant, b: Variant) -> bool:
+	if a == b:
+		return true
+	# Comparar por serialización compacta (tolera normalización de tipos).
+	var sa := HerenCoordsScript.serialize_value(a, true)
+	var sb := HerenCoordsScript.serialize_value(b, true)
+	if typeof(sa) != typeof(sb):
+		return false
+	if sa is Dictionary and sb is Dictionary:
+		if (sa as Dictionary).size() != (sb as Dictionary).size():
+			return false
+		for key in (sa as Dictionary).keys():
+			if not (sb as Dictionary).has(key):
+				return false
+			var va: Variant = sa[key]
+			var vb: Variant = sb[key]
+			if va is float and vb is float:
+				if absf(va - vb) > 0.0001:
+					return false
+			elif va != vb:
+				return false
+		return true
+	if sa is Array and sb is Array:
+		if (sa as Array).size() != (sb as Array).size():
+			return false
+		for i in (sa as Array).size():
+			if sa[i] != sb[i]:
+				return false
+		return true
+	return false
 
 
 func handle_set_props(args: Dictionary) -> Dictionary:

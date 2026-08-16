@@ -172,6 +172,9 @@ func handle_save(args: Dictionary) -> Dictionary:
 	if scene_path == "":
 		scene_path = str(args.get("output_path", ""))
 	var root: Node = null
+	# Rediseño 2026-08-15: true si sync_from_disk recargó desde disco y
+	# re-aplicó ops (en ese caso, los replay_skipped SÍ son reales).
+	var synced_root_had_sync := false
 
 	# 1) scene_path explícito → MISMA prioridad que resolve_root:
 	#    PESTAÑA REAL primero (lo que el usuario ve y edita — incluidas las
@@ -179,14 +182,23 @@ func handle_save(args: Dictionary) -> Dictionary:
 	#    🚨 Si diéramos prioridad al registry, handle_save guardaría la copia
 	#    stale (ej: script embebido) en vez de la pestaña real con ext_resource.
 	if scene_path != "":
-		var active := ei.get_edited_scene_root()
-		if active != null and active.scene_file_path == scene_path:
-			root = active
+		# Rediseño 2026-08-15: SYNC ANTES de guardar. Si el disco cambió
+		# (hand-edit del usuario), recargamos desde disco y re-aplicamos las
+		# ops pendientes del agente (replay) — NUNCA machacamos el disco con
+		# una copia stale. sync_from_disk devuelve el root fresco si hubo sync.
+		var synced := HerenSceneRegistryScript.sync_from_disk(ei, scene_path)
+		if synced != null:
+			root = synced
+			synced_root_had_sync = true
 		else:
-			root = HerenSceneRegistryScript.get_root(scene_path)
-			if root == null and ResourceLoader.exists(scene_path):
-				ei.open_scene_from_path(scene_path)
-				root = ei.get_edited_scene_root()
+			var active := ei.get_edited_scene_root()
+			if active != null and active.scene_file_path == scene_path:
+				root = active
+			else:
+				root = HerenSceneRegistryScript.get_root(scene_path)
+				if root == null and ResourceLoader.exists(scene_path):
+					ei.open_scene_from_path(scene_path)
+					root = ei.get_edited_scene_root()
 
 	# 2) Sin scene_path → pestaña activa (usa su propio scene_file_path).
 	if root == null:
@@ -203,8 +215,7 @@ func handle_save(args: Dictionary) -> Dictionary:
 	#    🚨 SIN FLAG_BUNDLE_RESOURCES: esa flag INCORPORA los recursos externos
 	#    (scripts .gd con resource_path) dentro del .tscn como sub_resource —
 	#    el bug "save embebe scripts". Los recursos inline SIN path se guardan
-	#    vía ensure_resource_local_recursive() (resource_local_to_scene=true),
-	#    que ya ejecuta ensure_owner_recursive → deserialize_resource.
+	#    vía resource_local_to_scene (ensure_resource_local_recursive).
 	_ensure_parent_dir(scene_path)
 	HerenCoordsScript.ensure_owner_recursive(root)
 	var packed := PackedScene.new()
@@ -218,7 +229,21 @@ func handle_save(args: Dictionary) -> Dictionary:
 		efs.update_file(scene_path)
 	# BUG 2 fix: actualizar mtime registrado después de guardar.
 	HerenSceneRegistryScript.update_mtime(scene_path)
-	return {"ok": true, "saved": true, "saved_to": scene_path}
+	# Rediseño 2026-08-15: tras guardar exitoso, limpiar ops pendientes.
+	# SOLO reportamos replay_skipped si hubo sync real con el disco y alguna
+	# op no se pudo re-aplicar. Si NO hubo divergencia (sync devolvió null),
+	# el árbol guardado ya incluye las ops → limpiar silenciosamente.
+	# 🚨 FIX 2026-08-15: sin esta guarda, un save normal reportaba
+	# `replay_skipped` falso (la op sí estaba en el árbol guardado).
+	var skipped: Array = []
+	if synced_root_had_sync:
+		skipped = HerenSceneRegistryScript.get_pending_ops(scene_path)
+	HerenSceneRegistryScript.clear_ops(scene_path)
+	var result := {"ok": true, "saved": true, "saved_to": scene_path}
+	if skipped.size() > 0:
+		result["replay_skipped"] = skipped
+		result["note"] = "algunas ops del agente no se re-aplicaron tras sync con disco — re-hacerlas manualmente"
+	return result
 
 
 func handle_open(args: Dictionary) -> Dictionary:
