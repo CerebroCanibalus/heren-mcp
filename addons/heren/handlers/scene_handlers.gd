@@ -172,14 +172,18 @@ func handle_save(args: Dictionary) -> Dictionary:
 		scene_path = str(args.get("output_path", ""))
 	var root: Node = null
 
-	# 1) scene_path explícito → root del registry (o pestaña si coincide).
+	# 1) scene_path explícito → MISMA prioridad que resolve_root:
+	#    PESTAÑA REAL primero (lo que el usuario ve y edita — incluidas las
+	#    mutaciones de set_prop), luego registry, luego disco.
+	#    🚨 Si diéramos prioridad al registry, handle_save guardaría la copia
+	#    stale (ej: script embebido) en vez de la pestaña real con ext_resource.
 	if scene_path != "":
-		root = HerenSceneRegistryScript.get_root(scene_path)
-		if root == null:
-			var active := ei.get_edited_scene_root()
-			if active != null and active.scene_file_path == scene_path:
-				root = active
-			elif ResourceLoader.exists(scene_path):
+		var active := ei.get_edited_scene_root()
+		if active != null and active.scene_file_path == scene_path:
+			root = active
+		else:
+			root = HerenSceneRegistryScript.get_root(scene_path)
+			if root == null and ResourceLoader.exists(scene_path):
 				ei.open_scene_from_path(scene_path)
 				root = ei.get_edited_scene_root()
 
