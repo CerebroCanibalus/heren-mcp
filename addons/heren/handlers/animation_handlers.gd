@@ -228,7 +228,6 @@ func handle_add_key(args: Dictionary) -> Dictionary:
 			# Asegurar que value sea el normalizado (por si no lo estaba)
 			value = value.normalized()
 		Animation.TYPE_POSITION_3D, Animation.TYPE_SCALE_3D:
-		Animation.TYPE_POSITION_3D, Animation.TYPE_SCALE_3D:
 			if not (value is Vector3):
 				return {"ok": false, "error": "position_3d/scale_3d track requires Vector3 {x,y,z}; got: " + str(typeof(value))}
 		Animation.TYPE_VALUE:
