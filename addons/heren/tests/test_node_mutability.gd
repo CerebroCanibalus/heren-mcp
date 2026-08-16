@@ -107,7 +107,7 @@ func _test_add_node() -> bool:
 
 
 func _test_set_property() -> bool:
-	var result: Dictionary := _node_handlers.handle_set_prop({
+	var result := _node_handlers.handle_set_prop({
 		"scene_path": _temp_scene_path,
 		"node_path": "Hero",
 		"property_name": "position",
@@ -116,7 +116,7 @@ func _test_set_property() -> bool:
 	if not _assert_ok(result, "set_prop position"):
 		return false
 
-	var info: Dictionary := _node_handlers.handle_get_info({
+	var info := _node_handlers.handle_get_info({
 		"scene_path": _temp_scene_path,
 		"node_path": "Hero",
 	})
