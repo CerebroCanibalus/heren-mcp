@@ -32,6 +32,53 @@
 - **Fases A-F** (2026-08-10→14): limpieza repo, poda v3, refactor handlers, tests+CI, UX/contribución, tipos semánticos. 51 tests Rust + 10 GDScript verdes.
 - **Fase UI v1** (2026-08-14): sistema transversal de templates (6 .tscn 2D + `template_registry.gd`) + tool `ui` (6 acciones) + docs v4.7. Detalle §0.2.
 
+### 🐛 Bugs reportados por desarrollador (2026-08-15) — ver §0.4
+
+| # | Problema | Estado | Fix |
+|---|----------|--------|-----|
+| **BUG 1** | `node/add` con `instance_path` no instancia la escena (crea Node vacío) | ✅ FIXED | `handle_add` delega a `handle_instantiate` cuando viene `instance_path` |
+| **BUG 2** | Registro en memoria "stale" de escenas: open/run_scene usan copia vieja | ✅ FIXED | `scene_registry` trackea mtime; invalida cache si disco cambió |
+| **BUG 3** | Serialización altera valores de Color (bg_color rojizo → azulado) | ⚠️ PARCIAL | `deserialize_value` fuerza `float()` en Color; problema raíz: valor llega como string desde server |
+| **BUG 4** | `scene/unload` no existe (tool method not found) | ✅ FIXED | Implementado `handle_unload` en scene_handlers.gd |
+| **BUG 5** | `set_prop` serializa recursos como vacíos (Shader sin código) | 🔴 PENDIENTE | Requiere investigación profunda de PROPERTY_USAGE_STORAGE en Shader |
+
+---
+
+## 0.4 Bugs reportados por desarrollador (2026-08-15)
+
+> **Origen**: Reporte de desarrollador tras usar el MCP en proyecto real. 5 bugs encontrados (1 crítico, 2 altos, 1 medio, 1 bajo).
+
+### BUG 1 — godot_node add con instance_path NO instancia la escena (CRÍTICO) ✅ FIXED
+- **Síntoma**: crea un Node genérico vacío en vez de la instancia del PackedScene
+- **Causa**: `handle_add` ignoraba `instance_path`; solo `handle_instantiate` lo manejaba
+- **Fix**: `handle_add` ahora delega a `handle_instantiate` cuando viene `instance_path`
+- **Verificación**: escena `test_bug1.tscn` con instancia de `child_scene.tscn` → `instance=ExtResource("1_nlyki")` ✓
+
+### BUG 2 — Registro en memoria "stale" de escenas ✅ FIXED
+- **Síntoma**: open/run_scene usan copia vieja tras editar .tscn a mano; reopen pisa ediciones manuales
+- **Causa**: `scene_registry` no detectaba cambios en disco (sin mtime check)
+- **Fix**: `_mtimes` dict trackea mtime al registrar; `get_root` invalida cache si disco cambió; `update_mtime` tras save
+- **Verificación**: editar .tscn a mano → siguiente open recarga desde disco ✓
+
+### BUG 3 — Serialización altera valores de Color ⚠️ PARCIAL
+- **Síntoma**: bg_color = Color(0.1, 0.06, 0.05, 1) → guardado como Color(0.009, 0.003, 0.069, 1)
+- **Causa parcial**: `deserialize_value` no forzaba conversión a float; valores podían llegar como strings
+- **Fix parcial**: `Color(float(value.get("r", 0)), ...)` fuerza conversión
+- **Problema raíz**: el valor llega como string JSON desde el server Rust (GodotVariant serialización); requiere fix en cliente o server
+- **Verificación**: fix mejora precisión pero no resuelve completamente el problema de serialización double-string
+
+### BUG 4 — godot_scene unload no existe ✅ FIXED
+- **Síntoma**: `scene/unload` → tool method not found
+- **Causa**: handler no implementado
+- **Fix**: `handle_unload` en scene_handlers.gd; quita del registry (Godot no tiene API pública para cerrar pestaña)
+- **Verificación**: `scene/unload` ejecuta sin error ✓
+
+### BUG 5 — set_prop serializa recursos como vacíos 🔴 PENDIENTE
+- **Síntoma**: Shader → `[sub_resource type="Shader"]` sin código ni path; Theme → colores negros
+- **Causa**: propiedades de Shader (code) no tienen PROPERTY_USAGE_STORAGE o se filtran incorrectamente
+- **Fix pendiente**: investigar property_list de Shader; verificar si `code` tiene STORAGE flag; posible fix: serializar explícitamente propiedades conocidas de Shader/Material
+- **Nota**: relacionado con BUG 3; ambos involucran serialización de recursos anidados
+
 ---
 
 ## 0.1 Plan de Mejoría E2E (2026-08-15) — SEVERO
