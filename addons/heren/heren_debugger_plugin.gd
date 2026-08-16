@@ -43,8 +43,8 @@ var profiler_running: bool = false
 var profiler_frames: Array = []
 var _sig_map: Dictionary = {}  # sig_id -> "path::function"
 
-const MAX_BUFFER := 200
-const HOOK_MAX_RETRIES := 10  # 10s a 1s/retry: el dock se monta rápido; retries reducidos por D3
+const MAX_BUFFER = 200
+const HOOK_MAX_RETRIES = 10  # 10s a 1s/retry: el dock se monta rápido; retries reducidos por D3
 
 
 func setup(plugin: EditorPlugin) -> void:
@@ -286,8 +286,8 @@ func _find_editor_log_dock(root: Node) -> Node:
 			return dock
 	# Fallback: buscar por nombre de nodo conteniendo "output" o "log"
 	for child in root.get_children():
-		var name := str(child.get("name", "")).to_lower()
-		if name.contains("output") or name.contains("log"):
+		var child_name := str(child.name).to_lower()
+		if child_name.contains("output") or child_name.contains("log"):
 			return child
 	return null
 

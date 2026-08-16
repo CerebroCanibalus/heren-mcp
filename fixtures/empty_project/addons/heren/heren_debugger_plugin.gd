@@ -43,8 +43,8 @@ var profiler_running: bool = false
 var profiler_frames: Array = []
 var _sig_map: Dictionary = {}  # sig_id -> "path::function"
 
-const MAX_BUFFER := 200
-const HOOK_MAX_RETRIES := 30  # 30s a 1s/retry: el dock puede montarse al primer play
+const MAX_BUFFER = 200
+const HOOK_MAX_RETRIES = 10  # 10s a 1s/retry: el dock se monta rápido; retries reducidos por D3
 
 
 func setup(plugin: EditorPlugin) -> void:
@@ -271,6 +271,24 @@ func _find_class(node: Node, cls: String) -> Node:
 		var found := _find_class(child, cls)
 		if found:
 			return found
+	return null
+
+
+func _find_editor_log_dock(root: Node) -> Node:
+	# Buscar el dock "Output" o "Log" en el árbol de nodos del editor.
+	# En Godot 4.7 el dock de output suele tener class "EditorOutput" o estar
+	# dentro del dock principal "Debugger". Usamos _find_class con nombres
+	# probables y fallback a búsqueda por nombre de nodo.
+	var probable_classes := ["EditorOutput", "EditorLog", "Output", "Log"]
+	for cls in probable_classes:
+		var dock := _find_class(root, cls)
+		if dock != null:
+			return dock
+	# Fallback: buscar por nombre de nodo conteniendo "output" o "log"
+	for child in root.get_children():
+		var child_name := str(child.name).to_lower()
+		if child_name.contains("output") or child_name.contains("log"):
+			return child
 	return null
 
 

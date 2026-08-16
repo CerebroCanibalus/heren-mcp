@@ -59,7 +59,8 @@ func _setup() -> void:
 
 
 func _teardown() -> void:
-	_scene_handlers.handle_unload({"scene_path": _temp_scene_path}) if _scene_handlers != null else pass
+	if _scene_handlers != null:
+		_scene_handlers.handle_unload({"scene_path": _temp_scene_path})
 	if FileAccess.file_exists(_temp_scene_path):
 		DirAccess.remove_absolute(_temp_scene_path)
 		# También intentar borrar el .uid si existe.
@@ -84,19 +85,19 @@ func _run_all() -> bool:
 
 
 func _test_add_node() -> bool:
-	var result := _node_handlers.handle_add({
+	var result = _node_handlers.handle_add({
 		"scene_path": _temp_scene_path,
 		"parent_path": ".",
 		"node_type": "Node2D",
 		"node_name": "Hero",
-	})
+	}) as Dictionary
 	if not _assert_ok(result, "add Hero"):
 		return false
 
-	var info := _node_handlers.handle_get_info({
+	var info = _node_handlers.handle_get_info({
 		"scene_path": _temp_scene_path,
 		"node_path": "Hero",
-	})
+	}) as Dictionary
 	if not _assert_ok(info, "get_info Hero"):
 		return false
 	if info.get("type", "") != "Node2D":
@@ -106,7 +107,7 @@ func _test_add_node() -> bool:
 
 
 func _test_set_property() -> bool:
-	var result := _node_handlers.handle_set_prop({
+	var result = _node_handlers.handle_set_prop({
 		"scene_path": _temp_scene_path,
 		"node_path": "Hero",
 		"property_name": "position",
@@ -115,7 +116,7 @@ func _test_set_property() -> bool:
 	if not _assert_ok(result, "set_prop position"):
 		return false
 
-	var info := _node_handlers.handle_get_info({
+	var info = _node_handlers.handle_get_info({
 		"scene_path": _temp_scene_path,
 		"node_path": "Hero",
 	})
@@ -134,7 +135,7 @@ func _test_set_property() -> bool:
 
 func _test_undo_redo() -> bool:
 	# Guardar posición antes del undo.
-	var before := _node_handlers.handle_get_info({
+	var before = _node_handlers.handle_get_info({
 		"scene_path": _temp_scene_path,
 		"node_path": "Hero",
 	})
@@ -144,7 +145,7 @@ func _test_undo_redo() -> bool:
 
 	_undo.undo()
 
-	var after_undo := _node_handlers.handle_get_info({
+	var after_undo = _node_handlers.handle_get_info({
 		"scene_path": _temp_scene_path,
 		"node_path": "Hero",
 	})
@@ -158,7 +159,7 @@ func _test_undo_redo() -> bool:
 
 	_undo.redo()
 
-	var after_redo := _node_handlers.handle_get_info({
+	var after_redo = _node_handlers.handle_get_info({
 		"scene_path": _temp_scene_path,
 		"node_path": "Hero",
 	})
@@ -173,7 +174,7 @@ func _test_undo_redo() -> bool:
 
 
 func _test_duplicate() -> bool:
-	var result := _node_handlers.handle_duplicate({
+	var result = _node_handlers.handle_duplicate({
 		"scene_path": _temp_scene_path,
 		"node_path": "Hero",
 		"new_name": "HeroClone",
@@ -181,7 +182,7 @@ func _test_duplicate() -> bool:
 	if not _assert_ok(result, "duplicate Hero"):
 		return false
 
-	var info := _node_handlers.handle_get_info({
+	var info = _node_handlers.handle_get_info({
 		"scene_path": _temp_scene_path,
 		"node_path": "HeroClone",
 	})
@@ -194,14 +195,14 @@ func _test_duplicate() -> bool:
 
 
 func _test_remove_node() -> bool:
-	var result := _node_handlers.handle_remove({
+	var result = _node_handlers.handle_remove({
 		"scene_path": _temp_scene_path,
 		"node_path": "HeroClone",
 	})
 	if not _assert_ok(result, "remove HeroClone"):
 		return false
 
-	var info := _node_handlers.handle_get_info({
+	var info = _node_handlers.handle_get_info({
 		"scene_path": _temp_scene_path,
 		"node_path": "HeroClone",
 	})

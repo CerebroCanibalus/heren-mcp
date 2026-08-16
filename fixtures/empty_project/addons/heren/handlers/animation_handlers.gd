@@ -218,12 +218,15 @@ func handle_add_key(args: Dictionary) -> Dictionary:
 	var track_type := anim.track_get_type(track_idx)
 	match track_type:
 		Animation.TYPE_ROTATION_3D:
-			if value is Vector3:
-				value = Quaternion(value)
-			if value is Quaternion:
-				value = value.normalized()
-			else:
-				return {"ok": false, "error": "rotation_3d track requires Quaternion {x,y,z,w} or Vector3 (auto-converted); got: " + str(typeof(value))}
+			# rotation_3d exige Quaternion NORMALIZADO (norma=1).
+			# Vector3 NO se auto-convierte (Godot track_insert_key lo rechaza).
+			# El agente debe pasar Quaternion {x,y,z,w} directamente.
+			if not (value is Quaternion):
+				return {"ok": false, "error": "rotation_3d track requires normalized Quaternion {x,y,z,w}; got: " + str(typeof(value))}
+			if value.normalized() != value:
+				return {"ok": false, "error": "rotation_3d track requires normalized Quaternion {x,y,z,w} (norm=1); got: " + str(typeof(value))}
+			# Asegurar que value sea el normalizado (por si no lo estaba)
+			value = value.normalized()
 		Animation.TYPE_POSITION_3D, Animation.TYPE_SCALE_3D:
 			if not (value is Vector3):
 				return {"ok": false, "error": "position_3d/scale_3d track requires Vector3 {x,y,z}; got: " + str(typeof(value))}

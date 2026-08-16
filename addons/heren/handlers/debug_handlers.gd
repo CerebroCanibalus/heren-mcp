@@ -227,17 +227,34 @@ func handle_get_editor_errors(args: Dictionary) -> Dictionary:
 	# Accedemos al dock "Output" y leemos su contenido estructurado.
 	var output_errors: Array = []
 	var root := _editor_interface().get_base_control()
-	var editor_log_dock := _find_editor_log_dock(root)
+	# Intentar encontrar el dock "Output" por nombre de clase.
+	# Godot 4.7: el dock de Output tiene class_name "Output" o similar.
+	var docks := root.get_children()
+	var editor_log_dock: Node = null
+	for dock in docks:
+		if dock.is_class("EditorOutputDock") or dock.name == "Output":
+			editor_log_dock = dock
+			break
+	if editor_log_dock == null:
+		# Fallback: buscar por nombre de clase conocido
+		var all_docks := root.find_child("Output", true, false)
+		if all_docks != null:
+			editor_log_dock = all_docks
 	if editor_log_dock != null:
-		# Intentar leer mensajes estructurados del Output dock.
-		var output_messages := editor_log_dock.get("_output_messages", [])
+		# Leer mensajes del panel Output.
+		# El dock Output emite señales o tiene un array "_output_messages".
+		var output_messages = editor_log_dock.get("_output_messages")
+		if output_messages == null:
+			output_messages = []
 		if output_messages is Array:
-			output_messages = output_messages.slice()  # copy
-			# Filtrar solo errors (level=2) y formatearlos.
+			# Copiar y filtrar errors (level=2)
+			var filtered := []
 			for msg in output_messages:
 				if msg is Dictionary and msg.has("level") and msg.get("level") == 2:
-					output_errors.append(msg)
-	var output_errors_limited := output_errors.slice()
+					filtered.append(msg)
+			output_errors = filtered
+	# Limitar output_errors
+	var output_errors_limited := output_errors
 	if output_errors_limited.size() > limit:
 		output_errors_limited = output_errors_limited.slice(output_errors_limited.size() - limit)
 	# output_errors: texto formateado `E hh:mm:ss:mmm file:line @ func(): msg`

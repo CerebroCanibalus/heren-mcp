@@ -1,13 +1,29 @@
-; Engine Configuration File.
-; Heren MCP — empty fixture project for autonomous tests.
-; This project is intentionally minimal and contains no addons by default.
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[animation]
+
+compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 [application]
+
 config/name="Heren MCP Empty Fixture"
 config/description="Minimal Godot project used by Heren MCP integration tests."
-config/features=PackedStringArray("4.3", "GL Compatibility")
+config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="res://icon.svg"
 
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/heren/plugin.cfg")
+
 [rendering]
+
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
