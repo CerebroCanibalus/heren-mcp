@@ -100,6 +100,12 @@ static func serialize_value(value: Variant, compact: bool = false) -> Variant:
 ## Deserialize a JSON-compatible value to a Godot type.
 ## Auto-detects types by keys when __type is missing (v3 legacy success).
 static func deserialize_value(value: Variant) -> Variant:
+	# BUG 3 fix: si el valor llega como string JSON (por serialización del server),
+	# parsearlo primero para obtener el Dictionary/Array real.
+	if value is String:
+		var parsed = JSON.parse_string(value)
+		if parsed != null:
+			value = parsed
 	if value is Dictionary:
 		var type: String = str(value.get("__type", ""))
 
