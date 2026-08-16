@@ -181,6 +181,7 @@ OpenCode —STDIO NDJSON→ HerenServer.exe (Rust/FlojoMCP, WS server local 127.
 4. Cache amigo: 1ª vez disco (~3s), luego RAM (~0ms).
 5. Fail-fast: NUNCA silenciar errores ni retornar None sin explicación.
 6. LAIKA SOLO pruebas: source vive en `addons/heren/`; cambios → commit SOLO en heren-mcp.
+7. **VALIDACIÓN DE SCRIPTS**: Tras cualquier cambio en `.gd`, SIEMPRE validar todos los scripts del MCP con `godot_validate action=script` en el proyecto de testing (`fixtures/empty_project/`). Un parse error en un handler rompe TODO el plugin.
 
 ---
 

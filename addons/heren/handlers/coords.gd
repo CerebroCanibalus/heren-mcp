@@ -142,7 +142,8 @@ static func deserialize_value(value: Variant) -> Variant:
 			"Vector3i":
 				return Vector3i(int(value.get("x", 0)), int(value.get("y", 0)), int(value.get("z", 0)))
 			"Color":
-				return Color(value.get("r", 0), value.get("g", 0), value.get("b", 0), value.get("a", 1))
+				# BUG 3 fix: forzar conversión a float para evitar problemas con strings.
+				return Color(float(value.get("r", 0)), float(value.get("g", 0)), float(value.get("b", 0)), float(value.get("a", 1)))
 			"Rect2":
 				return Rect2(value.get("x", 0), value.get("y", 0), value.get("w", 0), value.get("h", 0))
 			"Rect2i":
@@ -511,7 +512,7 @@ static func origin_delta(from: Variant, to: Variant) -> Dictionary:
 static func ensure_owner_recursive(root: Node) -> void:
 	if root == null:
 		return
-	root.owner = root
+	# root.owner debe ser null (es el root de la escena, no puede ser owner de sí mismo)
 	_ensure_owner_child(root, root)
 
 

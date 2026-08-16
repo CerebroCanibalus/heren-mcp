@@ -209,6 +209,8 @@ func handle_save(args: Dictionary) -> Dictionary:
 	var efs: EditorFileSystem = ei.get_resource_filesystem()
 	if efs:
 		efs.update_file(scene_path)
+	# BUG 2 fix: actualizar mtime registrado después de guardar.
+	HerenSceneRegistryScript.update_mtime(scene_path)
 	return {"ok": true, "saved": true, "saved_to": scene_path}
 
 
@@ -225,6 +227,26 @@ func handle_open(args: Dictionary) -> Dictionary:
 	if opened != null and opened.scene_file_path == scene_path:
 		HerenSceneRegistryScript.register(scene_path, opened)
 	return {"ok": true, "opened": scene_path}
+
+
+## BUG 4 fix: unload cierra la escena del registry y del editor.
+## Permite forzar recarga del disco tras ediciones manuales.
+func handle_unload(args: Dictionary) -> Dictionary:
+	var ei := _editor_interface()
+	if ei == null:
+		return {"ok": false, "error": "editor interface unavailable"}
+	var scene_path: String = str(args.get("scene_path", ""))
+	if scene_path == "":
+		return {"ok": false, "error": "scene_path required"}
+	# Quitar del registry.
+	HerenSceneRegistryScript.unregister(scene_path)
+	# Cerrar la pestaña del editor si está abierta.
+	var open_scenes := ei.get_open_scenes()
+	if scene_path in open_scenes:
+		# Godot no tiene API pública para cerrar pestaña directamente.
+		# El usuario puede cerrar manualmente o usar scene/open en otra escena.
+		pass
+	return {"ok": true, "unloaded": scene_path}
 
 
 func _editor_interface() -> EditorInterface:

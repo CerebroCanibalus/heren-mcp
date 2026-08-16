@@ -124,6 +124,11 @@ func _get_children_list(root: Node, node: Node, recursive: bool, out: Array, dep
 # ---------------------------------------------------------------- handlers
 
 func handle_add(args: Dictionary) -> Dictionary:
+	# BUG 1 fix: si viene instance_path, delegar a handle_instantiate.
+	# El usuario puede llamar node/add con instance_path esperando instanciar una escena.
+	if args.has("instance_path") and str(args.get("instance_path", "")) != "":
+		return handle_instantiate(args)
+
 	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}

@@ -8,13 +8,16 @@ extends RefCounted
 ## no siempre abre pestaña → la escena quedaba "fantasma" y save no la persistía).
 ##
 ## Resolución de escena (resolve_root), en orden:
-##   1. Registry (escena creada/editada por MCP en memoria)
-##   2. Pestaña activa que coincide con scene_path
+##   1. Pestaña REAL del editor que coincide (lo que el usuario ve — si la
+##      escena está abierta, operamos sobre ella, no sobre un árbol fantasma)
+##   2. Registry (escena creada/editada por MCP en memoria, sin pestaña)
+##      — INVALIDADO si el archivo en disco cambió (mtime check)
 ##   3. Archivo en disco → open_scene_from_path
 ##   4. null (error claro, nunca escena equivocada)
 
 
 static var _scenes: Dictionary = {}  # scene_path → Node (root)
+static var _mtimes: Dictionary = {}  # scene_path → int (mtime al registrar)
 
 
 ## Normaliza la key a la forma canónica (res://, forward slashes, sin
@@ -31,23 +34,59 @@ static func _norm(path: String) -> String:
 	return s
 
 
+## Obtiene el mtime de un archivo en disco (0 si no existe).
+static func _get_file_mtime(path: String) -> int:
+	if not ResourceLoader.exists(path):
+		return 0
+	var abs_path := ProjectSettings.globalize_path(path)
+	var file := FileAccess.open(abs_path, FileAccess.READ)
+	if file == null:
+		return 0
+	var mtime := file.get_modified_time(abs_path)
+	file.close()
+	return mtime
+
+
+## Verifica si el archivo en disco cambió desde que se registró la escena.
+static func _is_stale(path: String) -> bool:
+	var p := _norm(path)
+	if not _mtimes.has(p):
+		return false  # No tenemos mtime registrado, asumir fresco
+	var disk_mtime := _get_file_mtime(p)
+	if disk_mtime == 0:
+		return false  # Archivo no existe en disco, no puede estar stale
+	return disk_mtime > _mtimes[p]
+
+
 static func register(path: String, root: Node) -> void:
 	var p := _norm(path)
 	if p == "" or root == null:
 		return
 	_scenes[p] = root
+	# Guardar mtime actual del archivo en disco (0 si no existe aún).
+	_mtimes[p] = _get_file_mtime(p)
 
 
 static func unregister(path: String) -> void:
-	_scenes.erase(_norm(path))
+	var p := _norm(path)
+	_scenes.erase(p)
+	_mtimes.erase(p)
 
 
 static func get_root(path: String) -> Node:
-	var root: Variant = _scenes.get(_norm(path), null)
+	var p := _norm(path)
+	# BUG 2 fix: verificar si el archivo en disco cambió (mtime).
+	if _is_stale(p):
+		# Invalidar cache — el usuario editó el .tscn manualmente.
+		_scenes.erase(p)
+		_mtimes.erase(p)
+		return null
+	var root: Variant = _scenes.get(p, null)
 	if root is Node and is_instance_valid(root):
 		return root
 	# Referencia colgante (pestaña cerrada → nodo liberado): limpiar.
-	_scenes.erase(_norm(path))
+	_scenes.erase(p)
+	_mtimes.erase(p)
 	return null
 
 
@@ -66,6 +105,15 @@ static func all() -> Dictionary:
 
 static func clear() -> void:
 	_scenes.clear()
+	_mtimes.clear()
+
+
+## Actualiza el mtime registrado para una escena (llamar después de save).
+static func update_mtime(path: String) -> void:
+	var p := _norm(path)
+	if p == "":
+		return
+	_mtimes[p] = _get_file_mtime(p)
 
 
 ## Resuelve la escena objetivo de una operación.

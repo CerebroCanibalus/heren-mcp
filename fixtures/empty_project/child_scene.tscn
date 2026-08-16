@@ -1,0 +1,8 @@
+[gd_scene format=3 uid="uid://ch1yw3unjsy54"]
+
+[node name="ChildScene" type="Control" unique_id=933586405]
+layout_mode = 3
+anchors_preset = 0
+
+[node name="TestLabel" type="Label" parent="." unique_id=1835111995]
+layout_mode = 0
