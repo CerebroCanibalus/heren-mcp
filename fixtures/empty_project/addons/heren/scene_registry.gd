@@ -82,7 +82,10 @@ static func get_root(path: String) -> Node:
 		_mtimes.erase(p)
 		return null
 	var root: Variant = _scenes.get(p, null)
-	if root is Node and is_instance_valid(root):
+	# 🚨 ORDEN CRÍTICO: is_instance_valid() PRIMERO (seguro con freed), luego
+	# `is Node`. Si root es una instancia previamente liberada, `root is Node`
+	# CRASHEA con "Left operand of 'is' is a previously freed instance".
+	if is_instance_valid(root) and root is Node:
 		return root
 	# Referencia colgante (pestaña cerrada → nodo liberado): limpiar.
 	_scenes.erase(p)

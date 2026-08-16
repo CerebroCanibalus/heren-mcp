@@ -381,12 +381,15 @@ func handle_set_prop(args: Dictionary) -> Dictionary:
 	var new_value: Variant = HerenCoordsScript.deserialize_typed(args.get("value", null), prop_type, old_value)
 	var warning: String = ""
 	if new_value is Resource and new_value.resource_path == "":
-		# v4.6: recurso inline SIN resource_path â†’ Godot lo INCUSTRA al guardar
-		# (sub_resource). Si el agente querÃ­a referencia externa, debiÃ³ pasar
+		# v4.6: recurso inline SIN resource_path → Godot lo INCUSTRA al guardar
+		# (sub_resource). Si el agente quería referencia externa, debió pasar
 		# el path string "res://...". Avisamos, no fallamos.
-		warning = "resource_incrusted_inline: %s â€” pasa un path string (res://...) para referencia externa (ext_resource)" % property
-	if new_value is Resource:
-		HerenCoordsScript.ensure_resource_local_recursive(new_value)
+		warning = "resource_incrusted_inline: %s — pasa un path string (res://...) para referencia externa (ext_resource)" % property
+	# 🚨 NO marcar resource_local_to_scene: bug conocido de Godot (#44008)
+	# "Local to Scene doesn't work on PackedScene objects" — el recurso se
+	# serializa como sub_resource PERO pierde sus props modificadas (ej:
+	# CircleShape2D sin radius). Los sub-recursos sin resource_path se
+	# serializan inline naturalmente al guardar con pack().
 
 	_undo_redo.begin_action("Heren Set %s.%s" % [node.name, property])
 	_undo_redo.add_do_property(node, property, new_value)

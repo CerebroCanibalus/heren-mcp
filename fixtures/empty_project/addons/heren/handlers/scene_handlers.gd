@@ -122,10 +122,11 @@ func _create_scene_file(ei: EditorInterface, new_node: Node, scene_path: String,
 	var packed := PackedScene.new()
 	HerenCoordsScript.ensure_owner_recursive(new_node)
 	packed.pack(new_node)
-	# FLAG_BUNDLE_RESOURCES: incrusta sub-recursos (Curve/Gradient/Material
-	# anidados, sin resource_path) inline en el .tscn. Sin esta flag Godot los
-	# omite silenciosamente — inconsistente con handle_save que SÍ la usa.
-	var err := ResourceSaver.save(packed, scene_path, ResourceSaver.FLAG_BUNDLE_RESOURCES)
+	# 🚨 SIN FLAG_BUNDLE_RESOURCES: esa flag INCORPORA los recursos externos
+	# (scripts .gd con resource_path) dentro del .tscn como sub_resource —
+	# el bug "save embebe scripts". Los recursos inline sin path se guardan
+	# vía resource_local_to_scene (ensure_resource_local_recursive).
+	var err := ResourceSaver.save(packed, scene_path)
 	if err != OK:
 		new_node.free()
 		return {"ok": false, "error": "save_failed: " + error_string(err)}
@@ -172,14 +173,18 @@ func handle_save(args: Dictionary) -> Dictionary:
 		scene_path = str(args.get("output_path", ""))
 	var root: Node = null
 
-	# 1) scene_path explícito → root del registry (o pestaña si coincide).
+	# 1) scene_path explícito → MISMA prioridad que resolve_root:
+	#    PESTAÑA REAL primero (lo que el usuario ve y edita — incluidas las
+	#    mutaciones de set_prop), luego registry, luego disco.
+	#    🚨 Si diéramos prioridad al registry, handle_save guardaría la copia
+	#    stale (ej: script embebido) en vez de la pestaña real con ext_resource.
 	if scene_path != "":
-		root = HerenSceneRegistryScript.get_root(scene_path)
-		if root == null:
-			var active := ei.get_edited_scene_root()
-			if active != null and active.scene_file_path == scene_path:
-				root = active
-			elif ResourceLoader.exists(scene_path):
+		var active := ei.get_edited_scene_root()
+		if active != null and active.scene_file_path == scene_path:
+			root = active
+		else:
+			root = HerenSceneRegistryScript.get_root(scene_path)
+			if root == null and ResourceLoader.exists(scene_path):
 				ei.open_scene_from_path(scene_path)
 				root = ei.get_edited_scene_root()
 
@@ -195,14 +200,16 @@ func handle_save(args: Dictionary) -> Dictionary:
 		return {"ok": false, "error": "scene has no scene_file_path; pass scene_path"}
 
 	# 3) Pack directo + owners garantizados + disco.
-	#    FLAG_BUNDLE_RESOURCES: incrusta los sub-recursos (Curve/Gradient/
-	#    Material anidados, sin resource_path) inline en el .tscn. Sin esta
-	#    flag Godot los omite silenciosamente al guardar.
+	#    🚨 SIN FLAG_BUNDLE_RESOURCES: esa flag INCORPORA los recursos externos
+	#    (scripts .gd con resource_path) dentro del .tscn como sub_resource —
+	#    el bug "save embebe scripts". Los recursos inline SIN path se guardan
+	#    vía ensure_resource_local_recursive() (resource_local_to_scene=true),
+	#    que ya ejecuta ensure_owner_recursive → deserialize_resource.
 	_ensure_parent_dir(scene_path)
 	HerenCoordsScript.ensure_owner_recursive(root)
 	var packed := PackedScene.new()
 	packed.pack(root)
-	var err := ResourceSaver.save(packed, scene_path, ResourceSaver.FLAG_BUNDLE_RESOURCES)
+	var err := ResourceSaver.save(packed, scene_path)
 	if err != OK:
 		return {"ok": false, "error": "save_failed: " + error_string(err)}
 
