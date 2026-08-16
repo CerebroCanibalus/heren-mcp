@@ -239,7 +239,6 @@ static func deserialize_resource(value: Dictionary) -> Resource:
 				var prop_value: Variant = deserialize_typed(value["props"][key], prop_type, res.get(k))
 				prop_value = _wrap_curve_gradient(prop_value, prop_hint)
 				res.set(k, prop_value)
-		ensure_resource_local_recursive(res)
 		return res
 
 	for key in value.keys():
@@ -268,10 +267,6 @@ static func deserialize_resource(value: Dictionary) -> Resource:
 		# usuario pasa Curve/Gradient naturalmente; wrap automático por hint.
 		prop_value = _wrap_curve_gradient(prop_value, prop_hint)
 		res.set(key, prop_value)
-
-	# Sub-recursos (Curve/Gradient/Material anidados) sin path: marcarlos local
-	# o Godot los omite al serializar la escena (helper v3 se perdió en v4).
-	ensure_resource_local_recursive(res)
 
 	return res
 
