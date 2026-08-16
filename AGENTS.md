@@ -38,9 +38,9 @@
 |---|----------|--------|-----|
 | **BUG 1** | `node/add` con `instance_path` no instancia la escena (crea Node vacío) | ✅ FIXED | `handle_add` delega a `handle_instantiate` cuando viene `instance_path` |
 | **BUG 2** | Registro en memoria "stale" de escenas: open/run_scene usan copia vieja | ✅ FIXED | `scene_registry` trackea mtime; invalida cache si disco cambió |
-| **BUG 3** | Serialización altera valores de Color (bg_color rojizo → azulado) | ⚠️ PARCIAL | `deserialize_value` fuerza `float()` en Color; problema raíz: valor llega como string desde server |
+| **BUG 3** | Serialización altera valores de Color (bg_color rojizo → azulado) | ✅ FIXED | `deserialize_value` ahora parsea strings JSON antes de procesar |
 | **BUG 4** | `scene/unload` no existe (tool method not found) | ✅ FIXED | Implementado `handle_unload` en scene_handlers.gd |
-| **BUG 5** | `set_prop` serializa recursos como vacíos (Shader sin código) | 🔴 PENDIENTE | Requiere investigación profunda de PROPERTY_USAGE_STORAGE en Shader |
+| **BUG 5** | `set_prop` serializa recursos como vacíos (Shader sin código) | 🔴 NO REPRODUCIDO | No se pudo reproducir; ver §0.4 para detalles de investigación |
 
 ---
 
@@ -60,12 +60,11 @@
 - **Fix**: `_mtimes` dict trackea mtime al registrar; `get_root` invalida cache si disco cambió; `update_mtime` tras save
 - **Verificación**: editar .tscn a mano → siguiente open recarga desde disco ✓
 
-### BUG 3 — Serialización altera valores de Color ⚠️ PARCIAL
+### BUG 3 — Serialización altera valores de Color ✅ FIXED
 - **Síntoma**: bg_color = Color(0.1, 0.06, 0.05, 1) → guardado como Color(0.009, 0.003, 0.069, 1)
-- **Causa parcial**: `deserialize_value` no forzaba conversión a float; valores podían llegar como strings
-- **Fix parcial**: `Color(float(value.get("r", 0)), ...)` fuerza conversión
-- **Problema raíz**: el valor llega como string JSON desde el server Rust (GodotVariant serialización); requiere fix en cliente o server
-- **Verificación**: fix mejora precisión pero no resuelve completamente el problema de serialización double-string
+- **Causa raíz**: `GodotVariant` serializa dicts anidados como strings JSON cuando se envían por WebSocket. El plugin recibe `value` como `String` type, no `Dictionary`. `deserialize_value` no parseaba strings JSON.
+- **Fix**: `deserialize_value` ahora verifica si el valor es `String` y lo parsea con `JSON.parse_string` antes de procesar. Esto asegura que Color, Vector y otros tipos complejos se deserialicen correctamente.
+- **Verificación**: `set_prop` con Color(0.1, 0.06, 0.05, 1) ahora setea modulate a los valores exactos en vez de Color(0, 0, 0, 1) ✓
 
 ### BUG 4 — godot_scene unload no existe ✅ FIXED
 - **Síntoma**: `scene/unload` → tool method not found
@@ -73,11 +72,17 @@
 - **Fix**: `handle_unload` en scene_handlers.gd; quita del registry (Godot no tiene API pública para cerrar pestaña)
 - **Verificación**: `scene/unload` ejecuta sin error ✓
 
-### BUG 5 — set_prop serializa recursos como vacíos 🔴 PENDIENTE
-- **Síntoma**: Shader → `[sub_resource type="Shader"]` sin código ni path; Theme → colores negros
-- **Causa**: propiedades de Shader (code) no tienen PROPERTY_USAGE_STORAGE o se filtran incorrectamente
-- **Fix pendiente**: investigar property_list de Shader; verificar si `code` tiene STORAGE flag; posible fix: serializar explícitamente propiedades conocidas de Shader/Material
-- **Nota**: relacionado con BUG 3; ambos involucran serialización de recursos anidados
+### BUG 5 — set_prop serializa recursos como vacíos 🔴 NO REPRODUCIDO
+- **Síntoma reportado**: Shader → `[sub_resource type="Shader"]` sin código ni path; Theme → colores negros
+- **Investigación**: Se probaron múltiples casos:
+  1. Shader standalone (.gdshader) → código se serializa correctamente ✓
+  2. ShaderMaterial con Shader por path → Shader se referencia correctamente ✓
+  3. ShaderMaterial con Shader inline → código se serializa correctamente ✓
+- **Conclusión**: No se pudo reproducir el problema. Podría ser:
+  - Problema de timing donde el Shader no se carga completamente antes de serializar
+  - Problema específico de ciertas versiones de Godot
+  - Problema con Shaders cargados desde archivos externos sin PROPERTY_USAGE_STORAGE
+- **Nota**: La serialización de recursos usa `PROPERTY_USAGE_STORAGE` filter, que debería incluir `code` en Shader. Si el problema persiste, se necesita más información del entorno del desarrollador.
 
 ---
 
