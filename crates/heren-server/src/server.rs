@@ -1387,7 +1387,7 @@ async fn tilemap(
 // ============================================================
 
 #[tool(
-    description = "DepuraciÃ³n (v4.5): status|breakpoint|control|stack|vars|profiler|run_scene|stop_scene|is_playing|get_editor_errors|output. status=estado del depurador; breakpoint(op=set|clear|list|clear_all,path,line); control(op=pause|continue|step_over|step_into); stack=rastreo de pila al pausar; vars(frame)=variables del frame; profiler(op=start|stop|status|get|clear); get_editor_errors=errores runtime (estructurados + output_errors con formato del panel); output(filter=error|all,limit)=salida del juego en ejecuciÃ³n"
+    description = "Depuración (v4.5): summary|status|breakpoint|control|stack|vars|profiler|run_scene|stop_scene|is_playing|get_editor_errors|output. summary=snapshot completo (editor+plugin+game+errors+breakpoints+profiler+console); status=estado del depurador; breakpoint(op=set|clear|list|clear_all,path,line); control(op=pause|continue|step_over|step_into); stack=rastreo de pila al pausar; vars(frame)=variables del frame; profiler(op=start|stop|status|get|clear); get_editor_errors=errores runtime (estructurados + output_errors con formato del panel); output(filter=error|all,limit)=salida del juego en ejecución"
 )]
 #[allow(clippy::too_many_arguments)]
 async fn debug(
@@ -1404,6 +1404,7 @@ async fn debug(
     include_native: Option<bool>,
     limit: Option<i64>,
     filter: Option<String>,
+    console_limit: Option<i64>,
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref())?;
     let registry = EditorRegistry::global();
@@ -1425,6 +1426,7 @@ async fn debug(
         ("include_native", include_native.map(|v| json!(v))),
         ("limit", limit.map(|v| json!(v))),
         ("filter", filter.map(Value::String)),
+        ("console_limit", console_limit.map(|v| json!(v))),
     ]);
     forward(registry, &proj, &format!("debug/{action}"), a).await
 }

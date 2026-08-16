@@ -5,6 +5,7 @@ extends "res://addons/heren/handlers/heren_handler.gd"
 # vía heren_debugger_plugin.gd, registrado con add_debugger_plugin()).
 #
 # Actions:
+#   summary             -> snapshot completo: editor + plugin + game + errors + breakpoints + profiler + console
 #   status              -> sesiones del depurador (active/breaked/debuggable),
 #                          is_playing, breakpoints, profiler state
 #   breakpoint          -> op=set|clear|list|clear_all (path, line, enabled)
@@ -47,13 +48,105 @@ func _editor_interface() -> EditorInterface:
 
 # ---------------------------------------------------------------- handlers
 
+func handle_summary(args: Dictionary) -> Dictionary:
+	# Snapshot completo del estado de debug en una sola llamada.
+	var result := {"ok": true}
+	
+	# --- Editor state ---
+	var editor := {}
+	var ei = _editor_interface()
+	if ei:
+		var current_scene = ei.get_edited_scene_root()
+		if current_scene:
+			editor["scene_open"] = current_scene.scene_file_path
+			editor["scene_name"] = current_scene.name
+		else:
+			editor["scene_open"] = null
+	else:
+		editor = {"error": "no editor interface"}
+	result["editor"] = editor
+	
+	# --- Plugin state ---
+	result["plugin"] = {"connected": _editor_plugin != null}
+	
+	# --- Game state ---
+	var game := {}
+	if ei:
+		game["is_playing"] = ei.is_playing_scene()
+		game["is_paused"] = false  # Simplificado por ahora
+	else:
+		game["is_playing"] = false
+		game["is_paused"] = false
+	
+	if _dbg_plugin:
+		_dbg_plugin.ensure_hooked()
+		game["is_breaked"] = _dbg_plugin.stack_breaked
+		
+		# Breakpoint hit info
+		if _dbg_plugin.stack_breaked and _dbg_plugin.last_stack.size() > 0:
+			var top_frame = _dbg_plugin.last_stack[0]
+			game["breakpoint_hit"] = {
+				"file": top_frame.get("file", ""),
+				"line": top_frame.get("line", 0),
+				"function": top_frame.get("function", ""),
+			}
+		else:
+			game["breakpoint_hit"] = null
+		
+		game["fps"] = 0  # Simplificado por ahora
+	else:
+		game["is_breaked"] = false
+		game["breakpoint_hit"] = null
+		game["fps"] = 0
+	result["game"] = game
+	
+	# --- Errors ---
+	var errors := {}
+	if _dbg_plugin:
+		errors["runtime"] = _dbg_plugin.last_errors
+		errors["count"] = _dbg_plugin.last_errors.size()
+	else:
+		errors = {"runtime": [], "count": 0}
+	result["errors"] = errors
+	
+	# --- Breakpoints ---
+	if _dbg_plugin:
+		result["breakpoints"] = _dbg_plugin.list_breakpoints()
+	else:
+		result["breakpoints"] = []
+	
+	# --- Profiler ---
+	var profiler := {}
+	if _dbg_plugin:
+		profiler["running"] = _dbg_plugin.profiler_running
+		profiler["frames_collected"] = _dbg_plugin.profiler_frames.size()
+	else:
+		profiler["running"] = false
+		profiler["frames_collected"] = 0
+	result["profiler"] = profiler
+	
+	# --- Console output ---
+	var console := {}
+	if _dbg_plugin:
+		console["last_lines"] = _dbg_plugin.last_output
+		console["count"] = _dbg_plugin.last_output.size()
+	else:
+		console = {"last_lines": [], "count": 0}
+	result["console"] = console
+	
+	return result
+
+
+# ---------------------------------------------------------------- handlers
+
 func handle_status(args: Dictionary) -> Dictionary:
 	var ei := _editor_interface()
 	var sessions: Array = []
 	if _dbg_plugin:
 		_dbg_plugin.ensure_hooked()
+		# El plugin expone session_ids() y first_session(); NO get_session(i).
 		for i in _dbg_plugin.session_ids():
-			var session := _dbg_plugin.get_session(i)
+			var session = _dbg_plugin.first_session()
 			if session == null:
 				continue
 			sessions.append({
@@ -128,16 +221,16 @@ func handle_vars(args: Dictionary) -> Dictionary:
 	if not _dbg_plugin.stack_breaked:
 		return {"ok": false, "error": "not breaked — pause or hit a breakpoint first"}
 	var frame := int(args.get("frame", 0))
-	_dbg_plugin.request_frame_vars(frame)
 	# D3: esperar señal real con timeout 2s en lugar de sleep fijo 0.3s.
-	# Si no llega la señal a tiempo, devolvemos vars vacías con aviso.
+	# El plugin expone last_vars (Array) y vars_pending (bool); NO has_frame_vars.
+	_dbg_plugin.request_frame_vars(frame)
 	var waited := 0
 	var max_wait := 20  # 2s a 100ms pasos
-	while not _dbg_plugin.has_frame_vars and waited < max_wait:
+	while _dbg_plugin.vars_pending and waited < max_wait:
 		await get_tree().create_timer(0.1).timeout
 		waited += 1
-	if not _dbg_plugin.has_frame_vars:
-		return {"ok": true, "frame": frame, "vars": {}, "note": "vars timeout — waiting for debugger signal"}
+	if _dbg_plugin.last_vars.is_empty():
+		return {"ok": true, "frame": frame, "vars": [], "note": "vars timeout — waiting for debugger signal"}
 	return {"ok": true, "frame": frame, "vars": _dbg_plugin.last_vars}
 
 
