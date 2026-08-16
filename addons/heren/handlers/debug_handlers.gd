@@ -129,7 +129,15 @@ func handle_vars(args: Dictionary) -> Dictionary:
 		return {"ok": false, "error": "not breaked — pause or hit a breakpoint first"}
 	var frame := int(args.get("frame", 0))
 	_dbg_plugin.request_frame_vars(frame)
-	await get_tree().create_timer(0.3).timeout
+	# D3: esperar señal real con timeout 2s en lugar de sleep fijo 0.3s.
+	# Si no llega la señal a tiempo, devolvemos vars vacías con aviso.
+	var waited := 0
+	var max_wait := 20  # 2s a 100ms pasos
+	while not _dbg_plugin.has_frame_vars and waited < max_wait:
+		await get_tree().create_timer(0.1).timeout
+		waited += 1
+	if not _dbg_plugin.has_frame_vars:
+		return {"ok": true, "frame": frame, "vars": {}, "note": "vars timeout — waiting for debugger signal"}
 	return {"ok": true, "frame": frame, "vars": _dbg_plugin.last_vars}
 
 
@@ -199,33 +207,51 @@ func handle_is_playing(args: Dictionary) -> Dictionary:
 func handle_get_editor_errors(args: Dictionary) -> Dictionary:
 	# v4.5: errores de RUNTIME capturados del debugger (mensaje `error` con
 	# stack trace + `output` con el texto formateado del panel Output).
-	# Los errores del editor en reposo (sin juego) no son accesibles por API
-	# pública — ver nota en get_editor_errors de v4.
+	# Adicional: lectura EditorLog para errores del editor en reposo (parse errors,
+	# script errors en el panel Output). El EditorLog se accede por el dock class.
 	if _dbg_plugin == null:
 		return {
 			"ok": true,
-			"note": "editor errors not exposed via public API; see Output panel",
+			"note": "debugger plugin not registered",
 			"errors": [],
 			"count": 0,
 		}
 	_dbg_plugin.ensure_hooked()
 	var limit := int(args.get("limit", 50))
+	# Errores runtime del depurador (con stack).
 	var errors: Array = _dbg_plugin.last_errors
 	if errors.size() > limit:
 		errors = errors.slice(errors.size() - limit)
+	# NEW: Lectura EditorLog para errores del editor en reposo.
+	# El panel Output del editor contiene mensajes `output` con level=2 (error).
+	# Accedemos al dock "Output" y leemos su contenido estructurado.
+	var output_errors: Array = []
+	var root := _editor_interface().get_base_control()
+	var editor_log_dock := _find_editor_log_dock(root)
+	if editor_log_dock != null:
+		# Intentar leer mensajes estructurados del Output dock.
+		var output_messages := editor_log_dock.get("_output_messages", [])
+		if output_messages is Array:
+			output_messages = output_messages.slice()  # copy
+			# Filtrar solo errors (level=2) y formatearlos.
+			for msg in output_messages:
+				if msg is Dictionary and msg.has("level") and msg.get("level") == 2:
+					output_errors.append(msg)
+	var output_errors_limited := output_errors.slice()
+	if output_errors_limited.size() > limit:
+		output_errors_limited = output_errors_limited.slice(output_errors_limited.size() - limit)
 	# output_errors: texto formateado `E hh:mm:ss:mmm file:line @ func(): msg`
 	# + stack — EXACTAMENTE lo que muestra el panel Output del editor.
-	var output_errors: Array = _dbg_plugin.last_output_errors
-	if output_errors.size() > limit:
-		output_errors = output_errors.slice(output_errors.size() - limit)
 	return {
 		"ok": true,
 		"errors": errors,
 		"count": _dbg_plugin.last_errors.size(),
-		"output_errors": output_errors,
-		"output_count": _dbg_plugin.last_output_errors.size(),
+		"output_errors": output_errors_limited,
+		"output_count": output_errors_limited.size(),
 		"hook_ok": _dbg_plugin._hooked,
-		"note": "errores de runtime del depurador: errors = estructurados (mensaje error), output_errors = texto del panel Output (mensaje output, level=2). Los del editor en reposo no son accesibles por API pública.",
+		"note": "errores de runtime del depurador: errors = estructurados (mensaje error), output_errors = texto del panel Output (mensaje output, level=2). " +
+				"Adicional: EditorLog read para errores del editor en reposo. " +
+				"Los del editor en reposo no son accesibles por API pública sin EditorLog.",
 	}
 
 

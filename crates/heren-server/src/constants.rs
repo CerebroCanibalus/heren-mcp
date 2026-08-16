@@ -14,3 +14,11 @@ pub const TOOL_TIMEOUT_MS: u64 = 35_000;
 
 /// Espera tras matar el editor zombie antes de relanzar (server.rs reopen).
 pub const EDITOR_KILL_WAIT_MS: u64 = 1500;
+
+/// D2 (2026-08-15): timeout total esperando que el plugin conecte al WS tras
+/// session/open (el editor tarda 3-5s en arrancar+conectar; 15s cubre
+/// arranques lentos y detecta crash al cargar).
+pub const EDITOR_CONNECT_TIMEOUT_MS: u64 = 15_000;
+
+/// D2: intervalo de polling de conexión del editor (server.rs open).
+pub const EDITOR_CONNECT_POLL_MS: u64 = 500;

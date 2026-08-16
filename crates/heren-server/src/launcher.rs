@@ -328,56 +328,20 @@ pub fn godot_processes_for(project_path: &str) -> Vec<u32> {
 }
 
 /// Procesos Godot editor del proyecto con su CommandLine (diagnóstico).
+///
+/// Windows: CIM (PowerShell) → tasklist → wmic. wmic está ELIMINADO en
+/// Windows 11 24H2+ (deprecado desde 10 21H1) — en máquinas modernas el
+/// comando falla silencioso → editor no detectado (bug real 2026-08-15).
+/// CIM (`Get-CimInstance Win32_Process`) es el reemplazo oficial de Microsoft.
 pub fn godot_processes_detailed(project_path: &str) -> Vec<(u32, String)> {
     let proj_norm = normalize_cmd_path(project_path);
-    let mut procs = Vec::new();
     #[cfg(windows)]
     {
-        let out = Command::new("wmic")
-            .args([
-                "process",
-                "where",
-                "Name like '%Godot%'",
-                "get",
-                "ProcessId,CommandLine",
-                "/format:csv",
-            ])
-            .output();
-        if let Ok(out) = out {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            for line in stdout.lines().skip(1) {
-                // CSV de wmic: `Node,CommandLine,ProcessId` →
-                // parts[0]=Node, parts[1]=CommandLine, parts[2]=ProcessId.
-                let parts: Vec<&str> = line.splitn(3, ',').collect();
-                if parts.len() < 3 {
-                    continue;
-                }
-                // Normalizar a forward slashes: la CommandLine de Windows usa
-                // backslashes (`D:\proj\project.godot`) pero `proj_norm` es
-                // con `/`. Sin esto, el doble clic nunca matcheaba (bug real
-                // 2026-08-08: cmd "d:\mis juegos\project_rat\project.godot"
-                // no contiene "d:/mis juegos/project_rat").
-                let cmd = parts[1].to_lowercase().replace('\\', "/");
-                // Editor abierto con doble clic en project.godot NO lleva
-                // `--editor` ni `--path` (fix 2026-08-08): la CommandLine es
-                // `...Godot.exe "D:\...\project.godot"`. Aceptar también esa
-                // forma — el path del proyecto ya filtra por proyecto.
-                if !cmd.contains("--editor")
-                    && !cmd.contains("--path")
-                    && !cmd.contains("project.godot")
-                {
-                    continue;
-                }
-                if cmd.contains(&proj_norm) {
-                    if let Ok(pid) = parts[2].trim().parse::<u32>() {
-                        procs.push((pid, parts[1].to_string()));
-                    }
-                }
-            }
-        }
+        godot_processes_windows(&proj_norm)
     }
     #[cfg(not(windows))]
     {
+        let mut procs = Vec::new();
         let out = Command::new("pgrep")
             .args(["-f", &format!("--editor.*{proj_norm}")])
             .output();
@@ -388,8 +352,194 @@ pub fn godot_processes_detailed(project_path: &str) -> Vec<(u32, String)> {
                 }
             }
         }
+        procs
+    }
+}
+
+/// Detección Windows: CIM (definitivo si funciona) → tasklist (heurístico
+/// 1 solo Godot) → wmic (sistemas viejos).
+#[cfg(windows)]
+fn godot_processes_windows(proj_norm: &str) -> Vec<(u32, String)> {
+    if let Some(procs) = godot_processes_cim(proj_norm) {
+        // CIM funcionó (aunque vacío) → resultado definitivo: si no hay Godot
+        // del proyecto, no lo hay (no arriesgar matar el editor de OTRO
+        // proyecto con el heurístico de tasklist).
+        procs
+    } else {
+        // CIM no disponible (sin PowerShell) → tasklist; si hay EXACTAMENTE
+        // 1 Godot corriendo, asumir que es el proyecto (tasklist no da
+        // CommandLine, solo Window Title — no se puede filtrar por path).
+        // Si hay varios, no distinguir → wmic.
+        if let Some(procs) = godot_processes_tasklist() {
+            if procs.len() == 1 {
+                return procs;
+            }
+        }
+        godot_processes_wmic(proj_norm)
+    }
+}
+
+/// CIM (PowerShell `Get-CimInstance Win32_Process`) — reemplazo oficial de
+/// wmic, no deprecado, CommandLine completo. `None` = comando no disponible.
+#[cfg(windows)]
+fn godot_processes_cim(proj_norm: &str) -> Option<Vec<(u32, String)>> {
+    let script = "Get-CimInstance Win32_Process | Where-Object { $_.Name -like '*Godot*' } | Select-Object ProcessId, CommandLine | ConvertTo-Csv -NoTypeInformation";
+    let out = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(parse_cim_output(&decode_win_output(&out.stdout), proj_norm))
+}
+
+/// tasklist /v /fo csv — nativo, sin PowerShell. NO da CommandLine (solo
+/// Window Title), así que no se puede filtrar por proyecto: devuelve PIDs de
+/// Godot con cmdline vacío. `None` = comando no disponible.
+#[cfg(windows)]
+fn godot_processes_tasklist() -> Option<Vec<(u32, String)>> {
+    let out = Command::new("tasklist")
+        .args(["/v", "/fo", "csv"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(parse_tasklist_output(&decode_win_output(&out.stdout)))
+}
+
+/// wmic — deprecado (10 21H1) y ELIMINADO en Win11 24H2+. Solo sistemas viejos
+/// donde PowerShell no esté disponible.
+#[cfg(windows)]
+fn godot_processes_wmic(proj_norm: &str) -> Vec<(u32, String)> {
+    let out = Command::new("wmic")
+        .args([
+            "process",
+            "where",
+            "Name like '%Godot%'",
+            "get",
+            "ProcessId,CommandLine",
+            "/format:csv",
+        ])
+        .output();
+    if let Ok(out) = out {
+        parse_wmic_output(&String::from_utf8_lossy(&out.stdout), proj_norm)
+    } else {
+        Vec::new()
+    }
+}
+
+/// ¿La CommandLine corresponde a un editor Godot del proyecto?
+/// Acepta `--editor`, `--path` o `project.godot` (doble clic) en la cmdline;
+/// normaliza backslashes→`/` (cmdlines reales de Windows usan `D:\proj`).
+fn is_editor_cmdline_for(cmd: &str, proj_norm: &str) -> bool {
+    let cmd = cmd.to_lowercase().replace('\\', "/");
+    if !cmd.contains("--editor") && !cmd.contains("--path") && !cmd.contains("project.godot") {
+        return false;
+    }
+    cmd.contains(proj_norm)
+}
+
+/// Parsea el CSV de CIM: header `"ProcessId","CommandLine"`, líneas
+/// `"1234","D:\...\Godot.exe --editor --path D:/proj"`. Respeta comillas
+/// dobles ("" = escape) — la CommandLine puede contener comas.
+fn parse_cim_output(stdout: &str, proj_norm: &str) -> Vec<(u32, String)> {
+    let mut procs = Vec::new();
+    for line in stdout.lines().skip(1) {
+        let fields = parse_csv_line(line);
+        if fields.len() < 2 {
+            continue;
+        }
+        let cmd = fields[1].trim();
+        if !is_editor_cmdline_for(cmd, proj_norm) {
+            continue;
+        }
+        if let Ok(pid) = fields[0].trim().parse::<u32>() {
+            procs.push((pid, cmd.to_string()));
+        }
     }
     procs
+}
+
+/// Parsea el CSV de wmic: `Node,CommandLine,ProcessId` →
+/// parts[0]=Node, parts[1]=CommandLine, parts[2]=ProcessId.
+fn parse_wmic_output(stdout: &str, proj_norm: &str) -> Vec<(u32, String)> {
+    let mut procs = Vec::new();
+    for line in stdout.lines().skip(1) {
+        let parts: Vec<&str> = line.splitn(3, ',').collect();
+        if parts.len() < 3 {
+            continue;
+        }
+        let cmd = parts[1].trim();
+        if !is_editor_cmdline_for(cmd, proj_norm) {
+            continue;
+        }
+        if let Ok(pid) = parts[2].trim().parse::<u32>() {
+            procs.push((pid, cmd.to_string()));
+        }
+    }
+    procs
+}
+
+/// Parsea el CSV de tasklist: header `"Image Name","PID",...` → PIDs de Godot
+/// (cmdline vacío — tasklist no la expone).
+fn parse_tasklist_output(stdout: &str) -> Vec<(u32, String)> {
+    let mut procs = Vec::new();
+    for line in stdout.lines().skip(1) {
+        let fields = parse_csv_line(line);
+        if fields.len() < 2 {
+            continue;
+        }
+        if !fields[0].to_lowercase().contains("godot") {
+            continue;
+        }
+        if let Ok(pid) = fields[1].trim().parse::<u32>() {
+            procs.push((pid, String::new()));
+        }
+    }
+    procs
+}
+
+/// Parsea una línea CSV respetando comillas dobles ("" = comilla literal).
+/// Devuelve los campos SIN las comillas envolventes.
+fn parse_csv_line(line: &str) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut cur = String::new();
+    let mut in_quotes = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                if in_quotes && chars.peek() == Some(&'"') {
+                    cur.push('"');
+                    chars.next();
+                } else {
+                    in_quotes = !in_quotes;
+                }
+            }
+            ',' if !in_quotes => {
+                fields.push(std::mem::take(&mut cur));
+            }
+            _ => cur.push(c),
+        }
+    }
+    fields.push(cur);
+    fields
+}
+
+/// Decodifica output de consola Windows: UTF-8 normal o UTF-16LE con BOM
+/// (PowerShell a veces emite UTF-16 al redirigir).
+fn decode_win_output(bytes: &[u8]) -> String {
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        let u16s: Vec<u16> = bytes[2..]
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        String::from_utf16_lossy(&u16s)
+    } else {
+        String::from_utf8_lossy(bytes).to_string()
+    }
 }
 
 /// ¿Hay editor Godot corriendo para el proyecto?
@@ -763,33 +913,25 @@ mod tests {
     /// vacío → session/open lanzaba un editor duplicado con el original abierto.
     #[test]
     fn wmic_csv_parse_extracts_pid() {
-        let line = r#"DESKTOP-C36BCKD,"D:\Mis Juegos\Godot\Godot_v4.7.1-stable_win64.exe" --editor --path "D:/Mis Juegos/project_rat",15884"#;
-        let parts: Vec<&str> = line.splitn(3, ',').collect();
-        assert_eq!(parts.len(), 3, "debe haber Node,CommandLine,ProcessId");
-        let cmd = parts[1].to_lowercase();
+        let stdout = r#"Node,CommandLine,ProcessId
+DESKTOP-C36BCKD,"D:\Mis Juegos\Godot\Godot_v4.7.1-stable_win64.exe" --editor --path "D:/Mis Juegos/project_rat",15884"#;
+        let procs = parse_wmic_output(stdout, "d:/mis juegos/project_rat");
+        assert_eq!(procs.len(), 1, "debe detectar 1 proceso: {procs:?}");
+        assert_eq!(procs[0].0, 15884);
         assert!(
-            cmd.contains("--editor"),
+            procs[0].1.contains("--editor"),
             "CommandLine debe contener --editor"
         );
-        assert!(
-            cmd.contains("d:/mis juegos/project_rat"),
-            "CommandLine debe contener el path del proyecto"
-        );
-        let pid: u32 = parts[2].trim().parse().expect("PID debe parsear a u32");
-        assert_eq!(pid, 15884);
     }
 
     /// Un editor ya abierto para el proyecto debe detectarse (no duplicar).
     #[test]
     fn wmic_csv_editor_detected_for_project() {
-        let line = r#"DESKTOP-C36BCKD,"D:\Mis Juegos\Godot\Godot_v4.7.1-stable_win64.exe" --editor --path "D:/Mis Juegos/project_rat",15884"#;
+        let stdout = r#"Node,CommandLine,ProcessId
+DESKTOP-C36BCKD,"D:\Mis Juegos\Godot\Godot_v4.7.1-stable_win64.exe" --editor --path "D:/Mis Juegos/project_rat",15884"#;
         let proj_norm = normalize_cmd_path(r"D:\Mis Juegos\project_rat");
-        let parts: Vec<&str> = line.splitn(3, ',').collect();
-        let cmd = parts[1].to_lowercase();
-        assert!(
-            cmd.contains(&proj_norm),
-            "cmd {cmd} debe contener {proj_norm}"
-        );
+        let procs = parse_wmic_output(stdout, &proj_norm);
+        assert_eq!(procs.len(), 1, "cmd debe contener {proj_norm}: {procs:?}");
     }
 
     /// Editor abierto con DOBLE CLIC en project.godot — CommandLine SIN
@@ -800,31 +942,100 @@ mod tests {
     /// `D:\proj\project.godot`, y proj_norm es `d:/proj`).
     #[test]
     fn wmic_csv_editor_detected_via_project_dot_godot() {
-        let line = r#"DESKTOP-C36BCKD,"D:\Mis Juegos\Godot\Godot_v4.7.1-stable_win64.exe" "D:\Mis Juegos\project_rat\project.godot",16200"#;
+        let stdout = r#"Node,CommandLine,ProcessId
+DESKTOP-C36BCKD,"D:\Mis Juegos\Godot\Godot_v4.7.1-stable_win64.exe" "D:\Mis Juegos\project_rat\project.godot",16200"#;
         let proj_norm = normalize_cmd_path(r"D:\Mis Juegos\project_rat");
-        let parts: Vec<&str> = line.splitn(3, ',').collect();
-        assert_eq!(parts.len(), 3);
-        let cmd = parts[1].to_lowercase().replace('\\', "/");
+        let procs = parse_wmic_output(stdout, &proj_norm);
+        assert_eq!(procs.len(), 1, "doble clic debe detectarse: {procs:?}");
+        assert_eq!(procs[0].0, 16200);
         assert!(
-            !cmd.contains("--editor") && !cmd.contains("--path"),
+            !procs[0].1.contains("--editor") && !procs[0].1.contains("--path"),
             "caso real: doble clic NO lleva --editor ni --path"
         );
+    }
+
+    /// CIM (PowerShell) CSV: header `"ProcessId","CommandLine"` + línea con
+    /// comillas y backslashes. El parser debe extraer PID y CommandLine.
+    #[test]
+    fn cim_csv_parse_extracts_pid_and_cmd() {
+        let stdout = "\"ProcessId\",\"CommandLine\"\n\"15884\",\"D:\\Mis Juegos\\Godot\\Godot_v4.7.1-stable_win64.exe\" --editor --path \"D:/Mis Juegos/project_rat\"\n";
+        let procs = parse_cim_output(stdout, "d:/mis juegos/project_rat");
+        assert_eq!(procs.len(), 1, "debe detectar 1 proceso: {procs:?}");
+        assert_eq!(procs[0].0, 15884);
+        assert!(procs[0].1.contains("--editor"));
+    }
+
+    /// CIM CSV con COMAS dentro de la CommandLine (path con comas) — el parser
+    /// debe respetar las comillas (wmic `splitn(3, ',')` se rompía aquí).
+    #[test]
+    fn cim_csv_handles_commas_in_cmdline() {
+        let stdout = "\"ProcessId\",\"CommandLine\"\n\"16200\",\"D:\\Mis Juegos\\Godot\\Godot_v4.7.1-stable_win64.exe\" \"D:\\Mis Juegos\\proj, con coma\\project.godot\"\n";
+        let procs = parse_cim_output(stdout, "d:/mis juegos/proj, con coma");
+        assert_eq!(procs.len(), 1, "debe parsear cmdline con comas: {procs:?}");
+        assert_eq!(procs[0].0, 16200);
+    }
+
+    /// CIM CSV con comillas escapadas ("" = comilla literal en el path).
+    #[test]
+    fn parse_csv_line_handles_escaped_quotes() {
+        let fields = parse_csv_line("\"a\"\"b\",\"c,d\",e");
+        assert_eq!(fields, vec!["a\"b", "c,d", "e"]);
+    }
+
+    /// Output REAL de PowerShell ConvertTo-Csv: las comillas internas del
+    /// CommandLine se escapan como `""` (verificado 2026-08-15 contra editor
+    /// vivo). El parser debe reconstruir el cmdline con comillas simples.
+    #[test]
+    fn cim_csv_real_powershell_escaped_quotes() {
+        let stdout = "\"ProcessId\",\"CommandLine\"\n\"12284\",\"\"\"D:\\Mis Juegos\\Godot\\Godot_v4.7.1-stable_win64.exe\"\" --editor --path \"\"D:/Mis Juegos/GodotMCP/heren-mcp/.temp/e2e_complex\"\"\"\n";
+        let procs = parse_cim_output(stdout, "d:/mis juegos/godotmcp/heren-mcp/.temp/e2e_complex");
+        assert_eq!(procs.len(), 1, "output real de PowerShell: {procs:?}");
+        assert_eq!(procs[0].0, 12284);
+        // El cmdline reconstruido es crudo (con mayúsculas); el filtro hace
+        // lowercase internamente (is_editor_cmdline_for). Verificar aquí con
+        // lowercase para reflejar el comportamiento real.
+        let cmd = procs[0].1.to_lowercase();
+        assert!(cmd.contains("--editor"), "cmdline: {cmd}");
         assert!(
-            cmd.contains("project.godot"),
-            "cmd {cmd} debe contener project.godot"
+            cmd.contains("d:/mis juegos/godotmcp/heren-mcp/.temp/e2e_complex"),
+            "cmdline: {cmd}"
         );
-        assert!(
-            cmd.contains(&proj_norm),
-            "cmd {cmd} debe contener {proj_norm} (backslashes normalizados)"
-        );
-        // El filtro del proceso debe aceptar esta línea.
-        let is_editor_of_proj = cmd.contains("project.godot") && cmd.contains(&proj_norm);
-        assert!(
-            is_editor_of_proj,
-            "debe detectarse como editor del proyecto"
-        );
-        let pid: u32 = parts[2].trim().parse().expect("PID debe parsear a u32");
-        assert_eq!(pid, 16200);
+    }
+
+    /// decode_win_output: UTF-16LE con BOM (PowerShell a veces lo emite).
+    #[test]
+    fn decode_win_output_utf16le() {
+        let mut bytes = vec![0xFF, 0xFE];
+        for u in "ProcessId,CommandLine".encode_utf16() {
+            bytes.extend_from_slice(&u.to_le_bytes());
+        }
+        let s = decode_win_output(&bytes);
+        assert_eq!(s, "ProcessId,CommandLine");
+    }
+
+    /// decode_win_output: UTF-8 normal sin BOM.
+    #[test]
+    fn decode_win_output_utf8() {
+        assert_eq!(decode_win_output(b"hello"), "hello");
+    }
+
+    /// tasklist CSV: header + línea Godot → PID extraído, cmdline vacío.
+    #[test]
+    fn tasklist_csv_parse_extracts_godot_pids() {
+        let stdout = "\"Image Name\",\"PID\",\"Session Name\",\"Session#\",\"Mem Usage\",\"Status\",\"User Name\",\"CPU Time\",\"Window Title\"\n\"Godot_v4.7.1-stable_win64.exe\",\"15884\",\"Console\",\"1\",\"123,456 K\",\"Running\",\"USER\",\"0:00:05\",\"Project Rat - Godot Engine\"\n";
+        let procs = parse_tasklist_output(stdout);
+        assert_eq!(procs.len(), 1, "debe detectar 1 Godot: {procs:?}");
+        assert_eq!(procs[0].0, 15884);
+        assert!(procs[0].1.is_empty(), "tasklist no da CommandLine");
+    }
+
+    /// tasklist CSV: procesos NO-Godot se ignoran (Mem Usage con comas no rompe).
+    #[test]
+    fn tasklist_csv_ignores_non_godot() {
+        let stdout = "\"Image Name\",\"PID\",\"Session Name\",\"Session#\",\"Mem Usage\",\"Status\",\"User Name\",\"CPU Time\",\"Window Title\"\n\"explorer.exe\",\"1234\",\"Console\",\"1\",\"45,678 K\",\"Running\",\"USER\",\"0:00:01\",\"\"\n\"Godot_v4.7.1-stable_win64.exe\",\"15884\",\"Console\",\"1\",\"123,456 K\",\"Running\",\"USER\",\"0:00:05\",\"Project Rat - Godot Engine\"\n";
+        let procs = parse_tasklist_output(stdout);
+        assert_eq!(procs.len(), 1, "solo Godot: {procs:?}");
+        assert_eq!(procs[0].0, 15884);
     }
 
     /// BUG RAÍZ del sync roto (2026-08-08): `collect_files` recursivo perdía

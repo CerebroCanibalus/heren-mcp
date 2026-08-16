@@ -22,6 +22,7 @@ const AnimationHandlersScript := preload("handlers/animation_handlers.gd")
 const SkeletonHandlersScript := preload("handlers/skeleton_handlers.gd")
 const TileMapHandlersScript := preload("handlers/tilemap_handlers.gd")
 const VisualHandlersScript := preload("handlers/visual_handlers.gd")
+const UiHandlersScript := preload("handlers/ui_handlers.gd")
 
 var _ws_client: Node
 var _dispatcher: Node
@@ -39,6 +40,7 @@ var _animation_handlers: Node
 var _skeleton_handlers: Node
 var _tilemap_handlers: Node
 var _visual_handlers: Node
+var _ui_handlers: Node
 
 var _status_label: Label
 
@@ -129,6 +131,12 @@ func _enter_tree() -> void:
 	_visual_handlers.set_editor_plugin(self)
 	add_child(_visual_handlers)
 
+	# UI handlers (Fase UI-2 - tool ui + templates transversales).
+	_ui_handlers = UiHandlersScript.new()
+	_ui_handlers.name = "HerenUiHandlers"
+	_ui_handlers.set_editor_plugin(self)
+	add_child(_ui_handlers)
+
 	# Dispatcher routes tool_invoke -> handler.
 	_dispatcher = DispatcherScript.new()
 	_dispatcher.name = "HerenDispatcher"
@@ -145,6 +153,7 @@ func _enter_tree() -> void:
 	_dispatcher.register_handler("skeleton", _skeleton_handlers)
 	_dispatcher.register_handler("tilemap", _tilemap_handlers)
 	_dispatcher.register_handler("visual", _visual_handlers)
+	_dispatcher.register_handler("ui", _ui_handlers)
 
 	# WS client connects to the FlojoMCP server.
 	_ws_client = WsClientScript.new()
@@ -180,6 +189,9 @@ func _exit_tree() -> void:
 	if _visual_handlers:
 		_visual_handlers.queue_free()
 		_visual_handlers = null
+	if _ui_handlers:
+		_ui_handlers.queue_free()
+		_ui_handlers = null
 	if _tilemap_handlers:
 		_tilemap_handlers.queue_free()
 		_tilemap_handlers = null

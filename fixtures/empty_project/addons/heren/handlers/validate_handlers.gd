@@ -1,0 +1,135 @@
+@tool
+extends "res://addons/heren/handlers/heren_handler.gd"
+# Heren MCP v4 - Validation handlers (Fase 2).
+# Verifica integridad de escenas, scripts, nodos y recursos (ADR-002):
+# el editor vivo ya tiene la escena en RAM; scripts y recursos se cargan
+# con ResourceLoader (Godot falla si están corruptos).
+#
+# Actions (heredadas de v3 validate_tool.py, adaptadas a editor vivo):
+#   scene    -> ResourceLoader.load PackedScene + verificar instanciable
+#   script   -> ResourceLoader.load GDScript + verificar clase
+#   node     -> resolver en escena viva + validar prop/script opcional
+#   resource -> ResourceLoader.load + verificar es Resource
+
+const HerenCoordsScript := preload("coords.gd")
+
+
+
+func set_editor_plugin(plugin: EditorPlugin) -> void:
+	_editor_plugin = plugin
+
+
+func _editor_interface() -> EditorInterface:
+	if _editor_plugin == null:
+		return null
+	return _editor_plugin.get_editor_interface()
+
+
+func _scene_root(args: Dictionary = {}) -> Node:
+	var ei := _editor_interface()
+	if ei == null:
+		return null
+	# Contexto de escena explícito: si se pide scene_path y no es la activa,
+	# activarla. Así el contexto NO cambia impredeciblemente con la pestaña.
+	var scene_path: String = str(args.get("scene_path", ""))
+	if scene_path != "":
+		var active := ei.get_edited_scene_root()
+		if active == null or active.scene_file_path != scene_path:
+			if not ResourceLoader.exists(scene_path):
+				return null
+			ei.open_scene_from_path(scene_path)
+	return ei.get_edited_scene_root()
+
+
+func _resolve_node(root: Node, node_path: Variant) -> Node:
+	if root == null or node_path == null:
+		return null
+	var normalized := HerenCoordsScript.normalize_node_path(node_path, root)
+	if normalized == ".":
+		return root
+	if normalized == "":
+		return null
+	return root.get_node_or_null(NodePath(normalized))
+
+
+# ---------------------------------------------------------------- handlers
+
+func handle_scene(args: Dictionary) -> Dictionary:
+	var scene_path: String = str(args.get("scene_path", ""))
+	if scene_path == "":
+		return {"ok": false, "error": "scene_path required"}
+	if not ResourceLoader.exists(scene_path):
+		return {"ok": false, "error": "not_found: " + scene_path}
+
+	var packed: Resource = load(scene_path)
+	if packed == null or not packed is PackedScene:
+		return {"ok": false, "error": "invalid_scene: " + scene_path}
+
+	var instance: Node = (packed as PackedScene).instantiate()
+	var valid: bool = instance != null
+	if instance != null:
+		instance.free()
+
+	return {"ok": true, "valid": valid, "scene_path": scene_path, "root": packed.get_state().get_node_name(0)}
+
+
+func handle_script(args: Dictionary) -> Dictionary:
+	var script_path: String = str(args.get("script_path", ""))
+	if script_path == "":
+		return {"ok": false, "error": "script_path required"}
+	if not ResourceLoader.exists(script_path):
+		return {"ok": false, "error": "not_found: " + script_path}
+
+	var script: Resource = load(script_path)
+	if script == null or not script is Script:
+		return {"ok": false, "error": "invalid_script: " + script_path}
+
+	var gdscript := script as Script
+	return {
+		"ok": true,
+		"valid": true,
+		"script_path": script_path,
+		"can_instance": gdscript.can_instantiate(),
+		"base": gdscript.get_instance_base_type() if gdscript.get_instance_base_type() != "" else "",
+	}
+
+
+func handle_node(args: Dictionary) -> Dictionary:
+	var root := _scene_root(args)
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+
+	var node_path: Variant = args.get("node_path", "")
+	if node_path == "":
+		return {"ok": false, "error": "node_path required"}
+	var node: Node = _resolve_node(root, node_path)
+	if node == null:
+		return {"ok": false, "error": "node_not_found: " + str(node_path)}
+
+	var issues: Array = []
+	var script: Script = node.get_script() as Script
+	if script != null and not script.can_instantiate():
+		issues.append("script_cannot_instantiate")
+
+	return {
+		"ok": true,
+		"valid": issues.is_empty(),
+		"node_path": node.get_name(),
+		"type": node.get_class(),
+		"issues": issues,
+		"has_script": script != null,
+	}
+
+
+func handle_resource(args: Dictionary) -> Dictionary:
+	var resource_path: String = str(args.get("resource_path", ""))
+	if resource_path == "":
+		return {"ok": false, "error": "resource_path required"}
+	if not ResourceLoader.exists(resource_path):
+		return {"ok": false, "error": "not_found: " + resource_path}
+
+	var res: Resource = load(resource_path)
+	if res == null:
+		return {"ok": false, "error": "invalid_resource: " + resource_path}
+
+	return {"ok": true, "valid": true, "resource_path": resource_path, "resource_class": res.get_class()}

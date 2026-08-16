@@ -59,7 +59,8 @@ func _setup() -> void:
 
 
 func _teardown() -> void:
-	_scene_handlers.handle_unload({"scene_path": _temp_scene_path}) if _scene_handlers != null else pass
+	if _scene_handlers != null:
+		_scene_handlers.handle_unload({"scene_path": _temp_scene_path})
 	if FileAccess.file_exists(_temp_scene_path):
 		DirAccess.remove_absolute(_temp_scene_path)
 		# También intentar borrar el .uid si existe.

@@ -15,11 +15,13 @@
 
 ---
 
-# ⚡ Heren Godot MCP v4.6
+# ⚡ Heren Godot MCP v4.7
 
 🔥 **Heren Godot MCP** — *Plus Ultra*: ir más allá. 🌍
 
-Servidor MCP de alto rendimiento para **Godot Engine 4.x** que permite a IAs y asistentes controlar el editor real directamente: crear escenas, manipular nodos, gestionar recursos, conectar señales, animar, esqueletos, shaders y validar código. **Todo contra el editor vivo, con Undo/Redo real.**
+Servidor MCP de alto rendimiento para **Godot Engine 4.x** que permite a IAs y asistentes controlar el editor real directamente: crear escenas, manipular nodos, gestionar recursos, conectar señales, animar, esqueletos, shaders, validar código y **construir HUDs/UI 2D**. **Todo contra el editor vivo, con Undo/Redo real.**
+
+**📢 v4.7 (UI)**: nueva tool **`ui`** + **sistema transversal de templates** — 6 templates 2D prefabricados (`health_bar`, `crosshair`, `dialogue_box`, `score_label`, `boss_bar`, `inventory_slot`) instanciables con 1 llamada vía `node/instantiate {template: "..."}` o `ui/create`, presets de anchors (`ui/layout`), CanvasLayer para HUD overlay (`ui/canvas_layer`), creación de Themes (`ui/theme`) y lecturas enriquecidas con anchors/offsets para Control (adiós a la ceguera de UI).
 
 **📢 v4.6**: Toolset rediseñado — **18 tools, solo `action` required** (fin del laberinto de schemas: ya no hay parámetros required absurdos; el agente no adivina). `node` dividida en mutaciones/lecturas/props (`node`/`node_query`/`node_props`), `visual` en textual/imagen (`visual_text`/`visual_image`). **`debug/output` + `get_editor_errors`** exponen los errores de runtime del juego con formato del panel (E hh:mm:ss:mmm + stack). **`session/diagnose`** = debugger unificado (integridad plugin + grafo headless + estado editor). Orientación continua: `node_not_found` devuelve `parent_children[]`, `rename`/`move` devuelven `previous_path`/`old_parent`. Anti-incrustado: recursos inline sin path → warning `resource_incrusted_inline`. 100% **Rust** sobre **[FlojoMCP](https://github.com/CerebroCanibalus/flojomcp)**.
 
@@ -32,8 +34,9 @@ Servidor MCP de alto rendimiento para **Godot Engine 4.x** que permite a IAs y a
 | ⚡ **Server en Rust (FlojoMCP)** | `heren-server.exe` de **~7 MB**, sin Python ni Node.js. Arranque instantáneo, schemas en compile-time |
 | 🎯 **Editor real, no daemon** | Se conecta al **EditorPlugin** dentro del Godot abierto — Undo/Redo, viewports 2D/3D reales, EditorFileSystem |
 | 🔄 **Auto-launch del editor** | `session/open` lanza Godot, instala el plugin, habilita `[editor_plugins]` y espera la conexión WS. Reutiliza el editor abierto; relanza limpio si hay uno zombie |
-| 🛠️ **18 tools centralizadas** | Escenas, nodos (mutaciones/lecturas/props), recursos, scripts, señales, animaciones, esqueletos, shaders, tilemaps, validación y debug — **solo `action` required**, schemas sin trampas |
+| 🛠️ **19 tools centralizadas** | Escenas, nodos (mutaciones/lecturas/props), recursos, scripts, señales, animaciones, esqueletos, shaders, tilemaps, validación, debug y **UI 2D (tool `ui` + templates)** — **solo `action` required**, schemas sin trampas |
 | 👀 **Sistema de visión** | `visual_text` (coords/summary/ascii, ~20-150 tok) + `visual_image` (capture/nodo, render off-screen de la escena real) — jerarquía de costo sin quemar contexto |
+| 🧩 **UI 2D + templates** | Tool `ui` (create/layout/canvas_layer/templates/get_info/theme) + **sistema transversal de templates**: 6 prefabs .tscn instanciables con 1 llamada (`node/instantiate {template}` o `ui/create`), params por nombre de nodo canónico |
 | 🔍 **Debug real con errores** | `debug/output` + `get_editor_errors` exponen los errores de runtime del juego (formato del panel Output, con stack) + `session/diagnose` para integridad del plugin |
 | ↩️ **Undo/Redo integrado** | Cada mutación pasa por `EditorUndoRedoManager` — Ctrl+Z deshace lo que la IA creó |
 | ⚡ **`orchestrate`** | Ejecuta múltiples operaciones en una sola llamada, con plan en archivo para planes complejos |
@@ -63,7 +66,7 @@ Comparamos contra los MCPs de Godot más usados, con datos verificados de sus re
 **Por qué Heren gana donde gana:**
 - **Undo/Redo real**: toda mutación pasa por `EditorUndoRedoManager` — el Ctrl+Z del usuario deshace lo que la IA creó. Coding-Solo reescribe archivos desde CLI (sin deshacer); GoPeak no lo expone.
 - **Editor real, no archivos**: el plugin vive dentro del editor que el usuario ve (viewports, EditorFileSystem, play con breakpoints). GoPeak también usa bridge con addons, pero sus GAPS en animación/señales/tilemap son nuestros dominios.
-- **Profundidad por dominio**: 18 tools centralizadas con ~70+ acciones frente a decenas de tools de 1 función. Una llamada `animation/one_shot` crea animación completa; en GoPeak sería imposible (no hay animación).
+- **Profundidad por dominio**: 19 tools centralizadas con ~80+ acciones frente a decenas de tools de 1 función. Una llamada `animation/one_shot` crea animación completa; en GoPeak sería imposible (no hay animación).
 - **Sistema de visión con costo**: no solo capturas — jerarquía de costo (coords textuales ~20 tok → ASCII → imagen) con `visual_text`/`visual_image` separadas, para no quemar contexto.
 - **Schemas sin trampas**: solo `action` required en todas las tools — el agente nunca recibe `-32602 required` por parámetros que no aplican a su acción.
 - **Debug con errores reales**: `debug/get_editor_errors` y `debug/output` muestran los errores de runtime del juego (formato del panel Output con stack), y `session/diagnose` diagnostica la salud del plugin entero.
@@ -176,9 +179,35 @@ orchestrate(
 )
 ```
 
+### 🔹 HUD en 1 llamada con templates (v4.7)
+
+```python
+# Barra de vida completa (fondo + fill + label) con 1 llamada:
+node(action="instantiate", project_path="D:/MiJuego",
+     template="health_bar", parent_path="CanvasLayer",
+     properties={"color": {"r": 0.9, "g": 0.2, "b": 0.2, "a": 1.0}, "label": "HP 100/100"})
+
+# HUD completo: CanvasLayer + barra anclada abajo-centro + theme
+ui(action="canvas_layer", project_path="D:/MiJuego", layer=1)
+ui(action="create", project_path="D:/MiJuego",
+   template="boss_bar", parent_path="CanvasLayer", layout="bottom_center",
+   properties={"name": "EL JEFE", "color": {"r": 0.9, "g": 0.15, "b": 0.15, "a": 1.0}})
+ui(action="layout", project_path="D:/MiJuego",
+   node_path="CanvasLayer/BossBar", layout="bottom_center")
+ui(action="theme", project_path="D:/MiJuego", theme_path="res://ui/theme.tres",
+   node_path="CanvasLayer",
+   properties={"colors": {"Label/font_color": {"r": 1, "g": 0.85, "b": 0.3, "a": 1}}})
+
+# Ver el layout (anchors/offsets) sin imagen:
+node_query(action="get_info", project_path="D:/MiJuego", node_path="CanvasLayer/BossBar")
+# → ui: {anchors: {...}, offsets: {...}, size_flags: {...}}
+```
+
+> 💡 Los templates son un **sistema transversal**: también los consumen `ui/templates` (lista) y en el futuro otras tools (scripts, shaders, tilemaps). Ver `addons/heren/templates/metadata.json`.
+
 ---
 
-## 🛠️ Las 18 Tools (70+ Acciones)
+## 🛠️ Las 19 Tools (80+ Acciones)
 
 > **v4.6**: todas las tools exigen SOLO `action` como required — el resto de args son opcionales con defaults por action en el plugin. Nada de `-32602 required` absurdos.
 
@@ -201,6 +230,7 @@ orchestrate(
 | **orchestrate** | (múltiples ops) | Batch operations, plan en archivo, errores por op sin abortar |
 | **visual_text** | coords, summary, ascii | Visión textual NIVEL 0-1 (sin imagen, ~20-150 tok) — usarla SIEMPRE primero |
 | **visual_image** | capture, node | Visión imagen NIVEL 2-3 — render off-screen de la ESCENA real (nunca 2×2), image_content base64 |
+| **ui** | create, layout, canvas_layer, templates, get_info, **theme** | **UI 2D** (v4.7): Control desde template o desde cero + presets de anchors (`full_rect`, `bottom_center`, `center`…), CanvasLayer para HUD overlay, lista de templates, info de Control (anchors/offsets/size_flags), Theme .tres (colors/styleboxes/font_sizes/constants) |
 | **health** | server + editor | Health check con proyectos conectados |
 
 ---

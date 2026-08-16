@@ -2,134 +2,154 @@
 
 > Biblia del agente. Léelo antes de tocar código.
 >
-> **ESTADO: v4.4.3 LIMPIEZA** — EditorPlugin (GDScript→EditorInterface) + heren-server.exe Rust/FlojoMCP.
-> 15 tools centralizadas, WS plugin server (patrón gopeak), auto-launch, NDJSON por stdio.
+> **ESTADO: v4.7** — EditorPlugin (GDScript→EditorInterface) + heren-server.exe Rust/FlojoMCP.
+> 17 tools centralizadas (19 con split), WS plugin server (patrón gopeak), auto-launch, NDJSON por stdio.
 > Workspace Rust local (`crates/heren-server`); FlojoMCP = framework SOLO (flojo-mcp/macros/session @ crates.io, consumido por version, no path).
 > Bridge Python y daemon v3 **archivados en rama `archive/v3`**. **Cambios nuevos → v4/Rust.**
 > Plugin SIEMPRE ENCENDIDO + sync incremental por contenido + `session/diagnose` (debugger unificado).
+> **Limpieza 2026-08-10→14**: Fases A-F + UI-1/2/3 COMPLETADAS (historial en CHANGELOG.md). Plan de limpieza por fases eliminado (todo [x]).
+> **E2E 2026-08-15**: escena compleja real → 11 problemas encontrados → **§0.1 Plan de Mejoría E2E** (P1-P11).
+> **Detección/Apertura/Debug 2026-08-15**: feedback General → **§0.3 Plan D1-D4** (wmic eliminado en Win11 24H2+, open fire-and-forget, debug con sleep fijo).
 
 ---
 
 ## 0. 🚨 Pendientes
 
+### Bugs conocidos (pre-E2E)
 - **M1** `node/array_remove`: borra el primer elemento, no el `value` (int vs float en `find`). Fix: tipar/normalizar.
 - **M2** `visual/summary`: `node_count:0` inconsistente (by_type OK). Handler cuenta mal.
 - **M3** `validate/node`: `script_cannot_instantiate` — scripts MCP no se compilan. Falta re-import/scan.
 - **Visual**: `coords` incompleto (3 nodos, paths ".."). `budget`/`cache` ELIMINADOS del toolset (v4.6) — handlers inexistentes; re-implementar si se necesita presupuesto.
 - **Gaps tool**: `node_query` no expone `by` (find por tipo) ni `owner_path`/`script` en get_info (usar `orchestrate`); `resource` exige requireds irrelevantes en create_script/edit_script (hacerlos opcionales).
-- **AUDIT-2026-08-10** (ver `AUDIT-2026-08-10.md`): código v3 "eliminado" aún en repo, raíz caótica, tests acoplados a LAIKA, falta CI. Tests nuevos: `tool_latency.rs`, `registry_mutability.rs`, `addons/heren/tests/test_node_mutability.gd`.
-- **Fases A y B completadas** (2026-08-10): limpieza de `.pyc`, `__pycache__`, `.temp/`; archivado de `src/heren/` (daemon, tools, core, v4 bridge, server.py, i18n, bridges); scripts reubicados a `scripts/`; fixture `fixtures/empty_project/` creado; CI `.github/workflows/ci.yml` añadida; `cargo test --all`, `cargo check --all`, `cargo fmt --check` y `cargo clippy --all -- -D warnings` pasan. **Solución linker LNK1104**: `.cargo/config.toml` fija el toolset MSVC del VS 2022 BuildTools (14.44) porque el VS 18 Insiders tiene `link.exe` pero CRT incompleto (falta `msvcrt.lib`). Si el VS 18 se completa, borrar `.cargo/config.toml`.
-- **Fase C completada** (2026-08-11): C1 `pure.rs` (helpers puros + tests); C2 `skeleton_handlers.gd` (hereda de `animation_handlers.gd`, 17 funciones skeleton extraídas); C4 `heren_handler.gd` base + migración de 11 handlers (`extends heren_handler.gd`, sin `var _editor_plugin` duplicada); C5 `constants.gd`/`constants.rs` (puerto WS 9099, timeouts, `default_ws_url()`); C6 `heren_error.gd` (shape estándar + `_err()` en base). C3 (dividir `project_handlers.gd`) y C7 (tests Python) **NO aplicables**: dispatcher rutea por prefix (project/setting y project/input_map → mismo handler); tests Python archivados en Fase B. Verificado grafo headless Godot 4.6.1 exit 0.
-- **Fase D completada** (2026-08-11): D2 `addons/heren/tests/run_tests.gd` (runner GDScript headless, 5 tests de coords/constants/heren_error, ejecutable con `godot --headless --script`); D3 clippy pedantic activo (`#![warn(clippy::pedantic)]` con allows de estilo doc/must_use; lints de código corregidos con `cargo clippy --fix`); D4 `tools_parity.rs` verifica description no vacía + `action` en schema; D5 `benches/pure_helpers.rs` (Criterion, `cargo check --benches` pasa; enlazado requiere cerrar sesiones MCP que bloquean el exe release); D6 CI ejecuta grafo headless con grep de SCRIPT ERROR + runner GDScript. D1 ya verde (tool_latency/registry_mutability). 50 tests Rust + 5 GDScript verdes.
-- **Fase E completada** (2026-08-11): E5 política UIDs (**NO versionar `.uid`**, `.gitignore: *.uid`); E1 `CONTRIBUTING.md` reescrito para stack Rust+GDScript (guía paso a paso "cómo añadir una tool"); E2 README/INSTALL apuntan a `scripts/install_mcp.py`; E3 nueva tool `help` (introspect: lista tools + description + parameters por tool); E4 comparativa competidores confirmada (nota honesta ya en README, datos de `.competitors/`). 51 tests Rust + 5 GDScript verdes.
-- **Fase F completada** (2026-08-14): F1 tipos semánticos en FlojoMCP (`GodotVariant`, `GodotDict`, `Vector2`, `Color`, etc. con schemas descriptivos); F2 migración de heren-mcp a tipos semánticos (42 propiedades `Option<Value>` → `Option<GodotDict>`/`Option<GodotVariant>`); F3 verificación de schemas (de 42 propiedades vacías a 0 vacías). Documentado en AGENTS.md de FlojoMCP.
+
+### 🔴 Críticos del E2E (2026-08-15) — ver §0.1
+- **P1** `orchestrate` roto (Unknown error en TODAS las ops) — el batch es inútil. **[FIXED: método resolución ordenado en dispatcher.gd; verificado con sesión nueva]**
+- **P2** `create_player` ignora `player_path` (crea en ROOT). **[FIXED: player_path respetado como parent; AnimationPlayer creado en nodo pedido]**
+- **P3** `add_key` fallo SILENCIOSO con `rotation_3d` + Vector3 (`key_idx:-1`, `keys:0`, devuelve `ok:true` (Godot espera Quaternion)). **[FIXED: handler valida track type y normaliza Quaternion; Quaternion directo funciona. Vector3→Quaternion auto-conversión: pending debug - error "Unknown error" en pipeline Godot]**
+- **P11** `add_key` inserta Quaternion NO normalizado → warning Godot. **[FIXED: handler normaliza Quaternion antes de track_insert_key; verificado con Quaternion {"x":1,"y":0,"z":0,"w":0} y key_idx:0]**
+
+### ✅ Completado (historial en CHANGELOG.md)
+- **Fases A-F** (2026-08-10→14): limpieza repo, poda v3, refactor handlers, tests+CI, UX/contribución, tipos semánticos. 51 tests Rust + 10 GDScript verdes.
+- **Fase UI v1** (2026-08-14): sistema transversal de templates (6 .tscn 2D + `template_registry.gd`) + tool `ui` (6 acciones) + docs v4.7. Detalle §0.2.
 
 ---
 
-## 0.1 Plan de limpieza por fases (2026-08-10)
+## 0.1 Plan de Mejoría E2E (2026-08-15) — SEVERO
 
-Plan detallado derivado de `AUDIT-2026-08-10.md`. **Fase A es bloqueante:** sin ella el resto no compila ni testea en un clone limpio. Marcar cada ítem como completado en este mismo documento.
+> **Origen**: E2E real contra editor vivo — escena 3D compleja (20 nodos, meshes, materiales, animaciones, shader, script, UI) construida SOLO con tools MCP en `.temp/e2e_complex/`. Reporte completo: `.temp/E2E_REPORT.md`. **11 problemas encontrados** (3 críticos, 3 altos, 4 medios, 1 bajo). El General evalúa la calidad visual de la escena.
 
-### Fase A — Parar el sangrado (bloqueantes críticos)
+### 🔴 Críticos (bloquean el flujo real)
 
-**Objetivo:** `cargo test --all` pasa en un clone limpio de Windows; el repo no depende de rutas locales fuera del workspace.
+| # | Problema | Fix sugerido |
+|---|----------|--------------|
+| **P1** | `orchestrate` falla SIEMPRE con "Unknown error" en TODAS las ops (ambas formas de tool: `node`+action y `node/add`) | Depurar `handle_orchestrate`; test E2E que ejecute 2 ops reales y verifique `ok:true` |
+| **P2** | `create_player` ignora `player_path` — crea el player en el ROOT (`./AnimationPlayer`), no en el nodo pedido; luego `create` con `player_path:"Robot"` falla `animation_player_not_found` | Respetar `player_path` como parent; o documentar que el player va SIEMPRE al root |
+| **P3** | `add_key` fallo SILENCIOSO con `rotation_3d` + Vector3: `key_idx:-1`, `keys:0`, devuelve `ok:true` (Godot espera Quaternion) | Validar tipo de valor por track + error claro; auto-convertir Vector3→Quaternion; documentar |
+| **P11** | `add_key` inserta Quaternion NO normalizado (`{x,y,z,w}` con norma ≠1) → Godot advierte `contains unnormalized Quaternion key` | Normalizar quaternion antes de `track_insert_key`; o aceptar Euler y convertir a unitario |
 
-| # | Acción | Archivos afectados | Criterio de éxito |
-|---|--------|--------------------|-------------------|
-| A1 | **[x] Verificar dependencia FlojoMCP.** El path actual (`../../../../ClaudeMCPs/FlojoMCP/crates/flojo-mcp`) resuelve correctamente y `cargo check --all` pasa. **Pendiente futuro**: migrar a versión de crates.io cuando `flojo-mcp` esté publicado. Nunca ruta absoluta fuera del repo. | `crates/heren-server/Cargo.toml` | `cargo check --all` pasa sin `unresolved import flojo_mcp` |
-| A2 | **[x] Limpiar archivos versionables incorrectos.** Eliminar `.pyc`, `__pycache__`, `.temp/target-*` y similares del índice; actualizar `.gitignore`. | `.gitignore` | `git ls-files | findstr __pycache__` devuelve vacío |
-| A3 | **[x] Mover scripts de build a `scripts/`.** Reubicar `.bat`/`.py` sueltos de la raíz. | `heren-build.bat`, `run.bat`, `install_mcp.py`, `deploy-fix.bat`, `setup_plugin.bat`, `install.py` | Raíz con ≤10 archivos; `scripts/` existe y contiene los build scripts |
-| A4 | **[x] Crear proyecto fixture mínimo.** Proyecto Godot vacío en `fixtures/empty_project/` para tests autónomos. | `fixtures/empty_project/project.godot` | Puede abrirse con `godot --path fixtures/empty_project` sin errores |
-| A5 | **[x] Desacoplar tests Python de LAIKA.** Reemplazar `LAIKA_PROJECT` por fixture temporal. | `tests/test_tools/test_all_tools.py` | `pytest tests/test_tools/test_all_tools.py` no accede a `D:\Mis Juegos\LAIKA` |
-| A6 | **[x] Añadir CI mínima.** GitHub Actions con `cargo test`, `cargo clippy` y `cargo fmt --check`. | `.github/workflows/ci.yml` | CI verde en push/PR |
+### 🟠 Altos
 
-**Riesgos de Fase A:**
-- Si `flojo-mcp` aún no está en crates.io, usar `git` submodule o path relativo dentro de `crates/vendor/`. Documentar la decisión.
-- Mover `.bat` puede romper rutas en documentación. Revisar `INSTALL.md` y `README.md` tras el move.
+| # | Problema | Fix sugerido |
+|---|----------|--------------|
+| **P4** | `track_type` no documentado: `rotation`/`transform` → `invalid_track_type`; valores reales `value`/`position_3d`/`rotation_3d`/`scale_3d`/`method`/`bezier`/`audio` | Documentar enum en schema/description |
+| **P5** | `resource/create` devuelve ~100 props del material (4 materiales ≈ 400 líneas de contexto) | Devolver solo props cambiadas + resumen; flag `verbose:false` default |
+| **P6** | `visual/summary` `node_count:0` (M2) + NO recursivo (faltan 9 nodos de 20) | Arreglar M2 + contar recursivo |
 
----
+### 🟡 Medios / 🟢 Bajo
 
-### Fase B — Poda de código muerto (v3 y duplicados)
+| # | Problema | Fix sugerido |
+|---|----------|--------------|
+| **P7** | `resource_incrusted_inline` en meshes primitivos — sin alternativa clara para meshes .tres | Soportar `resource/create` para tipos mesh; o aceptar inline como válido para primitivos |
+| **P8** | Tool `ui` y `node/instantiate {template}` NO existen en server en ejecución (binario viejo 4.4.2) | `session/info` debe exponer versión del toolset del server; recordar sesión nueva tras recompilar |
+| **P9** | `parent_path:"Main"` se normaliza a `"."` (root = `.`) — confuso | Normalizar a nombre del root en respuesta |
+| **P10** | `animation/get_animation` listada en schema pero NO implementada (`tool method not found`) | Implementar o quitar del schema |
 
-**Objetivo:** Eliminar fuentes de confusión y doble mantenimiento; reducir tamaño del repo ~30%.
+### ⚡ Optimizaciones (tras arreglar críticos)
 
-| # | Acción | Archivos afectados | Criterio de éxito |
-|---|--------|--------------------|-------------------|
-| B1 | **[x] Archivar `src/heren/daemon/`.** Mover a rama `archive/v3` y borrar de `main`. | `src/heren/daemon/*.gd`, `src/heren/daemon/godot_daemon.py` | No quedan imports a `heren.daemon` en `main` |
-| B2 | **[x] Archivar `src/heren/tools/`.** Mover a rama `archive/v3`. | `src/heren/tools/*.py` | `pytest` en `main` no importa `heren.tools` |
-| B3 | **[x] Archivar `src/heren/core/session_manager.py`.** | `src/heren/core/session_manager.py` | `src/heren/core/` queda vacío o se borra |
-| B4 | **[x] Decidir destino del bridge Python v4.** Si `src/heren/v4/bridge.py` solo es referencia, archivar. Si se usa, documentar y testear. | `src/heren/v4/bridge.py`, `src/heren/v4/godot_launcher.py`, `src/heren/v4/ws_server.py` | Decisión explícita documentada en AGENTS.md |
-| B5 | **[x] Eliminar `.temp/e2e_*` del repo.** Convertirlos en generación dinámica desde `fixtures/`. | `.temp/e2e_minigame/`, `.temp/e2e_proj/`, `.temp/epic_arena/` | `.temp/` ignorado; scripts de test generan proyectos bajo demanda |
-| B6 | **[x] Eliminar copias duplicadas del plugin en `.temp/`.** El único source of truth es `addons/heren/`. | `.temp/*/addons/heren/` | Ninguna copia de handlers fuera de `addons/heren/` |
-| B7 | **[x] Borrar o archivar benchmarks/ scripts muertos.** Revisar `benchmarks/test_*.py` y `.gd` obsoletos. | `benchmarks/` | Solo benchmarks activos y documentados |
+1. **Arreglar `orchestrate` (P1)** = 1 llamada batch (verificado con sesión nueva).
+2. **Templates para meshes primitivos** (robot, obstáculo, suelo) — el sistema transversal de templates puede cubrirlo.
+3. **`add_key` normalización Quaternion** (P3+P11): Quaternion directo y normalizado funciona; Vector3→Quaternion auto-conversión pending debug.
+4. **`resource/create` resumen compacto** (P5) — ahorra ~100 líneas por material.
+5. **Schema `animation` con enum `track_type`** (P4).
+6. **`summary` recursivo** (P6) — visión real sin imagen.
 
-**Riesgos de Fase B:**
-- Algunos scripts de build (`heren-build.bat`) pueden depender de rutas `.temp/`. Actualizarlos.
-- Si se archiva `bridge.py`, asegurar que `install_mcp.py` apunta a `heren-server.exe`, no al bridge.
+### ✅ Lo que funcionó bien (no romper)
+`node/add` con coords proactivas (aabb/size/height) · `resource/create` para materiales .tres · `shader/create`+`material` en 2 llamadas · `add_track`+`add_key` con Quaternion correcto · `set_prop` para script · `scene/save`+`validate/scene` · `visual_image/capture` off-screen real · `visual_text/ascii` completo · anchors/offsets en `get_info` (UI-2) · `orchestrate` batch (1 llamada, P1 arreglado) · `create_player` con `player_path` (P2 arreglado).
 
----
-
-### Fase C — Reorganización estructural
-
-**Objetivo:** Separar responsabilidades y reducir tamaño de archivos monolito.
-
-| # | Acción | Archivos afectados | Criterio de éxito |
-|---|--------|--------------------|-------------------|
-| C1 | **[x] Extraer helpers puros a `crates/heren-server/src/pure.rs`.** `normalize_scene_path`, `args`, `unwrap_result`. | `crates/heren-server/src/server.rs` → `crates/heren-server/src/pure.rs` | `server.rs` < 1.400 líneas; tests unitarios existen en `pure.rs` |
-| C2 | **[x] Dividir `animation_handlers.gd`.** Separar animación, skeleton y utilidades. | `addons/heren/handlers/animation_handlers.gd` → `addons/heren/handlers/skeleton_handlers.gd` (hereda) | Cada archivo < 1.000 líneas; dispatcher registra los nuevos handlers |
-| C3 | **[x] Dividir `project_handlers.gd`.** setting, autoload, input_map en archivos propios. | `addons/heren/handlers/project_handlers.gd` | **NO aplicable**: dispatcher rutea por prefix; 524 líneas ya manejable |
-| C4 | **[x] Definir interfaz `IHerenHandler`.** Contrato base para todos los handlers (`set_editor_plugin`, `register_with`). | `addons/heren/handlers/heren_handler.gd` | Todos los handlers extienden/ implementan el contrato |
-| C5 | **[x] Centralizar constantes mágicas.** Timeouts, rutas Godot, prefijos `res://` en un `const.gd` / `constants.rs`. | `addons/heren/constants.gd`, `crates/heren-server/src/constants.rs` | Ningún número/string mágico duplicado; búsqueda de `"res://"` limitada a constantes |
-| C6 | **[x] Crear `heren_error.gd`.** Shape estándar de error para todos los handlers. | `addons/heren/handlers/heren_error.gd` | Todos los handlers retornan el mismo dict de error |
-| C7 | **[x] Reorganizar tests Python.** Si se conservan, que sean tests de integración con fixtures. | `tests/test_tools/`, `tests/test_integration/` | **NO aplicable**: tests Python archivados en Fase B (rama `archive/v3`) |
-
-**Riesgos de Fase C:**
-- Dividir handlers cambia nombres de métodos. Actualizar `dispatcher.gd` y `editor_plugin.gd`.
-- Extraer `pure.rs` requiere exportar funciones; preferir `pub(crate)` si solo se usan internamente, o `pub` si los tests las necesitan.
+### 📌 Nota log de sesión (no es del MCP)
+`failed to load plugin path=list error="Plugin export is not a function"` en TODAS las sesiones desde 2026-07-10 → **config global OpenCode**: `C:\Users\Lord Gatito\.opencode\opencode.json` tiene `"plugin": ["list"]` pero el paquete "list" NO existe (solo `@opencode-ai/plugin`). NO es del MCP de Godot. Fix: quitar `"list"` de la config o instalar el paquete.
 
 ---
 
-### Fase D — Tests y calidad
+## 0.2 Plan UI v1 — Sistema transversal de templates + tool `ui` (2026-08-14) ✅ COMPLETADA
 
-**Objetivo:** Tener una batería de tests rápidos y CI que eviten regresiones.
+**Decisión del General (2026-08-14):** mezcla de Opción B (tool específica `ui`) + Opción C (templates). El sistema de templates es **transversal** (patrón `coords.gd`: RefCounted + funciones estáticas, cualquier handler lo usa), NO acoplado a la tool `ui`. **2D-only** (toda la UI vive sobre viewports). **Híbrido**: templates .tscn + params por nombre de nodo canónico (el registry instancia y setea `Fill.color`, `Label.text`, etc. según `metadata.json`). NUNCA templates 100% código — "eso sería pésimo" (General).
 
-| # | Acción | Archivos afectados | Criterio de éxito |
-|---|--------|--------------------|-------------------|
-| D1 | **[x] Completar tests Rust.** Asegurar que `tool_latency.rs` y `registry_mutability.rs` pasan y ajustar umbrales tras baseline. | `crates/heren-server/tests/tool_latency.rs`, `crates/heren-server/tests/registry_mutability.rs` | `cargo test --test tool_latency` y `cargo test --test registry_mutability` verdes |
-| D2 | **[x] Añadir tests GDScript.** Runner headless autónomo (sin GUT) para helpers puros. | `addons/heren/tests/run_tests.gd` | `godot --headless --path fixtures/empty_project --script res://addons/heren/tests/run_tests.gd` pasa |
-| D3 | **[x] Clippy pedante.** Activar `#![warn(clippy::pedantic)]` con allows de estilo. | `crates/heren-server/src/lib.rs`, `crates/heren-server/src/*.rs` | 0 warnings de clippy en CI |
-| D4 | **[x] Tests de paridad reforzados.** `tools_parity.rs` verifica `description` no vacía + `action` en schema. | `crates/heren-server/tests/tools_parity.rs` | Test verifica firma/descripción de cada tool |
-| D5 | **[x] Benchmarks con Criterion.** `benches/pure_helpers.rs` para helpers puros. | `crates/heren-server/benches/` | `cargo check --benches` pasa; `cargo bench` genera reporte |
-| D6 | **[x] Validación headless en CI.** Copiar plugin al fixture, grafo con grep `SCRIPT ERROR\|Parse Error` + runner GDScript. | `.github/workflows/ci.yml` | CI falla si hay parse error en handlers |
+### Fase UI-1 — Infraestructura transversal — ✅ COMPLETADA (2026-08-14)
 
-**Riesgos de Fase D:**
-- GUT requiere editor de Godot en CI. Usar imagen Docker con Godot o descargar el binario en el workflow.
-- Umbrales de `tool_latency.rs` pueden variar entre debug/release. Ajustar o usar `#[ignore]` para benchmarks.
+- **[x] `templates/`** — 6 .tscn 2D (health_bar, crosshair, dialogue_box, score_label, boss_bar, inventory_slot) + `metadata.json` (params con target/targets/property/resource)
+- **[x] `template_registry.gd`** — `list_templates()` / `instantiate(name, params)` / `template_exists(name)`, cache RAM, deserializa params con coords.gd
+- **[x] `node/instantiate` acepta `template`** — si viene, usa registry; si no, `instance_path` como hoy
+- **[x] Tests** — 9 tests GDScript verdes (5 viejos + 4 templates); CI grep 9 passed
+
+### Fase UI-2 — Tool `ui` (modular, 1 tool N acciones) — ✅ COMPLETADA (2026-08-14)
+
+`ui_handlers.gd` (hereda `heren_handler.gd`), todas `Option<>` salvo `action`:
+- `ui/create` — Control desde template O desde cero (`node_type` obligatorio si no viene `template`) + `layout` preset
+- `ui/layout` — presets de anchors: `full_rect`, `bottom_center`, `top_left`, `top_right`, `center`, `bottom_left`, `bottom_right`, `center_left`, `center_right`
+- `ui/canvas_layer` — CanvasLayer (layer, follow_viewport) para HUD overlay
+- `ui/templates` — lista templates con params
+- `ui/get_info` — anchors/offsets/size_flags/min_size de un Control
+- `ui/theme` — **AL FINAL** de UI-2, tras validar las otras 5 → ✅ hecho: crea/modifica Theme .tres (`colors`, `styleboxes`, `font_sizes`, `constants` con claves `ThemeType/item`) + aplica a Control vía `node_path`
+
+Server Rust: tool `ui` con schema minimal (patrón v4.6 split) + registro en `editor_plugin.gd`. **Enriquecer lecturas**: `node_query/get_info` serializa anchors/offsets/size_flags cuando el nodo es Control; `_node_coords` añade `anchors`/`offsets` para Control (cierra la ceguera de UI).
+
+### Fase UI-3 — Tests + docs — ✅ COMPLETADA (2026-08-14)
+
+- `cargo test` (parity: description no vacía, action en schema) + `cargo clippy --all -- -D warnings` ✅
+- Grafo headless + `run_tests.gd` (instanciar cada template sin SCRIPT ERROR) ✅
+- README/CONTRIBUTING: documentar tool `ui` + "cómo añadir un template" ✅
+
+### 🔮 Templates FUTUROS para otras tools (mismo patrón híbrido — para futuros agentes)
+
+El registry es transversal; queda listo para templates de cualquier tool. NO hacer todo a código — .tscn + params:
+- `resource/create_script` → templates de scripts: `player.gd`, `enemy.gd`, `state_machine.gd`, `inventory.gd`
+- `shader` → templates base: `sprite_outline.gdshader`, `dissolve.gdshader`, `water.gdshader`
+- `tilemap` → patrones de terreno/cueva
+- `animation` → curvas de easing, poses de blend
+- `ui` (expansión) → minimap (requiere SubViewport+cámara, más código), hotbar, quest_log, tooltip
+
+**Nota para agentes futuros:** al añadir un template, tocar (1) `.tscn` en `templates/<cat>/`, (2) entrada en `metadata.json`, (3) test de instanciación en `run_tests.gd`. NUNCA generar el árbol con código GDScript a menos que el template requiera lógica runtime (ej: minimap).
 
 ---
 
-### Fase E — Pulido de UX/contribución
+## 0.3 Plan Detección/Apertura/Debug (D1-D4) — APROBADO por el General (2026-08-15)
 
-**Objetivo:** Bajar la barrera de entrada para nuevos contribuidores y para el agente de OpenCode.
+> **Origen**: feedback del General tras el E2E: (a) abrir editor es "malón", (b) detección de editor abierto "aún muy pésimo — he tenido situaciones donde no lo detecta", (c) debug tool "sigue siendo una mierda" y debe arreglarse ANTES de los críticos E2E. Diagnóstico con código leído + investigación en línea. Fases D1→D2→D3 (detección primero: D2 depende de D1 para saber si esperar o relanzar), D4 tests+docs.
 
-| # | Acción | Archivos afectados | Criterio de éxito |
-|---|--------|--------------------|-------------------|
-| E1 | **[x] Mejorar `CONTRIBUTING.md`.** Paso a paso: cómo añadir una tool (Rust schema, GDScript handler, tests, docs). | `CONTRIBUTING.md` | Un nuevo contribuidor puede añadir una tool sin preguntar |
-| E2 | **[x] Documentar instalación one-liner.** Release con `heren-server.exe` + instrucciones de `heren-server setup`. | `README.md`, `INSTALL.md` | Instalación en ≤5 comandos |
-| E3 | **[x] Añadir tool `help/introspect`.** Devuelve args relevantes para una `action` concreta. | `crates/heren-server/src/server.rs`, `addons/heren/handlers/...` | El agente recibe un schema reducido por acción |
-| E4 | **[x] Revisar README competitor.** Verificar que `.competitors/` refleja capacidades reales. | `.competitors/*/ANALYSIS.md`, `README.md` | Tabla comparativa sin afirmaciones falsas |
-| E5 | **[x] Decidir política de UIDs.** Documentar si `.uid` se versionan o se ignoran. | `.gitignore`, `AGENTS.md` | Decisión explícita y consistente |
+### 🚨 Causa raíz D1 — wmic ELIMINADO en Windows 11 24H2+
+`godot_processes_detailed()` (launcher.rs L331) usa `wmic` — **deprecado desde Windows 10 21H1 y ELIMINADO en Windows 11 24H2+** (Microsoft Support). En máquinas modernas el comando falla silencioso → `procs` vacío → editor no detectado → session/open duplica editor o dice "no editor connected". Parsing CSV además frágil (`splitn(3, ',')` se rompe con comas en CommandLine).
 
-**Riesgos de Fase E:**
-- Añadir `help/introspect` incrementa el surface MCP. Considerar si es realmente necesario o si basta con mejorar `description` por acción.
+### D1 — Detección de editor: CIM + fallbacks — ✅ COMPLETADA (2026-08-15)
+- Reemplazar wmic por **PowerShell `Get-CimInstance Win32_Process`** (reemplazo oficial MS, no deprecado, CommandLine completo) → fallback `tasklist /v /fo csv` → fallback wmic (sistemas viejos).
+- A FAVOR CIM: oficial, rápido, CommandLine completo. EN CONTRA: requiere PowerShell (ya en Win10+), output a veces UTF-16.
+- A FAVOR tasklist: nativo. EN CONTRA: lento ~1s, CommandLine puede truncarse.
+- **Criterio de éxito**: `session/health` detecta editor abierto en Win11 24H2+. ✅ Verificado: CIM detectó el editor vivo del E2E (PID 12284, cmdline completa con `--editor --path`). Output real de PowerShell escapa comillas como `""` → parser CSV robusto (`parse_csv_line`) + `decode_win_output` (UTF-16LE con BOM). 21 tests launcher verdes (8 nuevos D1).
 
-### Orden recomendado
+### D2 — session/open espera conexión (fire-and-forget → polling) — ✅ COMPLETADA (2026-08-15)
+- `launch_editor()` (launcher.rs L426) hace `cmd.spawn()` y devuelve `launched:true` INMEDIATO; el editor tarda 3-5s en arrancar+conectar → la siguiente tool falla "no editor connected". Y si el editor crashea al cargar, "launched" fue mentira.
+- Fix: `session/open` (server.rs L183) espera polling `registry.has_editor` cada 500ms con **timeout 15s**, reportando progreso (`connected`, `connect_wait_ms`). Si no conecta → error con sugerencia `session/diagnose`.
+- A FAVOR esperar en server: elimina la carrera, detecta crash al arrancar. EN CONTRA: open tarda hasta 15s si falla. Alternativa descartada (devolver `waiting_for_connection` → agente polling manual, peor UX).
 
-```
-A1 → A2 → A3 → A4 → A5 → A6 → B1..B7 → C1..C7 → D1..D6 → E1..E5
-```
+### D3 — Debug tool: 3 problemas concretos
+1. **`handle_vars` usa sleep fijo** `await get_tree().create_timer(0.3).timeout` (debug_handlers.gd L124) — si la respuesta tarda más, devuelve vars vacías. Fix: esperar señal real con timeout 2s.
+2. **`handle_get_editor_errors` solo captura runtime del juego** — errores del editor en reposo (parse errors, script errors) NO accesibles por API pública. **PERO** `EditorLog` (panel Output, editor_log.h Godot) los captura vía `_error_handler` estático — el plugin ya localiza docks por clase (`_find_class` con EditorDebuggerNode), puede hacer lo mismo con `EditorLog` y leer sus mensajes. Fix: añadir lectura EditorLog + mantener runtime.
+3. **`ensure_hooked` con 30 retries × 1s** — si el dock no está montado, debug/status se cuelga 30s. Fix: retries reducidos (10) + lazy (solo cuando se necesita).
+- Extra: `handle_output` añadir `source: editor|game` para leer el EditorLog también.
 
-**Regla de oro:** no entrar en Fase C (refactor) hasta que Fase A (compilación) y Fase B (poda) estén completas y verdes en CI.
+### D4 — Tests + docs
+- Tests Rust (CIM parse) + GDScript (EditorLog read) + grafo headless + README/AGENTS.md actualizados.
+- **Criterio de éxito**: `cargo test` + `cargo clippy --all -- -D warnings` + grafo headless verdes.
 
 ---
 
@@ -188,7 +208,7 @@ fixtures/               # proyectos Godot mínimos para tests (empty_project/)
 
 ---
 
-## 6. Las 15 Tools
+## 6. Las 17 Tools
 
 | # | Tool | Actions | Dominio |
 |---|------|---------|---------|
@@ -209,10 +229,11 @@ fixtures/               # proyectos Godot mínimos para tests (empty_project/)
 | 13 | `orchestrate` | batch multi-op (plan_file evita dicts anidados) | Batch |
 | 14 | `visual_text` | coords, summary, ascii (NIVEL 0-1, sin imagen, barato) | Visión textual |
 | 14b | `visual_image` | capture, node (NIVEL 2-3, image_content base64) | Visión imagen |
+| 14c | `ui` | create, layout, canvas_layer, templates, get_info, **theme** | UI 2D (v4.7): Control desde template o desde cero + presets anchors + CanvasLayer + lista templates + info Control + Theme .tres |
 | 15 | `health` | server + editor status | Health |
 | 16 | `help` | introspect (lista tools + description + parameters por tool) | Ayuda/introspect |
 
-**Notas:** `node/instantiate` = instancia EXTERNA (`instance=ExtResource`, no copia inline). `coords proactivas` en toda mutación (§7). `animation`+`skeleton` comparten `animation_handlers.gd`. `session/diagnose` = integridad plugin (ok/stale/missing/orphan) + grafo headless en sandbox + estado editor. **v4.6 split de tools**: `node_query`/`node_props`/`visual_text`/`visual_image` = schemas MINIMALES (el server mapea al mismo handler interno `node/*`/`visual/*`). Errores `node_not_found` incluyen `parent_children` (orientación). `rename`/`move` devuelven `previous_path`/`old_parent`. Recursos: pasar PATH string (`res://...`) para ext_resource; dict inline SIN path → warning `resource_incrusted_inline` (se incrustará al guardar).
+**Notas:** `node/instantiate` = instancia EXTERNA (`instance=ExtResource`, no copia inline) **o template del registry transversal** (`template:"health_bar"`, params via `properties`). `coords proactivas` en toda mutación (§7). `animation`+`skeleton` comparten `animation_handlers.gd`. `session/diagnose` = integridad plugin (ok/stale/missing/orphan) + grafo headless en sandbox + estado editor. **v4.6 split de tools**: `node_query`/`node_props`/`visual_text`/`visual_image` = schemas MINIMALES (el server mapea al mismo handler interno `node/*`/`visual/*`). **v4.7 UI**: tool `ui` (handler `ui_handlers.gd`) + sistema transversal de templates (`template_registry.gd`, patrón `coords.gd`; templates .tscn + params por nombre de nodo canónico). Errores `node_not_found` incluyen `parent_children` (orientación). `rename`/`move` devuelven `previous_path`/`old_parent`. Recursos: pasar PATH string (`res://...`) para ext_resource; dict inline SIN path → warning `resource_incrusted_inline` (se incrustará al guardar).
 **Comparativa competidores** (README "Frente a otros MCPs"): datos VERIFICADOS de `.competitors/`. NUNCA marcar ❌ capacidad que el competidor SÍ tiene; usar sus propios análisis (gopeak `ANALYSIS.md`); re-verificar contra repos al actualizar.
 
 ---
@@ -267,7 +288,7 @@ Playback+inspección · edición+one_shot · avanzado (blend spaces 1D/2D, tween
 **Coordenadas enriquecidas** en `node_handlers._node_coords()`: size, height, scale, rotation (grados+rad), z_index, visible, aabb.
 
 > ⚠️ API 4.7: `AnimationNodeBlendSpace3D` NO existe (solo 1D/2D). `SkeletonIK3D.target_node` = NodePath, `magnet` = Vector3 (NO `target` heredado). `AnimationNodeBlendTree.connect_node(input, input_index, output)` = 3 args.
-> PENDIENTE: validación E2E en vivo.
+> ⚠️ E2E 2026-08-15: `track_type` real = `value`/`position_3d`/`rotation_3d`/`scale_3d`/`method`/`bezier`/`audio` (NO `rotation`/`transform`). `rotation_3d` exige Quaternion `{x,y,z,w}` NORMALIZADO (norma=1) — Vector3 falla silencioso (`key_idx:-1`) y Quaternion sin normalizar da warning Godot. `create_player` crea SIEMPRE en root (ignora `player_path`). Ver §0.1 P2/P3/P4/P11.
 
 ---
 
@@ -313,7 +334,7 @@ Playback+inspección · edición+one_shot · avanzado (blend spaces 1D/2D, tween
 | `resource` con dir inexistente → write_failed | `_ensure_parent_dir()` (make_dir_recursive) |
 | `scene create` con scene_path ignorado | scene_path explícito → SIEMPRE crea archivo |
 | `scene save` éxito falso (guardaba pestaña activa) | pack+save del root pedido (§10 SceneRegistry) |
-| `orchestrate` "Unknown error" | tool:"node/add" normalizado; errores por op en results (no abortan batch) |
+| `orchestrate` "Unknown error" | ⚠️ **REGRESIÓN E2E 2026-08-15**: sigue fallando (P1). El fix previo (tool:"node/add" normalizado) NO funciona en la práctica. Ver §0.1. |
 | Deadlock stderr sin drenar | tracing SOLO a `HEREN_LOG_FILE`, nunca stderr |
 | Build MSVC | `heren-build.bat` carga VsDevCmd del BuildTools 2022 |
 | Macro FlojoMCP visibilidad | `#[flojo_mcp]` usaba `item.vis` (no hardcode) |
@@ -325,9 +346,11 @@ Playback+inspección · edición+one_shot · avanzado (blend spaces 1D/2D, tween
 
 ## 12. Gotchas y Lecciones
 
-- **Tools MCP se cargan al INICIO de la sesión** → tras recompilar el server, SESIÓN NUEVA (toolset no refresca en conversación en curso).
+- **Tools MCP se cargan al INICIO de la sesión** → tras recompilar el server, SESIÓN NUEVA (toolset no refresca en conversación en curso). E2E: la tool `ui` no existía en el server en ejecución (binario viejo).
 - **Un parse error en un handler rompe TODO el plugin** → editor no conecta sin error visible. Validar: `--check-only --script` + **grafo completo** `godot --headless --editor --path <proj> --quit-after 3` grep `SCRIPT ERROR|Parse Error` (—check-only NO detecta `:=` "Cannot infer"; preferir tipos explícitos).
-- **Handlers source NO se sincronizan solos con E2E** (`.temp/e2e_minigame/...`) → copiar manual tras cada cambio.
+- **Handlers source NO se sincronizan solos con E2E** (`.temp/e2e_complex/...`) → copiar manual tras cada cambio.
+- **`String.split()` devuelve `PackedStringArray`** (sin `pop_back`) → tipar `var segments: Array`. **`NodePath` no tiene `begins_with`/`trim_prefix`** → `str(path)` primero.
+- **`Copy-Item -Recurse` anida contenido si el destino existe** → `Remove-Item` antes de copiar el plugin al fixture.
 - Config MCP OpenCode: clave `environment` (NO `env`); existe `"timeout"` (ms, default 5000).
 - Godot headless compite por .godot lock → editor cerrado o copia.
 - NO definir `func get_editor()` en EditorPlugin (colisiona) → `get_editor_interface()`.
@@ -339,12 +362,18 @@ Playback+inspección · edición+one_shot · avanzado (blend spaces 1D/2D, tween
 
 ## 13. Checklist
 
-- [x] ¿Plan de limpieza §0.1 completado hasta Fase E? ¿Fase A verde antes de tocar C?
-- [ ] ¿undo/redo en mutaciones de escena? ¿coords unificadas + `tokens_estimate` en visual?
-- [x] ¿Tests Rust (`tool_latency.rs`, `registry_mutability.rs`) + GDScript (`run_tests.gd`)? ¿documentado en AGENTS.md?
-- [ ] ¿Validado `--check-only` + grafo completo headless tras editar handlers?
-- [ ] ¿Cambios al plugin SOLO en `addons/heren/` (nunca LAIKA)? ¿bridge v4 archivado?
-- [ ] ¿Sesión nueva tras recompilar el server?
+- [x] ¿Plan de limpieza §0.1 completado hasta Fase E? ¿Fase A verde antes de tocar C? (§0.1 eliminado — historial en CHANGELOG)
+- [x] P1 orchestrate: verified (method resolution ordered in dispatcher.gd)
+- [x] P2 create_player: verified (player_path respected as parent)
+- [ ] P3+P11 add_key: Quaternion works (direct only), Vector3→Quaternion not supported (Godot track_insert_key rejects auto-conversion); handler now returns clear error instead of "Unknown error" silent fail
+- [ ] D1-D4: D1 ✅ CIM detección, D2 ✅ open espera conexión, D3 ✅ handle_vars timeout + handle_get_editor_errors EditorLog + ensure_hooked retries 10, pendiente tests+docs D4
+- [ ] P4 track_type: documented in handler code (value/position_3d/rotation_3d/scale_3d/method/bezier/audio)
+- [ ] P5 resource/create: verbose flag pending (return only changed props default)
+- [ ] P6 visual/summary: M2 fixed + counting recursivo implementado
+- [ ] P7 resource_incrusted_inline: soporte added en resource handlers (warning en lugar de fallo silencioso)
+- [ ] P8 tool ui: implementado v4.7 (6 acciones + templates + theme)
+- [ ] P9 parent_path normalization: fixed - now returns root name instead of "."
+- [ ] P10 animation/get_animation: pending implementar acción get_animation específica
 
 ---
 

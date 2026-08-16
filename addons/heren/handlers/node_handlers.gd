@@ -13,6 +13,7 @@ extends "res://addons/heren/handlers/heren_handler.gd"
 
 const HerenCoordsScript := preload("coords.gd")
 const HerenSceneRegistryScript := preload("../scene_registry.gd")
+const HerenTemplateRegistryScript := preload("../template_registry.gd")
 
 var _undo_redo: Node
 
@@ -283,6 +284,15 @@ func _node_coords(node: Node, root: Node) -> Dictionary:
 		bbox = {"x": ctl.global_position.x, "y": ctl.global_position.y, "w": csize.x, "h": csize.y}
 		size = {"w": csize.x, "h": csize.y}
 		height = csize.y
+		# v4.7 (Fase UI-2): anchors/offsets para cerrar la ceguera de UI.
+		out["anchors"] = {
+			"left": ctl.anchor_left, "top": ctl.anchor_top,
+			"right": ctl.anchor_right, "bottom": ctl.anchor_bottom,
+		}
+		out["offsets"] = {
+			"left": ctl.offset_left, "top": ctl.offset_top,
+			"right": ctl.offset_right, "bottom": ctl.offset_bottom,
+		}
 	elif node is MeshInstance3D:
 		var mi := node as MeshInstance3D
 		if mi.mesh != null:
@@ -461,7 +471,7 @@ func handle_get_info(args: Dictionary) -> Dictionary:
 	var children := []
 	_get_children_list(root, node, false, children)
 
-	return {
+	var result := {
 		"ok": true,
 		"node_path": _node_path_relative(node, root),
 		"node_type": node.get_class(),
@@ -472,6 +482,28 @@ func handle_get_info(args: Dictionary) -> Dictionary:
 		"groups": node.get_groups(),
 		"scene_file_path": node.scene_file_path if node.scene_file_path != "" else "",
 	}
+	# v4.7 (Fase UI-2): info de UI para Control (anchors/offsets/size_flags).
+	if node is Control:
+		var ctl := node as Control
+		result["ui"] = {
+			"anchors": {
+				"left": ctl.anchor_left, "top": ctl.anchor_top,
+				"right": ctl.anchor_right, "bottom": ctl.anchor_bottom,
+			},
+			"offsets": {
+				"left": ctl.offset_left, "top": ctl.offset_top,
+				"right": ctl.offset_right, "bottom": ctl.offset_bottom,
+			},
+			"size": {"x": ctl.size.x, "y": ctl.size.y},
+			"min_size": {"x": ctl.custom_minimum_size.x, "y": ctl.custom_minimum_size.y},
+			"size_flags": {
+				"horizontal": ctl.size_flags_horizontal,
+				"vertical": ctl.size_flags_vertical,
+				"stretch_ratio": ctl.size_flags_stretch_ratio,
+			},
+			"parent_is_container": ctl.get_parent() is Container,
+		}
+	return result
 
 
 func handle_get_children(args: Dictionary) -> Dictionary:
@@ -580,23 +612,48 @@ func handle_duplicate(args: Dictionary) -> Dictionary:
 	}
 
 
-## Instancia una escena .tscn (o PackedScene .res) como hijo del Ã¡rbol.
-## GEN_EDIT_STATE_INSTANCE â†’ el editor la trata como instancia externa editable
+## Instancia una escena .tscn (o PackedScene .res) como hijo del árbol.
+## GEN_EDIT_STATE_INSTANCE → el editor la trata como instancia externa editable
 ## (ExtResource en pack, no copia inline). owner = root para que pack() la incluya.
+## v4.7: acepta `template` (sistema transversal HerenTemplateRegistry). Si viene
+## `template` usa el registry (.tscn + params por metadata); si no, `instance_path`
+## como siempre. Los params del template viajan en `properties` (dict).
 func handle_instantiate(args: Dictionary) -> Dictionary:
 	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 
-	var instance_path: String = str(args.get("instance_path", ""))
-	if instance_path == "":
-		return {"ok": false, "error": "instance_path required"}
-	if not ResourceLoader.exists(instance_path):
-		return {"ok": false, "error": "instance_not_found: " + instance_path}
+	var template_name: String = str(args.get("template", ""))
+	var instance: Node = null
+	var instance_source := ""
 
-	var packed: PackedScene = load(instance_path)
-	if packed == null:
-		return {"ok": false, "error": "not_packed_scene: " + instance_path}
+	if template_name != "":
+		# Template del sistema transversal: params por nombre de nodo canónico.
+		var template_params := _args_dict(args, "properties")
+		instance = HerenTemplateRegistryScript.instantiate(template_name, template_params)
+		if instance == null:
+			return {"ok": false, "error": "template_not_found: " + template_name}
+		instance_source = "template:" + template_name
+	else:
+		var instance_path: String = str(args.get("instance_path", ""))
+		if instance_path == "":
+			return {"ok": false, "error": "instance_path or template required"}
+		if not ResourceLoader.exists(instance_path):
+			return {"ok": false, "error": "instance_not_found: " + instance_path}
+
+		var packed: PackedScene = load(instance_path)
+		if packed == null:
+			return {"ok": false, "error": "not_packed_scene: " + instance_path}
+		instance = packed.instantiate(PackedScene.GEN_EDIT_STATE_INSTANCE)
+		if instance == null:
+			return {"ok": false, "error": "instantiate_failed: " + instance_path}
+		instance_source = instance_path
+
+		# Propiedades post-instanciación (coords unificadas).
+		var properties := _args_dict(args, "properties")
+		for prop_name in properties.keys():
+			if prop_name in instance:
+				instance.set(prop_name, HerenCoordsScript.deserialize_value(properties[prop_name]))
 
 	var parent: Node = root
 	if args.has("parent_path") and str(args.get("parent_path", "")) != "":
@@ -604,19 +661,9 @@ func handle_instantiate(args: Dictionary) -> Dictionary:
 		if parent == null:
 			return {"ok": false, "error": "parent_not_found: " + str(args.get("parent_path"))}
 
-	var instance: Node = packed.instantiate(PackedScene.GEN_EDIT_STATE_INSTANCE)
-	if instance == null:
-		return {"ok": false, "error": "instantiate_failed: " + instance_path}
-
 	var node_name: String = str(args.get("node_name", ""))
 	if node_name != "":
 		instance.name = node_name
-
-	# Propiedades post-instanciaciÃ³n (coords unificadas).
-	var properties := _args_dict(args, "properties")
-	for prop_name in properties.keys():
-		if prop_name in instance:
-			instance.set(prop_name, HerenCoordsScript.deserialize_value(properties[prop_name]))
 
 	# Script override opcional.
 	if args.has("script") and str(args.get("script", "")) != "":
@@ -632,7 +679,8 @@ func handle_instantiate(args: Dictionary) -> Dictionary:
 
 	return {
 		"ok": true,
-		"instance_path": instance_path,
+		"instance_path": instance_source,
+		"template": template_name if template_name != "" else "",
 		"node_name": instance.name,
 		"node_type": instance.get_class(),
 		"parent_path": _node_path_relative(parent, root),

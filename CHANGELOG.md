@@ -1,5 +1,54 @@
 # Changelog — Heren MCP
 
+## [Unreleased] - 2026-08-15 - E2E escena compleja (11 problemas)
+
+### 🧪 E2E real contra editor vivo
+
+Escena 3D compleja (20 nodos: meshes, materiales, animaciones, shader, script, UI) construida SOLO con tools MCP en `.temp/e2e_complex/`. Reporte: `.temp/E2E_REPORT.md`.
+
+**🔴 Críticos**:
+- **P1** `orchestrate` falla SIEMPRE con "Unknown error" (ambas formas de tool) — el batch es inútil.
+- **P2** `create_player` ignora `player_path` — crea el player en el ROOT.
+- **P3** `add_key` fallo SILENCIOSO con `rotation_3d` + Vector3 (`key_idx:-1`, `ok:true`).
+- **P11** `add_key` inserta Quaternion NO normalizado → warning Godot.
+
+**🟠 Altos**: P4 `track_type` no documentado · P5 `resource/create` devuelve ~100 props · P6 `summary` node_count:0 + no recursivo.
+**🟡 Medios**: P7 meshes inline sin alternativa · P8 tool `ui` no en server viejo · P9 `parent_path` → "." · P10 `get_animation` no implementada.
+
+**AGENTS.md**: §0.1 eliminado (todo [x], historial en CHANGELOG); nuevo **§0.3 Plan de Mejoría E2E** (severo); §9/§11/§12/§13 actualizados con lecciones (Quaternion normalizado, track_type real, create_player en root).
+
+**Nota log**: `failed to load plugin path=list` = config global OpenCode (`"plugin": ["list"]` inexistente), NO del MCP de Godot.
+
+## [Unreleased] - 2026-08-14 - Fase UI: templates + tool `ui`
+
+### 🧩 Sistema transversal de templates (UI-1)
+
+**Problema**: crear un HUD requería 6-10 llamadas (crear Control, fijar 9 anchors/offsets a pelo, añadir hijos, estilizar). El agente adivinaba valores de layout → HUDs rotos; `get_info` no exponía anchors/offsets → ceguera de UI.
+
+**Solución** — sistema transversal (patrón `coords.gd`, lo usa cualquier tool):
+- `addons/heren/templates/` — 6 templates .tscn 2D: `health_bar`, `crosshair`, `dialogue_box`, `score_label`, `boss_bar`, `inventory_slot`
+- `metadata.json` — índice con params `{target|targets, property, resource}` por nombre de nodo canónico
+- `template_registry.gd` — `list_templates()` / `instantiate(name, params)` / `template_exists()` con cache RAM; deserializa params con el sistema de coordenadas
+- `node/instantiate` acepta `template` (params via `properties`); schema Rust de `node` gana `template` y `script` (gap preexistente)
+- **1 llamada = barra de vida completa** (`node/instantiate {template:"health_bar", properties:{color, label}}`)
+
+### 🎨 Tool `ui` (UI-2) — 6 acciones
+
+- `ui/create` — Control desde template o desde cero (`node_type` obligatorio si no template) + `layout` preset
+- `ui/layout` — 9 presets de anchors (`full_rect`, `bottom_center`, `top_left`, `top_right`, `center`, `bottom_left`, `bottom_right`, `center_left`, `center_right`); avisa si el padre es Container
+- `ui/canvas_layer` — CanvasLayer (layer, follow_viewport) para HUD overlay
+- `ui/templates` — lista templates con params
+- `ui/get_info` — anchors/offsets/size_flags/min_size/parent_is_container de un Control
+- `ui/theme` — crea/modifica Theme .tres (`colors`, `styleboxes`, `font_sizes`, `constants` con claves `ThemeType/item`) + aplica a Control vía `node_path`
+
+**Lecturas enriquecidas**: `node_query/get_info` devuelve `ui` (anchors/offsets/size_flags/min_size/parent_is_container) para Control; `_node_coords` añade `anchors`/`offsets`.
+
+**Bugs corregidos**: `{} != null` → `is_empty()` en `template_exists`; clippy `map_unwrap_or` preexistente; línea en blanco en `lib.rs`.
+
+**Lecciones** (ver AGENTS.md §10): `String.split()` devuelve `PackedStringArray` (sin `pop_back`) → tipar `var segments: Array`; `NodePath` no tiene `begins_with`/`trim_prefix` → `str(path)` primero; `Copy-Item -Recurse` anida si el destino existe → `Remove-Item` antes.
+
+Verificado: 51 tests Rust + 10 GDScript verdes, clippy pedante 0 warnings, fmt limpio, grafo headless sin SCRIPT ERROR, CI grep actualizado a 10 passed.
+
 ## [Unreleased] - 2026-08-14 - Fase F: tipos semánticos
 
 ### 🎯 Schemas JSON descriptivos

@@ -197,11 +197,43 @@ async fn session(
                 editor_connected,
             );
             let dirty = registry.dirty_scenes(&proj).await;
+            // D2 (2026-08-15): si se lanzÃ³ un editor nuevo, esperar a que el
+            // plugin conecte al WS (polling 500ms, timeout 15s). Elimina la
+            // carrera "launched:true pero la siguiente tool falla no editor
+            // connected" y detecta crash al arrancar.
+            let mut connected = editor_connected;
+            let mut wait_ms: u64 = 0;
+            if outcome.launched && !editor_connected {
+                let deadline = std::time::Instant::now()
+                    + std::time::Duration::from_millis(crate::constants::EDITOR_CONNECT_TIMEOUT_MS);
+                while std::time::Instant::now() < deadline {
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        crate::constants::EDITOR_CONNECT_POLL_MS,
+                    ))
+                    .await;
+                    wait_ms += crate::constants::EDITOR_CONNECT_POLL_MS;
+                    if registry.has_editor(&proj).await {
+                        connected = true;
+                        break;
+                    }
+                }
+            }
+            if outcome.launched && !connected {
+                return Err(ToolError::internal(format!(
+                    "editor lanzado pero NO conecto al WS server en {wait_ms}ms. \
+                     Posibles causas: crash al arrancar, plugin con SCRIPT ERROR, \
+                     o puerto WS ocupado. Ejecuta session/diagnose para el \
+                     debugger unificado (integridad plugin + grafo headless + \
+                     estado editor)."
+                )));
+            }
             Ok(json!({
                 "ok": true,
                 "project_path": proj,
                 "daemon_active": true,
                 "launched": outcome.launched,
+                "connected": connected,
+                "connect_wait_ms": wait_ms,
                 "plugin_changed": outcome.plugin_changed,
                 "plugin_version_source": outcome.source_version,
                 "plugin_version_installed": outcome.installed_version,
@@ -497,7 +529,7 @@ async fn scene(
 // ============================================================
 
 #[tool(
-    description = "Nodos (v4.6): MUTACIONES estructurales â€” add|instantiate|remove|duplicate|rename|move|set_owner|reorder. args: node_path, parent_path, node_type, node_name, instance_path, properties (dict), new_name, new_parent, index. Lecturas y props â†’ node_query / node_props."
+    description = "Nodos (v4.6): MUTACIONES estructurales â€” add|instantiate|remove|duplicate|rename|move|set_owner|reorder. args: node_path, parent_path, node_type, node_name, instance_path, properties (dict), new_name, new_parent, index, parent_path, template (instantiate: usa template del registry transversal en vez de instance_path), script (path res:// opcional). Lecturas y props â†’ node_query / node_props."
 )]
 #[allow(clippy::too_many_arguments)]
 async fn node(
@@ -513,6 +545,8 @@ async fn node(
     new_parent: Option<String>,
     index: Option<i64>,
     parent_path: Option<String>,
+    template: Option<String>,
+    script: Option<String>,
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref())?;
     let registry = EditorRegistry::global();
@@ -536,6 +570,8 @@ async fn node(
             ("new_parent", new_parent.map(Value::String)),
             ("index", index.map(|i| json!(i))),
             ("parent_path", parent_path.map(Value::String)),
+            ("template", template.map(Value::String)),
+            ("script", script.map(Value::String)),
         ]),
     );
     forward_mutating(registry, &proj, &format!("node/{action}"), a, &scene_path).await
@@ -618,6 +654,67 @@ async fn node_props(
         forward_mutating(registry, &proj, &format!("node/{action}"), a, &scene_path).await
     } else {
         forward(registry, &proj, &format!("node/{action}"), a).await
+    }
+}
+
+// ============================================================
+// UI (Fase UI-2) — tool `ui` modular para UI 2D sobre viewports.
+// El sistema de templates es transversal (template_registry.gd); esta tool
+// delega en él. theme se añade AL FINAL de UI-2 (tras validar las otras 5).
+// ============================================================
+
+#[tool(
+    description = "UI 2D (v4.7): create|layout|canvas_layer|templates|get_info|theme. create: Control desde template (template) o desde cero (node_type obligatorio si no template) + layout preset. layout: presets de anchors (full_rect, bottom_center, top_left, top_right, center, bottom_left, bottom_right, center_left, center_right). canvas_layer: CanvasLayer (layer, follow_viewport) para HUD overlay. templates: lista templates con params. get_info: anchors/offsets/size_flags/min_size de un Control. theme: crea/modifica Theme .tres (theme_path + properties {colors, styleboxes, font_sizes, constants} con claves 'ThemeType/item') y opcionalmente lo aplica a un Control (node_path)."
+)]
+#[allow(clippy::too_many_arguments)]
+async fn ui(
+    action: String,
+    project_path: Option<String>,
+    scene_path: Option<String>,
+    node_path: Option<String>,
+    node_type: Option<String>,
+    node_name: Option<String>,
+    template: Option<String>,
+    layout: Option<String>,
+    properties: Option<GodotDict>,
+    parent_path: Option<String>,
+    layer: Option<i64>,
+    follow_viewport: Option<bool>,
+    theme_path: Option<String>,
+) -> Result<Value, ToolError> {
+    let proj = resolve_project(project_path.as_deref())?;
+    let registry = EditorRegistry::global();
+    let scene_path = scene_path
+        .as_deref()
+        .map(normalize_scene_path)
+        .unwrap_or_default();
+    let a = apply_scene_context(
+        &proj,
+        args(&[
+            (
+                "scene_path",
+                (!scene_path.is_empty()).then(|| Value::String(scene_path.clone())),
+            ),
+            ("node_path", node_path.map(Value::String)),
+            ("node_type", node_type.map(Value::String)),
+            ("node_name", node_name.map(Value::String)),
+            ("template", template.map(Value::String)),
+            ("layout", layout.map(Value::String)),
+            ("properties", properties.map(Into::into)),
+            ("parent_path", parent_path.map(Value::String)),
+            ("layer", layer.map(|i| json!(i))),
+            ("follow_viewport", follow_viewport.map(|v| json!(v))),
+            ("theme_path", theme_path.map(Value::String)),
+        ]),
+    );
+    let mutating = matches!(
+        action.as_str(),
+        "create" | "layout" | "canvas_layer" | "theme"
+    );
+    if mutating {
+        forward_mutating(registry, &proj, &format!("ui/{action}"), a, &scene_path).await
+    } else {
+        forward(registry, &proj, &format!("ui/{action}"), a).await
     }
 }
 
@@ -1435,7 +1532,7 @@ async fn orchestrate(
         serde_json::from_str::<Value>(&content)
             .map_err(|e| ToolError::invalid_params(format!("plan_file invalid JSON: {e}")))?
     } else {
-        plan.map(Into::into).unwrap_or(Value::Null)
+        plan.map_or(Value::Null, Into::into)
     };
 
     let ops: Vec<Value> = plan_value

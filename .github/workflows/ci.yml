@@ -71,7 +71,7 @@ jobs:
       - name: Run GDScript unit tests
         run: |
           godot --headless --path fixtures/empty_project --script res://addons/heren/tests/run_tests.gd 2>&1 | tee /tmp/godot-tests.log
-          if ! grep -q "RESULT: 5 passed, 0 failed" /tmp/godot-tests.log; then
+          if ! grep -q "RESULT: 10 passed, 0 failed" /tmp/godot-tests.log; then
             echo "::error::GDScript unit tests failed"
             exit 1
           fi

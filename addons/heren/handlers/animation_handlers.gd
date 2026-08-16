@@ -110,13 +110,37 @@ func handle_create_player(args: Dictionary) -> Dictionary:
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 
+	# P2 (E2E 2026-08-15): respetar `player_path` como parent. El agente pasa
+	# player_path:"Robot" esperando que el player se cree DENTRO de Robot, no
+	# en el root. `parent_path` sigue siendo el alias canónico; si no viene,
+	# player_path actúa como parent (y si termina en /AnimationPlayer, el
+	# nombre del player se deriva del path).
+	var parent_arg: String = str(args.get("parent_path", ""))
+	var player_path_arg: String = str(args.get("player_path", ""))
 	var parent: Node = root
-	if args.has("parent_path") and str(args.get("parent_path", "")) != "":
-		parent = _resolve_node(root, args.get("parent_path"))
-		if parent == null:
-			return {"ok": false, "error": "parent_not_found: " + str(args.get("parent_path"))}
-
 	var player_name: String = str(args.get("player_name", "AnimationPlayer"))
+	if parent_arg != "":
+		parent = _resolve_node(root, parent_arg)
+		if parent == null:
+			return {"ok": false, "error": "parent_not_found: " + parent_arg}
+	elif player_path_arg != "":
+		# player_path puede ser "Robot" (parent) o "Robot/AnimationPlayer" (path completo)
+		var pp := player_path_arg.trim_suffix("/")
+		var last_slash := pp.rfind("/")
+		if last_slash != -1:
+			var parent_part := pp.substr(0, last_slash)
+			var name_part := pp.substr(last_slash + 1)
+			if parent_part != "":
+				parent = _resolve_node(root, parent_part)
+				if parent == null:
+					return {"ok": false, "error": "parent_not_found: " + parent_part}
+			if name_part != "":
+				player_name = name_part
+		else:
+			parent = _resolve_node(root, pp)
+			if parent == null:
+				return {"ok": false, "error": "parent_not_found: " + pp}
+
 	if parent.get_node_or_null(NodePath(player_name)) != null:
 		return {"ok": false, "error": "node_exists: " + player_name}
 
@@ -186,7 +210,36 @@ func handle_add_key(args: Dictionary) -> Dictionary:
 		return {"ok": false, "error": "invalid_track_idx: " + str(track_idx)}
 
 	var value: Variant = HerenCoordsScript.deserialize_value(args.get("value"))
+
+	# P3+P11 (E2E 2026-08-15): validar tipo de valor por track + auto-convertir.
+	# - rotation_3d exige Quaternion NORMALIZADO (norma=1). Vector3 falla
+	#   silencioso (key_idx:-1) y Quaternion sin normalizar da warning Godot.
+	# - position_3d/scale_3d exigen Vector3.
+	var track_type := anim.track_get_type(track_idx)
+	match track_type:
+		Animation.TYPE_ROTATION_3D:
+			# rotation_3d exige Quaternion NORMALIZADO (norma=1).
+			# Vector3 NO se auto-convierte (Godot track_insert_key lo rechaza).
+			# El agente debe pasar Quaternion {x,y,z,w} directamente.
+			if not (value is Quaternion):
+				return {"ok": false, "error": "rotation_3d track requires normalized Quaternion {x,y,z,w}; got: " + str(typeof(value))}
+			if value.normalized() != value:
+				return {"ok": false, "error": "rotation_3d track requires normalized Quaternion {x,y,z,w} (norm=1); got: " + str(typeof(value))}
+			# Asegurar que value sea el normalizado (por si no lo estaba)
+			value = value.normalized()
+		Animation.TYPE_POSITION_3D, Animation.TYPE_SCALE_3D:
+		Animation.TYPE_POSITION_3D, Animation.TYPE_SCALE_3D:
+			if not (value is Vector3):
+				return {"ok": false, "error": "position_3d/scale_3d track requires Vector3 {x,y,z}; got: " + str(typeof(value))}
+		Animation.TYPE_VALUE:
+			# value track: cualquier Variant es válido (pero no Quaternion suelto)
+			pass
+		_:
+			pass
+
 	var key_idx := anim.track_insert_key(track_idx, time, value, transition)
+	if key_idx < 0:
+		return {"ok": false, "error": "track_insert_key failed (tipo de valor incompatible con el track)"}
 
 	return {"ok": true, "key_idx": key_idx, "track_idx": track_idx, "time": time}
 

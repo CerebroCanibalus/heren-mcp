@@ -152,6 +152,79 @@ cargo test --all
 
 ---
 
+## 🧩 Cómo añadir un template / How to Add a Template (v4.7)
+
+El **sistema de templates es transversal** (`template_registry.gd`, patrón `coords.gd`):
+cualquier tool puede instanciar templates (hoy `node/instantiate {template}` y `ui/create`;
+mañana `resource`, `shader`, `tilemap`…). **Modelo híbrido**: templates `.tscn` + params
+por **nombre de nodo canónico**. NUNCA generar el árbol con código GDScript.
+
+### Los 3 archivos que tocar
+
+```
+addons/heren/templates/<categoria>/mi_template.tscn   # 1. el .tscn con nodos canónicos
+addons/heren/templates/metadata.json                  # 2. la entrada en el índice
+addons/heren/tests/run_tests.gd                       # 3. test de instanciación
+```
+
+### Paso 1 — El `.tscn` con nodos canónicos
+
+El template es un Control (o árbol) 2D normal. Los nodos que el agente personalizará
+tienen nombres canónicos (`Fill`, `Background`, `Label`, `Icon`, `Count`…) y las
+propiedades setteables son directas del nodo (ColorRect `color`, Label `text`,
+TextureRect `texture`…). Los StyleBoxFlat van fijos en sub_resources (el estilo fino
+se hace con `ui/theme`).
+
+### Paso 2 — Entrada en `metadata.json`
+
+```json
+{
+  "name": "mi_template",
+  "category": "hud",
+  "description": "Qué hace y qué nodos canónicos expone",
+  "file": "hud/mi_template.tscn",
+  "params": [
+    {"name": "color", "target": "Fill", "property": "color", "description": "Color del relleno"},
+    {"name": "text", "target": ".", "property": "text", "description": "Target '.' = root"},
+    {"name": "icon", "target": "Icon", "property": "texture", "resource": true, "description": "resource:true carga el path res://"}
+  ]
+}
+```
+
+Reglas de `params`:
+- `target` → nodo hijo por path (`.` = root). `targets` (array) → mismo valor a varios nodos.
+- `property` → propiedad directa del nodo. Las theme overrides funcionan (`theme_override_colors/font_color`).
+- `resource: true` → el valor es un path `res://...` que se carga con `load()` (ej: texture).
+- Los valores viajan por el **sistema de coordenadas**: `{x,y}` → Vector2, `{r,g,b,a}` → Color.
+
+### Paso 3 — Test de instanciación en `run_tests.gd`
+
+```gdscript
+func _test_mi_template_instantiate() -> bool:
+	var instance: Node = TemplateRegistryScript.instantiate("mi_template", {
+		"color": {"r": 0.9, "g": 0.2, "b": 0.2, "a": 1.0},
+	})
+	if instance == null:
+		push_error("instantiate(mi_template) = null")
+		return false
+	var fill: ColorRect = instance.get_node_or_null("Fill") as ColorRect
+	if fill == null or not fill.color.is_equal_approx(Color(0.9, 0.2, 0.2, 1.0)):
+		push_error("Fill no seteado")
+		instance.free()
+		return false
+	instance.free()
+	return true
+```
+
+Y registrarlo en `_init()` con `_run("mi_template instantiate", _test_mi_template_instantiate)`.
+
+> ⚠️ `godot --headless --path fixtures/empty_project` — los .tscn de templates se cargan
+> sin importar (PackedScene directa). Un `.tscn` con Parse Error rompe el grafo → valida siempre.
+> ⚠️ **Lección 2026-08-14**: `String.split()` devuelve `PackedStringArray` (sin `pop_back`) →
+> tipar `var segments: Array`; `NodePath` no tiene `begins_with`/`trim_prefix` → `str(path)` primero.
+
+---
+
 ## 🧪 Tests / Tests
 
 | Suite | Comando | Qué cubre |
@@ -224,6 +297,8 @@ heren-mcp/
 │   └── tests/                  # tools_parity, tool_latency, registry_mutability, ws_plugin
 ├── addons/heren/               # plugin Godot (FUENTE DE VERDAD)
 │   ├── handlers/               # heren_handler.gd (base) + handlers por dominio
+│   ├── templates/              # .tscn prefabricados + metadata.json (sistema transversal)
+│   ├── template_registry.gd    # list/instantiate/exists de templates (patrón coords.gd)
 │   ├── constants.gd            # constantes del plugin
 │   └── tests/                  # run_tests.gd (unit headless)
 ├── scripts/                    # heren-build.bat, install_mcp.py, run.bat...

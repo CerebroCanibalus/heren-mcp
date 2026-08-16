@@ -18,6 +18,8 @@ extends SceneTree
 const CoordsScript := preload("res://addons/heren/handlers/coords.gd")
 const ConstantsScript := preload("res://addons/heren/constants.gd")
 const ErrorScript := preload("res://addons/heren/handlers/heren_error.gd")
+const TemplateRegistryScript := preload("res://addons/heren/template_registry.gd")
+const UiHandlersScript := preload("res://addons/heren/handlers/ui_handlers.gd")
 
 var _passed := 0
 var _failed := 0
@@ -29,6 +31,11 @@ func _init() -> void:
 	_run("deserialize_value null keys", _test_deserialize_value)
 	_run("default_ws_url", _test_default_ws_url)
 	_run("heren_error shape", _test_heren_error)
+	_run("template_registry list >= 6", _test_template_list)
+	_run("template_registry exists", _test_template_exists)
+	_run("template_registry instantiate health_bar params", _test_template_instantiate_params)
+	_run("template_registry instantiate all", _test_template_instantiate_all)
+	_run("ui layout presets (9)", _test_ui_layout_presets)
 
 	print("RESULT: %d passed, %d failed" % [_passed, _failed])
 	quit(0 if _failed == 0 else 1)
@@ -100,5 +107,87 @@ func _test_heren_error() -> bool:
 	var o := ErrorScript.ok({"a": 1})
 	if o.get("ok", false) != true or o.get("a", 0) != 1:
 		push_error("HerenError.ok shape incorrecto: %s" % o)
+		return false
+	return true
+
+
+# ---------------------------------------------------------------- templates
+
+func _test_template_list() -> bool:
+	var templates := TemplateRegistryScript.list_templates()
+	if templates.size() < 6:
+		push_error("list_templates < 6: %d" % templates.size())
+		return false
+	for t in templates:
+		var d: Dictionary = t
+		if str(d.get("name", "")) == "" or str(d.get("file", "")) == "":
+			push_error("template sin name/file: %s" % d)
+			return false
+	return true
+
+
+func _test_template_exists() -> bool:
+	if not TemplateRegistryScript.template_exists("health_bar"):
+		push_error("template_exists(health_bar) = false")
+		return false
+	if TemplateRegistryScript.template_exists("does_not_exist"):
+		push_error("template_exists(does_not_exist) = true")
+		return false
+	return true
+
+
+func _test_template_instantiate_params() -> bool:
+	var instance: Node = TemplateRegistryScript.instantiate("health_bar", {
+		"color": {"r": 0.1, "g": 0.8, "b": 0.2, "a": 1.0},
+		"label": "HP 50/100",
+	})
+	if instance == null:
+		push_error("instantiate(health_bar) = null")
+		return false
+	var fill: ColorRect = instance.get_node_or_null("Fill") as ColorRect
+	var lbl: Label = instance.get_node_or_null("Label") as Label
+	if fill == null:
+		push_error("health_bar sin nodo Fill")
+		instance.free()
+		return false
+	if not fill.color.is_equal_approx(Color(0.1, 0.8, 0.2, 1.0)):
+		push_error("Fill.color = %s, esperaba 0.1,0.8,0.2" % fill.color)
+		instance.free()
+		return false
+	if lbl != null and lbl.text != "HP 50/100":
+		push_error("Label.text = '%s', esperaba 'HP 50/100'" % lbl.text)
+		instance.free()
+		return false
+	instance.free()
+	return true
+
+
+func _test_template_instantiate_all() -> bool:
+	var names: Array[String] = ["health_bar", "crosshair", "dialogue_box", "score_label", "boss_bar", "inventory_slot"]
+	for name in names:
+		var instance: Node = TemplateRegistryScript.instantiate(name, {})
+		if instance == null:
+			push_error("instantiate(%s) = null" % name)
+			return false
+		if instance.get_child_count() < 1 and name != "score_label":
+			push_error("instantiate(%s) sin hijos (root no Control compuesto)" % name)
+			instance.free()
+			return false
+		instance.free()
+	return true
+
+
+func _test_ui_layout_presets() -> bool:
+	var presets: Dictionary = UiHandlersScript.LAYOUT_PRESETS
+	var expected: Array[String] = [
+		"full_rect", "bottom_center", "top_left", "top_right", "center",
+		"bottom_left", "bottom_right", "center_left", "center_right",
+	]
+	for name in expected:
+		if not presets.has(name):
+			push_error("LAYOUT_PRESETS falta: " + name)
+			return false
+	if presets.size() != expected.size():
+		push_error("LAYOUT_PRESETS size %d != %d" % [presets.size(), expected.size()])
 		return false
 	return true
