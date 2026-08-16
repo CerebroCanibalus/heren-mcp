@@ -62,6 +62,14 @@ func handle_summary(args: Dictionary) -> Dictionary:
 			editor["scene_name"] = current_scene.name
 		else:
 			editor["scene_open"] = null
+		
+		# Nodos seleccionados en el editor
+		var selected: Array = []
+		var selection = ei.get_selection()
+		if selection:
+			for node in selection.get_selected_nodes():
+				selected.append(node.name)
+		editor["selected_nodes"] = selected
 	else:
 		editor = {"error": "no editor interface"}
 	result["editor"] = editor
@@ -93,7 +101,7 @@ func handle_summary(args: Dictionary) -> Dictionary:
 		else:
 			game["breakpoint_hit"] = null
 		
-		game["fps"] = 0  # Simplificado por ahora
+		game["fps"] = Engine.get_frames_per_second() if ei.is_playing_scene() else 0
 	else:
 		game["is_breaked"] = false
 		game["breakpoint_hit"] = null
@@ -104,9 +112,10 @@ func handle_summary(args: Dictionary) -> Dictionary:
 	var errors := {}
 	if _dbg_plugin:
 		errors["runtime"] = _dbg_plugin.last_errors
-		errors["count"] = _dbg_plugin.last_errors.size()
+		errors["output_errors"] = _dbg_plugin.last_output_errors
+		errors["count"] = _dbg_plugin.last_errors.size() + _dbg_plugin.last_output_errors.size()
 	else:
-		errors = {"runtime": [], "count": 0}
+		errors = {"runtime": [], "output_errors": [], "count": 0}
 	result["errors"] = errors
 	
 	# --- Breakpoints ---
