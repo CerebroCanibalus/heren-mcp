@@ -275,9 +275,26 @@ func _edit(object: Object) -> void:
 	})
 
 
+func _get_role() -> String:
+	var args: PackedStringArray = OS.get_cmdline_user_args()
+	for a in args:
+		if a.begins_with("--heren-agent="):
+			var id := a.substr("--heren-agent=".length())
+			if id.is_empty():
+				id = "default"
+			return "agent:" + id
+		elif a == "--heren-agent":
+			return "agent:default"
+	return "user"
+
+
 func _setup_status_indicator() -> void:
 	_status_label = Label.new()
-	_status_label.text = "Heren: Connecting..."
+	var role := _get_role()
+	if role != "user":
+		_status_label.text = "Heren: Connecting (%s)..." % role
+	else:
+		_status_label.text = "Heren: Connecting..."
 	_status_label.add_theme_color_override("font_color", Color.YELLOW)
 	_status_label.add_theme_font_size_override("font_size", 12)
 	add_control_to_container(CONTAINER_TOOLBAR, _status_label)
@@ -285,7 +302,11 @@ func _setup_status_indicator() -> void:
 
 func _on_connected() -> void:
 	if _status_label:
-		_status_label.text = "Heren: Connected"
+		var role := _get_role()
+		if role != "user":
+			_status_label.text = "Heren: Connected (%s)" % role
+		else:
+			_status_label.text = "Heren: Connected"
 		_status_label.add_theme_color_override("font_color", Color.GREEN)
 
 

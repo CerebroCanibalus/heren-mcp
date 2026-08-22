@@ -110,6 +110,19 @@ func _attempt_connection() -> void:
 		_schedule_reconnect()
 
 
+func _detect_role() -> String:
+	var args: PackedStringArray = OS.get_cmdline_user_args()
+	for a in args:
+		if a.begins_with("--heren-agent="):
+			var id := a.substr("--heren-agent=".length())
+			if id.is_empty():
+				id = "default"
+			return "agent:" + id
+		elif a == "--heren-agent":
+			return "agent:default"
+	return "user"
+
+
 func _handle_connect() -> void:
 	_is_connected = true
 	_current_reconnect_delay = RECONNECT_DELAY
@@ -121,6 +134,7 @@ func _handle_connect() -> void:
 		"params": {
 			"project_path": _project_path,
 			"plugin_version": _read_plugin_version(),
+			"role": _detect_role(),
 		},
 	})
 	connected.emit()

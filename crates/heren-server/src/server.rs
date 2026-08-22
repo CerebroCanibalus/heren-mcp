@@ -68,12 +68,39 @@ fn clear_active_role(proj: &str) {
     active_role_store().lock().unwrap().remove(proj);
 }
 
+fn last_project_store() -> &'static std::sync::Mutex<Option<String>> {
+    static LAST: std::sync::OnceLock<std::sync::Mutex<Option<String>>> = std::sync::OnceLock::new();
+    LAST.get_or_init(|| std::sync::Mutex::new(None))
+}
+fn set_last_project(proj: &str) {
+    *last_project_store().lock().unwrap() = Some(proj.to_string());
+}
+fn get_last_project() -> Option<String> {
+    last_project_store().lock().unwrap().clone()
+}
+
 /// Server FlojoMCP: struct marcado con #[flojo_mcp].
 #[flojo_mcp(name = "heren-server", version = "4.1.0")]
 pub struct Heren;
 
 /// Resuelve el project_path: el editor conectado ES la sesiÃ³n (ADR-004).
-fn resolve_project(project_path: Option<&str>) -> Result<String, ToolError> {
+async fn resolve_project(project_path: Option<&str>) -> Result<String, ToolError> {
+    if let Some(p) = project_path {
+        if !p.trim().is_empty() {
+            let norm = normalize_project_path(p);
+            set_last_project(&norm);
+            return Ok(norm);
+        }
+    }
+    if let Some(last) = get_last_project() {
+        return Ok(last);
+    }
+    let projects = crate::registry::EditorRegistry::global().connected_projects().await;
+    if projects.len() == 1 {
+        let sole = projects[0].clone();
+        set_last_project(&sole);
+        return Ok(sole);
+    }
     match project_path {
         Some(p) if !p.trim().is_empty() => Ok(normalize_project_path(p)),
         _ => Err(ToolError::invalid_params(
@@ -213,7 +240,7 @@ async fn session(
             }))
         }
         "info" => {
-            let proj = resolve_project(project_path.as_deref())?;
+            let proj = resolve_project(project_path.as_deref()).await?;
             let connected = registry.has_editor(&proj).await;
             let source = crate::launcher::source_plugin_version();
             let live = registry.editor_plugin_version(&proj).await;
@@ -242,7 +269,7 @@ async fn session(
         }
         "open" => {
             // Auto-launch del editor (port de godot_launcher.py).
-            let proj = resolve_project(project_path.as_deref())?;
+            let proj = resolve_project(project_path.as_deref()).await?;
             let port = ws_port();
             // RediseÃ±o persistencia: al reconectar, limpiar el flag de cierre
             // inesperado (el agente ya fue avisado por el error de la tool).
@@ -354,7 +381,7 @@ async fn session(
             // GRACEFUL para que la desconexiÃ³n WS que sigue NO marque
             // unexpected_close. Tras relanzar, limpiar cualquier flag previo
             // (el editor nuevo conecta limpio).
-            let proj = resolve_project(project_path.as_deref())?;
+            let proj = resolve_project(project_path.as_deref()).await?;
             let port = ws_port();
             let dirty = registry.dirty_scenes(&proj).await;
             let mut flushed: Vec<String> = Vec::new();
@@ -398,7 +425,7 @@ async fn session(
             }))
         }
         "close" => {
-            let proj = resolve_project(project_path.as_deref())?;
+            let proj = resolve_project(project_path.as_deref()).await?;
             clear_active_role(&proj);
             clear_active_role(&proj);
             // RediseÃ±o persistencia 2026-08-07:
@@ -447,7 +474,7 @@ async fn session(
             // Reporta: integridad archivo por archivo (source vs instalado),
             // validaciÃ³n del grafo completo (godot headless en sandbox), y
             // estado del editor (procesos vivos con cmdline, conexiÃ³n WS).
-            let proj = resolve_project(project_path.as_deref())?;
+            let proj = resolve_project(project_path.as_deref()).await?;
             let source = crate::launcher::source_plugin_version();
             let installed = crate::launcher::read_plugin_version(&proj);
             let live = registry.editor_plugin_version(&proj).await;
@@ -553,7 +580,7 @@ async fn scene(
     root_type: Option<String>,
     root_name: Option<String>,
 ) -> Result<Value, ToolError> {
-    let proj = resolve_project(project_path.as_deref())?;
+    let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
     let explicit_path = scene_path
         .clone()
@@ -651,7 +678,7 @@ async fn node(
     template: Option<String>,
     script: Option<String>,
 ) -> Result<Value, ToolError> {
-    let proj = resolve_project(project_path.as_deref())?;
+    let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
     let scene_path = scene_path
         .as_deref()
@@ -693,7 +720,7 @@ async fn node_query(
     recursive: Option<bool>,
     query: Option<String>,
 ) -> Result<Value, ToolError> {
-    let proj = resolve_project(project_path.as_deref())?;
+    let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
     let scene_path = scene_path
         .as_deref()
@@ -729,7 +756,7 @@ async fn node_props(
     properties: Option<GodotDict>,
     index: Option<i64>,
 ) -> Result<Value, ToolError> {
-    let proj = resolve_project(project_path.as_deref())?;
+    let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
     let scene_path = scene_path
         .as_deref()
@@ -785,7 +812,7 @@ async fn ui(
     follow_viewport: Option<bool>,
     theme_path: Option<String>,
 ) -> Result<Value, ToolError> {
-    let proj = resolve_project(project_path.as_deref())?;
+    let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
     let scene_path = scene_path
         .as_deref()
@@ -843,7 +870,7 @@ async fn resource(
     append: Option<bool>,
     template: Option<String>,
 ) -> Result<Value, ToolError> {
-    let proj = resolve_project(project_path.as_deref())?;
+    let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
     let a = args(&[
         ("resource_path", resource_path.map(Value::String)),
@@ -912,7 +939,7 @@ async fn project(
         return setup_plugin(project_path.as_deref());
     }
 
-    let proj = resolve_project(project_path.as_deref())?;
+    let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
     let a = args(&[
         ("op", op.map(Value::String)),
@@ -1088,7 +1115,7 @@ async fn shader(
     uniform_name: Option<String>,
     value: Option<GodotVariant>,
 ) -> Result<Value, ToolError> {
-    let proj = resolve_project(project_path.as_deref())?;
+    let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
     let scene_path = scene_path
         .as_deref()
@@ -1206,7 +1233,7 @@ async fn animation(
     factor: Option<f64>,
     rest: Option<bool>,
 ) -> Result<Value, ToolError> {
-    let proj = resolve_project(project_path.as_deref())?;
+    let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
     let scene_path = scene_path
         .as_deref()
@@ -1377,7 +1404,7 @@ async fn skeleton(
     context: Option<bool>,
     compare: Option<GodotDict>,
 ) -> Result<Value, ToolError> {
-    let proj = resolve_project(project_path.as_deref())?;
+    let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
     let a = args(&[
         ("parent_path", parent_path.map(Value::String)),
@@ -1442,7 +1469,7 @@ async fn tilemap(
     region: Option<GodotDict>,
     pattern_name: Option<String>,
 ) -> Result<Value, ToolError> {
-    let proj = resolve_project(project_path.as_deref())?;
+    let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
     let scene_path = scene_path
         .as_deref()
@@ -1509,7 +1536,7 @@ async fn debug(
     filter: Option<String>,
     console_limit: Option<i64>,
 ) -> Result<Value, ToolError> {
-    let proj = resolve_project(project_path.as_deref())?;
+    let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
     let a = args(&[
         (
@@ -1547,7 +1574,7 @@ async fn validate(
     node_path: Option<String>,
     resource_path: Option<String>,
 ) -> Result<Value, ToolError> {
-    let proj = resolve_project(project_path.as_deref())?;
+    let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
     let a = args(&[
         (
@@ -1581,7 +1608,7 @@ async fn signal(
     node_path: Option<String>,
     script_path: Option<String>,
 ) -> Result<Value, ToolError> {
-    let proj = resolve_project(project_path.as_deref())?;
+    let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
     let scene_path = scene_path
         .as_deref()
@@ -1625,7 +1652,7 @@ async fn orchestrate(
     on_error: Option<String>,
     _auto_save: Option<bool>,
 ) -> Result<Value, ToolError> {
-    let proj = resolve_project(project_path.as_deref())?;
+    let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
     let on_error = on_error.as_deref().unwrap_or("continue");
 
@@ -1731,7 +1758,7 @@ async fn visual_text(
     scene_path: Option<String>,
     max_depth: Option<i64>,
 ) -> Result<Value, ToolError> {
-    let proj = resolve_project(project_path.as_deref())?;
+    let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
     let handler = match action.as_str() {
         "coords" => "visual/scene_coords",
@@ -1773,7 +1800,7 @@ async fn visual_image(
     node_path: Option<String>,
     animation: Option<GodotDict>,
 ) -> Result<Value, ToolError> {
-    let proj = resolve_project(project_path.as_deref())?;
+    let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
     let handler = match action.as_str() {
         "capture" => "visual/capture",
