@@ -206,6 +206,40 @@ El registry es transversal; queda listo para templates de cualquier tool. NO hac
 
 ---
 
+## 0.5 Plan Sesiones Estables — Agente Visible con Lock (S + R + U'' + T) — APROBADO (2026-08-22)
+
+> **Origen**: feedback General — sesiones inestables para agentes (desconexión editor↔agente), usuario bloqueado mientras agente trabaja, serialización ultra-anidada frágil. Investigación en línea confirmó: **dos editores SÍ pueden abrir el mismo `project_path`** (foro 3269: dos editores abiertos provocan solo spam "files newer on disk", no lock duro; docs 4.4: `--headless --editor` es oficial). Clon de 300MB descartado por tamaño. Solución: **segundo editor VISIBLE del agente, mismo proyecto, sin clon, con lock por escena y avisos.**
+
+### S — Sesiones con Rol (base, bloquea U'' y T) — 🔨 EN CURSO
+- **S1. Registry con rol**: `ConnectedEditors: {(project_path, role) → WS}` donde `role = "user" | "agent:<id>"`. Hoy es `HashMap<project_path, WS>` → colisiona con 2 editores mismo path. `godot_ready` ahora manda `role` (plugin detecta `--heren-agent=<id>` en `OS.get_cmdline_user_args()`).
+- **S2. Launcher agente visible**: `launcher.rs:launch_agent_editor(project_path, agent_id)` → `godot --editor --path <proj> -- --heren-agent=<id> --heren-port=<port>` **sin** `--headless` (ventana visible para que el usuario vea el progreso). Puerto dinámico `ws_port()` ya existe (OnceLock + 9099+N).
+- **S3. `session/status` + `session/open {mode, visibility}`**: `status` devuelve `state + role + locks + dirty + progress`. `open {mode:"isolated"|"attached", visibility:"visible"|"headless"}` — `isolated` (default agente) va al editor agente; `attached` va al editor usuario con `acquire` advisory.
+- **S4. Routing por rol**: server rutea `scene/*`, `node/*` etc al WS del rol que hizo `open`. `session/list` muestra `user:9100 + agent:<id>:9101`.
+- **Criterio**: `session/status` lista ambos roles, `session/open` agente no roba foco del usuario, `cargo test` registry con 2 roles verde.
+
+### R — Codec Robusto (independiente, bloquea T)
+- **R1. Fin doble encoding**: Rust `GodotVariant` → WS como `Value` nativo (un solo `JSON.stringify`), GDScript recibe `Dictionary` directo (hoy viaja como `String` JSON → `JSON.parse_string` parche BUG3).
+- **R2. `VariantCodec.gd`**: walker recursivo `PackedStringArray/Float32Array/Vector2Array/ColorArray`, `TypedArray`, `Resource` (`__type`+`resource_class`+`props`), `Color/Vector2/3/Quaternion/Transform2D/3D/Plane/Rect2/AABB`. Valida `type/hint` antes de `set()` → `type_mismatch` claro.
+- **R3. Tests round-trip fuzz**: 3 niveles `Dictionary{ "a": [Color, Vector3, {"__type":"Resource"}] }` → serialize→deserialize→serialize idempotente.
+- **Criterio**: `set_prop` con `Array[Color]` 3 niveles sin `resource_incrusted_inline` ni `Color(0,0,0)`.
+
+### U'' — Agente Visible con Lock + Avisos (depende de S)
+- **U1. Lock por escena**: `scene_registry` crea `.heren/locks/<Scene>.tscn.lock` `{agent, scene, progress:"12 nodos", pid, since}` al `scene/open` o `node/add` del agente. `session/commit` lo borra.
+- **U2. Avisos en editor usuario**: `editor_plugin.gd:_on_scene_changed` checka `.heren/locks` → `EditorToaster.push_toast("⚠️ Agente editando Main.tscn — 12 nodos")` + banner FileSystemDock. `scene/open` usuario sobre escena con lock → `warning: scene_locked_by_agent` (abre solo-lectura si no `force:true`). `node_props/set_prop` sobre archivo con lock → `conflict`.
+- **U3. Mensajes automatizados**: cada mutación agente emite `heren/progress` por WS → HerenServer → `notifications/progress` a OpenCode + `push_toast` en ventana usuario (agrupado 500ms): "🤖 Heren: añadió Enemy_3 en (120,40)".
+- **U4. Commit atómico**: durante trabajo agente, `scene_registry` solo marca `dirty` en RAM; `ResourceSaver.save()` solo en `session/commit` → **1 escritura a disco = 1 prompt `files newer on disk`** (o 0 con `Auto Reload Scripts on External Change` activado, fix Issue #66644).
+- **Criterio**: usuario mueve Node3D en su ventana mientras agente crea 20 nodos en la suya → 0 parpadeo, `status` muestra ambos roles, `commit` recarga en <100ms.
+
+### T — Tools `.tres` Completas (depende de R)
+- **T1. `resource/move {from, to}`**: `DirAccess.rename()` + `EditorFileSystem.update_file()` + scan `*.tscn/*.tres/*.gd` que referencian `from` y re-escribe `ExtResource` (hoy deja refs rotas).
+- **T2. `resource/duplicate`, `resource/reimport`, `resource/deps {path}`** (quién usa este .tres).
+- **T3. `resource/update` robusto** con `VariantCodec` para `Array[StyleBoxFlat]` anidado.
+- **Criterio**: `move old.tres → new.tres` actualiza 3 `.tscn` sin huérfano, `cargo test` deps verde.
+
+**Orden**: S → R → U'' → T. Cada fase cierra con `heren-build.bat` (VsDevCmd+debug+test+clippy) + grafo headless `grep SCRIPT ERROR` 0. **Clon descartado**: dos editores mismo `project_path` ya es posible sin lock; clon de 300MB tardaría 2-4s y duplicaría `.godot/import`.
+
+---
+
 ## 1. Filosofía de Hierro
 
 - **Global**: PODER (Godot hace todo, cero límites) · EFICIENCIA (cada op óptima, sin huérfanos) · RAPIDEZ (~20ms/op).

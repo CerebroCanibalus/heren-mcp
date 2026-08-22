@@ -148,19 +148,24 @@ async fn handle_frame(
                 .to_string();
             let plugin_version = params
                 .get("plugin_version")
-                .and_then(|v| v.as_str())
                 .map(std::string::ToString::to_string);
+            let role = params
+                .get("role")
+                .and_then(|v| v.as_str())
+                .map_or_else(|| "user".to_string(), std::string::ToString::to_string);
             let key = normalize_project_path(&path);
             info!(
                 project_path = %key,
+                role = %role,
                 plugin_version = ?plugin_version,
                 "godot_ready"
             );
             // El registry.register toma el tx (canal de salida).
+            let comp_key = format!("{key}|{role}");
             registry
-                .register_ctrl(key.clone(), tx.clone(), plugin_version)
+                .register_ctrl(comp_key.clone(), key.clone(), role.clone(), tx.clone(), plugin_version)
                 .await;
-            *project_path = Some(key);
+            *project_path = Some(comp_key);
         }
         "notifications/ping" | "notifications/pong" => {
             // Heartbeat — sin estado que mantener (el WS ya demuestra vida).

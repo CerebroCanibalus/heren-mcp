@@ -18,8 +18,12 @@ pub struct GodotReady {
     /// Versión del plugin que CORRE dentro del editor (leída de plugin.cfg al
     /// arrancar). El server la compara con la versión source para avisar al
     /// agente cuando el editor corre una versión antigua (requiere reopen).
-    #[serde(default)]
     pub plugin_version: Option<String>,
+    /// Rol del editor: "user" (ventana principal) o "agent:<id>" (segunda
+    /// ventana del agente). Permite dos editores vivos sobre el mismo
+    /// project_path sin colisión (Fase S — sesiones con rol).
+    #[serde(default)]
+    pub role: Option<String>,
 }
 
 /// Request `tools/call` que el server reenvía al plugin.

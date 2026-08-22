@@ -152,7 +152,7 @@ async fn resolve_response_correlates_tool_result() {
 
     // Creamos un canal dummy de editor.
     let (tx, mut rx) = mpsc::unbounded::<EditorChannel>();
-    r.register_ctrl("D:/proj".to_string(), tx, Some("test-version".to_string()))
+    r.register_ctrl("D:/proj|user".to_string(), "D:/proj".to_string(), "user".to_string(), tx, Some("test-version".to_string()))
         .await;
 
     // Lanzamos call_tool en una tarea y esperamos el request saliente.

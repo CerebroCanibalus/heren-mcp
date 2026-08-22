@@ -658,7 +658,6 @@ pub fn launch_editor(
         };
     }
     write_last_project(project_path);
-
     info!(godot = %godot, project_path, "launching Godot editor");
     let mut cmd = Command::new(&godot);
     cmd.arg("--editor").arg("--path").arg(project_path);
@@ -668,6 +667,71 @@ pub fn launch_editor(
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
+    match cmd.spawn() {
+        Ok(_) => LaunchOutcome {
+            launched: true,
+            msg: format!("launched (plugin synced: {sync_msg})"),
+            plugin_changed,
+            source_version,
+            installed_version,
+        },
+        Err(e) => LaunchOutcome {
+            launched: false,
+            msg: format!("launch failed: {e}"),
+            plugin_changed,
+            source_version,
+            installed_version,
+        },
+    }
+}
+
+/// Lanza un SEGUNDO editor VISIBLE para el agente sobre el MISMO project_path
+/// (Fase S — agente visible con lock). No usa clon; dos Godot pueden abrir el
+/// mismo proyecto (solo spam "files newer on disk", no lock duro). El
+/// agente recibe `role=agent:<id>` via --heren-agent y conecta al mismo WS
+/// server pero con clave compuesta project_path|role en el registry.
+pub fn launch_agent_editor(
+    project_path: &str,
+    agent_id: &str,
+    port: u16,
+    godot_path: Option<&str>,
+) -> LaunchOutcome {
+    let godot = match godot_path {
+        Some(p) if !p.is_empty() => Some(p.to_string()),
+        _ => find_godot_executable(),
+    };
+    let Some(godot) = godot else {
+        return LaunchOutcome {
+            launched: false,
+            msg: "no Godot executable found (set GODOT_EXE)".into(),
+            plugin_changed: false,
+            source_version: source_plugin_version(),
+            installed_version: read_plugin_version(project_path),
+        };
+    };
+    if !Path::new(project_path).exists() {
+        return LaunchOutcome {
+            launched: false,
+            msg: format!("project not found: {project_path}"),
+            plugin_changed: false,
+            source_version: source_plugin_version(),
+            installed_version: read_plugin_version(project_path),
+        };
+    }
+    // Sincronizar plugin igualmente (asegura que el agente tenga el último código).
+    let (plugin_changed, sync_msg) = ensure_plugin_installed(project_path);
+    let source_version = source_plugin_version();
+    let installed_version = read_plugin_version(project_path);
+    // No matar el editor del usuario; el agente es una ventana extra.
+    // El puerto WS es el mismo (el server ya escucha en ese puerto y acepta
+    // múltiples clientes con distinto role).
+    info!(godot = %godot, project_path, agent_id = %agent_id, "launching agent editor (visible)");
+    let mut cmd = Command::new(&godot);
+    cmd.arg("--editor").arg("--path").arg(project_path);
+    // Args tras "--" van a OS.get_cmdline_user_args() y el plugin los lee para role.
+    cmd.arg("--").arg(format!("--heren-agent={agent_id}")).arg(format!("--heren-port={port}"));
+    cmd.env("HEREN_MCP_PORT", port.to_string());
+    // VISIBLE: sin CREATE_NO_WINDOW para que el usuario vea al agente trabajar.
     match cmd.spawn() {
         Ok(_) => LaunchOutcome {
             launched: true,

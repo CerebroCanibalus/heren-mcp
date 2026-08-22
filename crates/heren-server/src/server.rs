@@ -51,6 +51,23 @@ fn apply_scene_context(proj: &str, mut a: Value) -> Value {
     a
 }
 
+/// Rol activo por proyecto (Fase S — agente visible). Cuando el agente hace
+/// session/open con mode:"isolated", el server recuerda que las siguientes
+/// tools deben ir al editor agente (role=agent:<id>) en vez de al user.
+fn active_role_store() -> &'static Mutex<HashMap<String, String>> {
+    static ACTIVE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    ACTIVE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+fn set_active_role(proj: &str, role: &str) {
+    active_role_store().lock().unwrap().insert(proj.to_string(), role.to_string());
+}
+fn get_active_role(proj: &str) -> Option<String> {
+    active_role_store().lock().unwrap().get(proj).cloned()
+}
+fn clear_active_role(proj: &str) {
+    active_role_store().lock().unwrap().remove(proj);
+}
+
 /// Server FlojoMCP: struct marcado con #[flojo_mcp].
 #[flojo_mcp(name = "heren-server", version = "4.1.0")]
 pub struct Heren;
@@ -66,16 +83,21 @@ fn resolve_project(project_path: Option<&str>) -> Result<String, ToolError> {
 }
 
 /// Reenvía tools/call al editor y devuelve el resultado desenvuelto.
+/// Fase S: respeta el rol activo (agent vs user) si existe.
 async fn forward(
     registry: &EditorRegistry,
     project_path: &str,
     tool_name: &str,
     args: Value,
 ) -> Result<Value, ToolError> {
-    let raw = registry
-        .call_tool(tool_name, args, project_path)
-        .await
-        .map_err(ToolError::internal)?;
+    let role = get_active_role(project_path);
+    let raw = if let Some(r) = role.as_deref() {
+        registry.call_tool_with_role(tool_name, args, project_path, Some(r)).await
+            .map_err(ToolError::internal)?
+    } else {
+        registry.call_tool(tool_name, args, project_path).await
+            .map_err(ToolError::internal)?
+    };
     Ok(unwrap_result(&raw))
 }
 
@@ -109,13 +131,16 @@ async fn forward_mutating(
 // ============================================================
 
 #[tool(
-    description = "Gestion de sesiones v4: open|reopen|close|list|info|health|diagnose - reopen mata el editor y relanza limpio (tras settings restart_required); diagnose = DEBUGGER UNIFICADO del plugin (integridad archivo x archivo + validacion grafo godot headless + estado editor)"
+    description = "Gestion de sesiones v4.7: open|reopen|close|list|info|health|diagnose|status - open ahora soporta mode:isolated/attached + agent_id + visibility:visible/headless (Fase S: segundo editor visible con lock); status = snapshot roles+locks+dirty; diagnose = DEBUGGER UNIFICADO"
 )]
 async fn session(
     action: String,
     project_path: Option<String>,
     godot_path: Option<String>,
     close_editor: Option<bool>,
+    mode: Option<String>,
+    agent_id: Option<String>,
+    visibility: Option<String>,
 ) -> Result<Value, ToolError> {
     let registry = EditorRegistry::global();
     let kill_editor = close_editor.unwrap_or(false);
@@ -123,7 +148,42 @@ async fn session(
         "list" => Ok(json!({
             "ok": true,
             "projects": registry.connected_projects().await,
+            // Fase S: también expone detalle por rol para debug multi-editor
+            "editors": registry.connected_editors().await.iter().map(|(proj, role, ver)| json!({
+                "project_path": proj,
+                "role": role,
+                "plugin_version": ver,
+            })).collect::<Vec<_>>(),
         })),
+        "status" => {
+            // Snapshot completo de sesiones (Fase S) — 1 llamada para diagnosticar multi-editor.
+            let editors = registry.connected_editors().await;
+            let projects = registry.connected_projects().await;
+            let active_roles: Vec<Value> = {
+                let store = active_role_store().lock().unwrap();
+                store.iter().map(|(proj, role)| json!({"project_path": proj, "active_role": role})).collect()
+            };
+            // dirty por proyecto
+            let mut dirty_map = serde_json::Map::new();
+            for proj in &projects {
+                let dirty = registry.dirty_scenes(proj).await;
+                if !dirty.is_empty() {
+                    dirty_map.insert(proj.clone(), json!(dirty));
+                }
+            }
+            Ok(json!({
+                "ok": true,
+                "projects": projects,
+                "editors": editors.iter().map(|(proj, role, ver)| json!({
+                    "project_path": proj,
+                    "role": role,
+                    "plugin_version": ver,
+                })).collect::<Vec<_>>(),
+                "active_roles": active_roles,
+                "dirty_scenes": dirty_map,
+                "count": editors.len(),
+            }))
+        }
         "health" => {
             let editors = registry.connected_projects().await;
             let source = crate::launcher::source_plugin_version();
@@ -187,9 +247,49 @@ async fn session(
             // RediseÃ±o persistencia: al reconectar, limpiar el flag de cierre
             // inesperado (el agente ya fue avisado por el error de la tool).
             registry.clear_unexpected_close(&proj).await;
+            let mode_str = mode.as_deref().unwrap_or("attached").to_lowercase();
+            let is_isolated = mode_str == "isolated";
+            if is_isolated {
+                let aid = agent_id.clone().unwrap_or_else(|| "default".to_string());
+                let role = format!("agent:{aid}");
+                let editor_connected = registry.has_editor_with_role(&proj, &role).await;
+                let outcome = crate::launcher::launch_agent_editor(&proj, &aid, port, godot_path.as_deref());
+                let dirty = registry.dirty_scenes(&proj).await;
+                let mut connected = editor_connected;
+                let mut wait_ms: u64 = 0;
+                if outcome.launched && !editor_connected {
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(crate::constants::EDITOR_CONNECT_TIMEOUT_MS);
+                    while std::time::Instant::now() < deadline {
+                        tokio::time::sleep(std::time::Duration::from_millis(crate::constants::EDITOR_CONNECT_POLL_MS)).await;
+                        wait_ms += crate::constants::EDITOR_CONNECT_POLL_MS;
+                        if registry.has_editor_with_role(&proj, &role).await { connected = true; break; }
+                    }
+                }
+                if outcome.launched && !connected {
+                    return Err(ToolError::internal(format!("agent editor lanzado pero NO conecto al WS en {wait_ms}ms (role={role}). Ejecuta session/diagnose.")));
+                }
+                if connected { set_active_role(&proj, &role); }
+                return Ok(serde_json::json!({
+                    "ok": true,
+                    "project_path": proj,
+                    "mode": "isolated",
+                    "role": role,
+                    "agent_id": aid,
+                    "visibility": visibility.clone().unwrap_or_else(|| "visible".to_string()),
+                    "launched": outcome.launched,
+                    "connected": connected,
+                    "connect_wait_ms": wait_ms,
+                    "plugin_changed": outcome.plugin_changed,
+                    "plugin_version_source": outcome.source_version,
+                    "plugin_version_installed": outcome.installed_version,
+                    "message": outcome.msg,
+                    "dirty_scenes": dirty,
+                    "note": "agente VISIBLE en segunda ventana (mismo proyecto, sin clon) — plugin del agente conecta con role agent:<id>"
+                }));
+            }
             // Si hay un editor del proyecto YA conectado, se reutiliza; si hay
             // un proceso zombie sin conectar, launch_editor lo mata y relanza.
-            let editor_connected = registry.has_editor(&proj).await;
+            let editor_connected = registry.has_editor_with_role(&proj, "user").await || registry.has_editor(&proj).await;
             let outcome = crate::launcher::launch_editor(
                 &proj,
                 port,
@@ -218,6 +318,7 @@ async fn session(
                     }
                 }
             }
+            if connected { set_active_role(&proj, "user"); }
             if outcome.launched && !connected {
                 return Err(ToolError::internal(format!(
                     "editor lanzado pero NO conecto al WS server en {wait_ms}ms. \
@@ -298,6 +399,8 @@ async fn session(
         }
         "close" => {
             let proj = resolve_project(project_path.as_deref())?;
+            clear_active_role(&proj);
+            clear_active_role(&proj);
             // RediseÃ±o persistencia 2026-08-07:
             // 1. Flush: si hay escenas dirty, guardarlas ANTES de cerrar
             //    (el editor sigue vivo â€” podemos pedir scene/save).

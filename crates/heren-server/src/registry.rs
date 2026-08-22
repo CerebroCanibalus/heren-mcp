@@ -27,9 +27,23 @@ pub enum EditorChannel {
 #[derive(Debug, Clone)]
 pub struct EditorHandle {
     pub project_path: String,
+    /// Rol del editor: "user" o "agent:<id>" (Fase S).
+    pub role: String,
     pub tx: mpsc::UnboundedSender<EditorChannel>,
     /// Versión del plugin que corre en el editor (reportada en godot_ready).
     pub plugin_version: Option<String>,
+}
+/// Clave compuesta project_path|role para el HashMap de editores (Fase S).
+fn make_key(project_path: &str, role: &str) -> String {
+    format!("{}|{role}", normalize_project_path(project_path))
+}
+
+fn parse_key(key: &str) -> (String, String) {
+    if let Some(pos) = key.rfind('|') {
+        (key[..pos].to_string(), key[pos + 1..].to_string())
+    } else {
+        (key.to_string(), "user".to_string())
+    }
 }
 
 /// Estado compartido del registry.
@@ -83,60 +97,106 @@ impl EditorRegistry {
         ready: GodotReady,
         tx: mpsc::UnboundedSender<EditorChannel>,
     ) -> String {
-        let key = normalize_project_path(&ready.project_path);
-        self.register_ctrl(key, tx, ready.plugin_version.clone())
+        let role = ready.role.clone().unwrap_or_else(|| "user".to_string());
+        let role = if role.trim().is_empty() { "user".to_string() } else { role };
+        let proj = normalize_project_path(&ready.project_path);
+        let key = make_key(&proj, &role);
+        self.register_ctrl(key, proj, role, tx, ready.plugin_version.clone())
             .await
     }
 
-    /// Registra un editor por clave canónica ya normalizada.
+    /// Registra un editor por clave compuesta ya normalizada (Fase S).
     pub async fn register_ctrl(
         &self,
         key: String,
+        project_path: String,
+        role: String,
         tx: mpsc::UnboundedSender<EditorChannel>,
         plugin_version: Option<String>,
     ) -> String {
         let mut state = self.state.lock().await;
-        info!(project_path = %key, plugin_version = ?plugin_version.as_deref(), "editor registered");
+        info!(project_path = %project_path, role = %role, plugin_version = ?plugin_version.as_deref(), "editor registered");
         state.editors.insert(
             key.clone(),
             EditorHandle {
-                project_path: key.clone(),
+                project_path: project_path.clone(),
+                role: role.clone(),
                 tx,
                 plugin_version,
             },
         );
         key
     }
-
-    /// Des-registra un editor (desconexión).
+    /// Des-registra un editor (desconexión) — por clave compuesta o solo project_path (legacy).
     pub async fn unregister(&self, project_path: &str) {
-        let key = normalize_project_path(project_path);
-        let mut state = self.state.lock().await;
-        state.editors.remove(&key);
-        debug!(project_path = %key, "editor unregistered");
+        if project_path.contains('|') {
+            let mut state = self.state.lock().await;
+            state.editors.remove(project_path);
+            debug!(key = %project_path, "editor unregistered (composite key)");
+        } else {
+            let proj = normalize_project_path(project_path);
+            let mut state = self.state.lock().await;
+            let keys: Vec<String> = state.editors.keys().filter(|k| parse_key(k).0 == proj).cloned().collect();
+            for k in keys {
+                state.editors.remove(&k);
+            }
+            debug!(project_path = %proj, "editor unregistered (all roles)");
+        }
     }
 
-    /// ¿Hay editor conectado para el proyecto?
+    /// Des-registra un editor por rol específico (Fase S).
+    pub async fn unregister_role(&self, project_path: &str, role: &str) {
+        let key = make_key(project_path, role);
+        let mut state = self.state.lock().await;
+        state.editors.remove(&key);
+        debug!(project_path = %project_path, role = %role, "editor unregistered (role)");
+    }
+    /// ¿Hay editor conectado para el proyecto? (cualquier rol)
     pub async fn has_editor(&self, project_path: &str) -> bool {
-        let key = normalize_project_path(project_path);
+        let proj = normalize_project_path(project_path);
+        let state = self.state.lock().await;
+        state.editors.keys().any(|k| parse_key(k).0 == proj)
+    }
+
+    /// ¿Hay editor conectado para el proyecto con rol específico? (Fase S)
+    pub async fn has_editor_with_role(&self, project_path: &str, role: &str) -> bool {
+        let key = make_key(project_path, role);
         let state = self.state.lock().await;
         state.editors.contains_key(&key)
     }
 
     /// Versión del plugin que corre en el editor conectado (si lo hay).
+    /// Si hay múltiples roles, prioriza "user", luego cualquiera.
     pub async fn editor_plugin_version(&self, project_path: &str) -> Option<String> {
-        let key = normalize_project_path(project_path);
+        let proj = normalize_project_path(project_path);
         let state = self.state.lock().await;
-        state
-            .editors
-            .get(&key)
-            .and_then(|h| h.plugin_version.clone())
+        let key_user = make_key(&proj, "user");
+        if let Some(h) = state.editors.get(&key_user) {
+            return h.plugin_version.clone();
+        }
+        for (k, h) in &state.editors {
+            if parse_key(k).0 == proj {
+                return h.plugin_version.clone();
+            }
+        }
+        None
     }
 
-    /// Proyectos con editor vivo.
+    /// Lista detallada de editores conectados (Fase S): cada entrada con project_path, role, version.
+    pub async fn connected_editors(&self) -> Vec<(String, String, Option<String>)> {
+        let state = self.state.lock().await;
+        let mut out: Vec<(String, String, Option<String>)> = state.editors.values().map(|h| (h.project_path.clone(), h.role.clone(), h.plugin_version.clone())).collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        out
+    }
+    /// Proyectos con editor vivo (únicos, sin repetir por rol).
     pub async fn connected_projects(&self) -> Vec<String> {
         let state = self.state.lock().await;
-        let mut keys: Vec<String> = state.editors.keys().cloned().collect();
+        let mut set: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for k in state.editors.keys() {
+            set.insert(parse_key(k).0);
+        }
+        let mut keys: Vec<String> = set.into_iter().collect();
         keys.sort();
         keys
     }
@@ -243,21 +303,33 @@ impl EditorRegistry {
         let mut state = self.state.lock().await;
         state.graceful_closing.remove(&key)
     }
-
     /// Envía `tools/call` al editor y espera la respuesta correlacionada.
+    /// Si hay múltiples editores (user + agent) para el mismo proyecto,
+    /// prioriza "user" por compatibilidad; para routing por rol usa
+    /// `call_tool_with_role` (Fase S).
     pub async fn call_tool(
         &self,
         tool_name: &str,
         args: Value,
         project_path: &str,
     ) -> Result<Value, String> {
-        let key = normalize_project_path(project_path);
+        self.call_tool_with_role(tool_name, args, project_path, None).await
+    }
+
+    /// Envía `tools/call` al editor con rol específico (Fase S — agente visible).
+    /// Si `role` es None, prioriza "user", luego cualquier editor del proyecto.
+    /// Si `role` es Some, busca exactamente ese rol.
+    pub async fn call_tool_with_role(
+        &self,
+        tool_name: &str,
+        args: Value,
+        project_path: &str,
+        role: Option<&str>,
+    ) -> Result<Value, String> {
+        let proj = normalize_project_path(project_path);
         let tx = {
             let state = self.state.lock().await;
-            // Fail-fast (rediseño persistencia 2026-08-07): si el editor se
-            // cerró SIN session/close, el agente debe saberlo INMEDIATAMENTE
-            // (el trabajo se interrumpió), no seguir contra un editor muerto.
-            if let Some(dirty) = state.unexpected_close.get(&key) {
+            if let Some(dirty) = state.unexpected_close.get(&proj) {
                 let paths: Vec<String> = dirty.iter().cloned().collect();
                 return Err(format!(
                     "editor_closed_unexpectedly: el editor se cerró sin session/close; \
@@ -271,13 +343,27 @@ impl EditorRegistry {
                     }
                 ));
             }
-            state
-                .editors
-                .get(&key)
-                .map(|h| h.tx.clone())
-                .ok_or_else(|| format!("no editor connected: {key}"))?
+            if let Some(r) = role {
+                let key = make_key(&proj, r);
+                state.editors.get(&key).map(|h| h.tx.clone()).ok_or_else(|| format!("no editor connected: {proj} (role={r})"))?
+            } else {
+                // Sin rol: prioriza user, luego cualquiera del proyecto
+                let key_user = make_key(&proj, "user");
+                if let Some(h) = state.editors.get(&key_user) {
+                    h.tx.clone()
+                } else {
+                    // Busca cualquier rol del proyecto
+                    let mut found: Option<mpsc::UnboundedSender<EditorChannel>> = None;
+                    for (k, h) in &state.editors {
+                        if parse_key(k).0 == proj {
+                            found = Some(h.tx.clone());
+                            break;
+                        }
+                    }
+                    found.ok_or_else(|| format!("no editor connected: {proj}"))?
+                }
+            }
         };
-
         let req_id = make_req_id();
         let (resp_tx, resp_rx) = oneshot::channel();
         {
