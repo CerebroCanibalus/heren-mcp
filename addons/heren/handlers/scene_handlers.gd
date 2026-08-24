@@ -81,6 +81,38 @@ func handle_create(args: Dictionary) -> Dictionary:
 		return {"ok": false, "error": "unknown root_type: " + root_type}
 	new_node.name = root_name
 
+	# Instancia opcional (2026-08-24): la escena nueva contiene otra escena
+	# como instancia (ExtResource al guardar). `instance_scene` = path
+	# explícito; `instance_current:true` = instanciar la pestaña activa.
+	# ensure_owner_recursive ya maneja instancias: el root de la instancia
+	# recibe owner, sus internos se serializan vía el .tscn referenciado.
+	var inst_path := str(args.get("instance_scene", ""))
+	if bool(args.get("instance_current", false)) and inst_path == "":
+		var cur := ei.get_edited_scene_root()
+		if cur != null and cur.scene_file_path != "":
+			inst_path = cur.scene_file_path
+	if inst_path != "":
+		inst_path = _normalize_scene_path(inst_path)
+		# E6 (2026-08-24): self-check ANTES del exists-check — si la escena
+		# destino aún no está en disco, "not_found" confundía; el problema
+		# real es la auto-referencia.
+		if scene_path != "" and inst_path == scene_path:
+			new_node.free()
+			return {"ok": false, "error": "cannot_instance_scene_into_itself: " + inst_path}
+		if not ResourceLoader.exists(inst_path):
+			new_node.free()
+			return {"ok": false, "error": "instance_scene_not_found: " + inst_path}
+		var packed_src: PackedScene = load(inst_path)
+		if packed_src == null:
+			new_node.free()
+			return {"ok": false, "error": "instance_load_failed: " + inst_path}
+		var inst: Node = packed_src.instantiate()
+		if inst == null:
+			new_node.free()
+			return {"ok": false, "error": "instance_instantiate_failed: " + inst_path}
+		inst.name = "Instance"
+		new_node.add_child(inst)
+
 	# scene_path explícito → SIEMPRE crear archivo nuevo (independiente de la
 	# pestaña activa). El path es el destino del archivo, no la escena activa.
 	if scene_path != "":

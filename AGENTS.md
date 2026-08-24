@@ -2,7 +2,7 @@
 
 > Biblia del agente. Léelo antes de tocar código.
 >
-> **ESTADO: v4.7** — EditorPlugin (GDScript→EditorInterface) + heren-server.exe Rust/FlojoMCP.
+> **ESTADO: v4.8** — EditorPlugin (GDScript→EditorInterface) + heren-server.exe Rust/FlojoMCP.
 > 17 tools centralizadas (19 con split), WS plugin server (patrón gopeak), auto-launch, NDJSON por stdio.
 > Workspace Rust local (`crates/heren-server`); FlojoMCP = framework SOLO (flojo-mcp/macros/session @ crates.io, consumido por version, no path).
 > Bridge Python y daemon v3 **archivados en rama `archive/v3`**. **Cambios nuevos → v4/Rust.**
@@ -240,6 +240,159 @@ El registry es transversal; queda listo para templates de cualquier tool. NO hac
 
 ---
 
+## 0.6 Plan Scene Tool con Planning/Orchestration (2026-08-22) — APROBADO
+
+> **Origen**: Feedback del General — el agente no sabe cuándo usar tools low-level, coordenadas rotas, contexto perdido entre calls, conflictos user/agent. Solución: **mismo patrón que `session`** — `scene/open` lockea + da contexto → `scene/plan` diseña → `scene/orchestrate` ejecuta batch → `scene/validate` QA → `scene/commit` guarda + libera lock. Inspirado en **Multi-Agent-CAD (MAC)**: structured state passing (CADBrief → ArchitectPlan → Coder → QA), deterministic translator, typed error routing.
+
+### Flujo Natural (el agente ya lo intuye)
+
+```
+1. scene/open {scene_path: "res://complex_test.tscn", mode: "isolated"}
+   → devuelve: {lock_id, scene_context: {nodes: [...], resources: [...], scripts: [...], bbox: ..., plan_schema: {...}}}
+
+2. scene/plan {plan: {steps: [...], verification: [...]}}  
+   → agente escribe plan CON CONTEXTO (sabe qué nodos existen, qué recursos hay)
+
+3. scene/orchestrate
+   → ejecuta batch interno (node/add, node_props/set_props, resource/create, signal/connect)
+   → devuelve: {executed_steps, coords_proactivas, warnings}
+
+4. scene/validate
+   → QA dual-engine → {error_type: "none"|"dimension"|"topology", details: [...]}
+
+5. Si error_type != "none": agente lee details → scene/plan (edita) → scene/orchestrate → scene/validate
+
+6. scene/commit {save: true}
+   → guarda .tscn, libera lock, devuelve {saved: true}
+```
+
+### Sub-comandos `scene` (paralelo a `session`)
+
+| Sub-comando | Qué hace | Paralelo en `session` |
+|-------------|----------|----------------------|
+| `scene/open {scene_path, mode: "isolated"|"attached"}` | Abre escena, lockea, devuelve contexto completo | `session/open` |
+| `scene/plan {plan: ScenePlan}` | Escribe/actualiza plan en memoria (no ejecuta) | — (fase de diseño) |
+| `scene/orchestrate` | Ejecuta plan → batch interno MCP calls | `orchestrate` (scene-aware) |
+| `scene/validate` | QA dual-engine → reporte + `error_type` | `session/health` + `validate/*` |
+| `scene/commit` | Guarda + libera lock | `session/close` |
+| `scene/status` | Estado actual: lock, plan, dirty, QA report | `session/status` |
+
+### Ventajas Clave
+
+| Problema Actual | Solución con `scene/*` |
+|-----------------|------------------------|
+| Agente no sabe cuándo usar tools low-level | `scene/open` **instruye**: "Use `scene/plan` to design, `scene/orchestrate` to execute" |
+| Contexto perdido entre calls | `scene/open` carga contexto **una vez** → `scene/plan`/`orchestrate`/`validate` lo usan |
+| Conflictos user/agent | Lock por escena (`.heren/locks/Scene.tscn.lock`) — `scene/open` falla si locked by other |
+| `orchestrate` genérico | `scene/orchestrate` **scene-aware**: resuelve coords, workplanes, instancing, templates |
+| Help tool estúpida | `scene/open` devuelve **schema del plan** en `scene_context.plan_schema` |
+
+### Arquitectura MAC Aplicada a Godot
+
+| MAC (CAD) | Heren MCP (Godot) |
+|-----------|-------------------|
+| `CADBrief` (Spec Planner) | `SceneBrief` — requisitos: nodos, jerarquía, coords, recursos |
+| `ArchitectPlan` (Geometric Architect) | `ScenePlan` — pasos: `add_node`, `set_transform`, `add_resource`, `connect_signal`, `instantiate_template` |
+| `Python Coder` (deterministic translator) | `SceneCoder` — traduce `ScenePlan` → calls MCP internos (`node/add`, `node_props/set_props`, `resource/create`) |
+| `Autonomous Skill Loop` (QA + Aider) | `SceneValidator` — `validate/scene`, `validate/node`, `visual/capture` + auto-repair loop |
+
+### Sistema de Coordenadas — Workplane + Local Coords (Iron Rule #1 MAC)
+
+```json
+// ScenePlan usa workplanes — resuelve 3D vs UI automáticamente
+{
+  "workplane": "XZ",           // 3D world: position/transform
+  "workplane_offset": [0, 1, 0],  // Robot base height
+  "steps": [
+    {"action": "add_node", "node_type": "MeshInstance3D", "name": "Body", "parent": "Robot", "local_pos": [0, 0, 0]},
+    {"action": "set_transform", "node_path": "Robot/Body", "scale": [1, 2, 1]},
+    {"action": "add_node", "node_type": "ProgressBar", "name": "HealthBar", "parent": "UI/HUD", "workplane": "XY", "local_pos": [20, 20], "anchors_preset": 10}
+  ]
+}
+```
+
+**SceneCoder** resuelve `local_pos` + `workplane` + `workplane_offset` → `position`/`transform` global + `anchors`/`offsets` para UI.
+
+### Selector DSL — Semantic Selection (no hardcoded coords)
+
+```json
+// node_query/find con selectores semánticos
+{"action": "find", "selector": "children_of:Robot where material.albedo_color.r > 0.5"}
+```
+
+### QA Dual-Engine
+
+| Engine A (Deterministic) | Engine B (Heuristic/Visual) |
+|--------------------------|----------------------------|
+| `validate/scene` + `validate/node` + `node_query` (estructura, scripts, resources) | `visual_image/capture` + `visual_text/summary` (visión real, bbox, node_count) |
+| `scene_registry` consistency | Off-screen render comparison |
+
+### Deterministic SceneCoder — Zero-LLM Common Ops
+
+```rust
+// scene_coder.rs — traduce ScenePlan → MCP calls SIN LLM
+fn plan_to_mcp_calls(plan: &ScenePlan, context: &SceneContext) -> Vec<MCPCall> {
+    // add_node, set_transform, add_resource, connect_signal, instantiate_template
+    // Batch: agrupa set_props por nodo, resuelve coords, maneja templates
+}
+```
+
+### Cache Mechanism — Pipeline Cache
+
+`.heren/scene_cache/<scene_name>/` guarda `SceneBrief` + `ScenePlan` → re-run tras repair es instantáneo.
+
+### Aider-First Workflow — Modify Existing
+
+`scene/open {mode: "modify", scene_path: "res://existing.tscn"}` → carga escena existente → `SceneValidator` + repair loop para modificaciones incrementales.
+
+### Implementación Mínima
+
+```
+crates/heren-server/src/
+├── scene_tool/
+│   ├── mod.rs              # SceneAction enum, SceneState, handler registration
+│   ├── schemas.rs          # SceneBrief, ScenePlan, SceneStep, VerificationTarget, SceneContext
+│   ├── coder.rs            # scene_plan_to_mcp_calls() — deterministic translator
+│   ├── validator.rs        # validate_scene() — dual-engine QA
+│   └── registry.rs         # SceneRegistry: HashMap<scene_path, SceneState> + locks
+addons/heren/
+├── scene_handlers.gd       # Extender: handle_open, handle_plan, handle_orchestrate, handle_validate, handle_commit, handle_status
+└── scene_registry.gd       # Lock management: .heren/locks/<Scene>.tscn.lock
+```
+
+### Registry: `SceneRegistry` (paralelo a `ConnectedEditors`)
+
+```rust
+struct SceneRegistry {
+    scenes: HashMap<String, SceneState>,  // scene_path -> SceneState
+    locks: HashMap<String, LockInfo>,     // scene_path -> {agent_id, pid, since, progress}
+}
+```
+
+- `scene/open` → registra en `SceneRegistry` + crea `.heren/locks/<scene>.lock`
+- `scene/commit` → remueve de registry + borra lock
+- `session/status` → incluye `scenes: [{path, lock_id, mode, dirty, qa_status}]`
+
+### Tools Low-Level → Internos (NO expuestos al agente)
+
+En `tools.rs`: registrar **solo 3 tools high-level**:
+- `scene_plan_write` → `scene/plan`
+- `scene_plan_execute` → `scene/orchestrate`  
+- `scene_plan_validate` → `scene/validate`
+
+Tools low-level (`node/add`, `node_props/set_props`, `resource/create`, etc.) → **internos**, solo para `SceneCoder`.
+
+### Extensión Futura: Animaciones y Huesos
+
+Mismo patrón para `animation` y `skeleton`:
+- `animation/open {animation_player_path, mode}` → lock + contexto (tracks, keys, blend trees)
+- `animation/plan {plan: AnimationPlan}` — steps: `create_track`, `add_key`, `blend_pose`, `retarget`
+- `animation/orchestrate` → batch interno
+- `animation/validate` → QA: track types, key normalization, blend tree connectivity
+- `skeleton/open`, `skeleton/plan`, `skeleton/orchestrate`, `skeleton/validate` — análogo
+
+---
+
 ## 1. Filosofía de Hierro
 
 - **Global**: PODER (Godot hace todo, cero límites) · EFICIENCIA (cada op óptima, sin huérfanos) · RAPIDEZ (~20ms/op).
@@ -298,6 +451,8 @@ fixtures/               # proyectos Godot mínimos para tests (empty_project/)
 
 ## 6. Las 17 Tools
 
+> **Checklist añadir/quitar tool (2026-08-24)**: AÑADIR = escribir la fn `#[tool]` en server.rs (los tests estructurales de `tests/tools_parity.rs` la cubren solos). QUITAR = borrar la fn; si quieres guarda de regresión, añade el nombre a `FORBIDDEN_TOOLS`. Si la tool no sigue el patrón "1 tool N acciones", añadirla a `TOOLS_WITHOUT_ACTION`. NUNCA mantener listas enumerativas de tools — los invariantes + conteo mínimo (`MIN_TOOLS`) hacen el resto.
+
 | # | Tool | Actions | Dominio |
 |---|------|---------|---------|
 | 1 | `session` | open, close, list, info, health, **diagnose** | Sesiones |
@@ -321,7 +476,7 @@ fixtures/               # proyectos Godot mínimos para tests (empty_project/)
 | 15 | `health` | server + editor status | Health |
 | 16 | `help` | introspect (lista tools + description + parameters por tool) | Ayuda/introspect |
 
-**Notas:** `node/instantiate` = instancia EXTERNA (`instance=ExtResource`, no copia inline) **o template del registry transversal** (`template:"health_bar"`, params via `properties`). `coords proactivas` en toda mutación (§7). `animation`+`skeleton` comparten `animation_handlers.gd`. `session/diagnose` = integridad plugin (ok/stale/missing/orphan) + grafo headless en sandbox + estado editor. **v4.6 split de tools**: `node_query`/`node_props`/`visual_text`/`visual_image` = schemas MINIMALES (el server mapea al mismo handler interno `node/*`/`visual/*`). **v4.7 UI**: tool `ui` (handler `ui_handlers.gd`) + sistema transversal de templates (`template_registry.gd`, patrón `coords.gd`; templates .tscn + params por nombre de nodo canónico). Errores `node_not_found` incluyen `parent_children` (orientación). `rename`/`move` devuelven `previous_path`/`old_parent`. Recursos: pasar PATH string (`res://...`) para ext_resource; dict inline SIN path → warning `resource_incrusted_inline` (se incrustará al guardar).
+**Notas:** `scene/create` acepta `instance_scene` (path) o `instance_current:true` (pestaña activa) → la escena nueva contiene otra como instancia ExtResource; guardas: no instanciarse a sí misma, fuente debe existir en disco. Planning v4.8: `orchestrate` es continue-on-error (fallos van a warnings con su step — abortar dejaba steps aplicados sin constancia); `commit(save=false)` con dirty falla con error accionable (antes descartaba trabajo silenciosamente). `node/instantiate` = instancia EXTERNA (`instance=ExtResource`, no copia inline) **o template del registry transversal** (`template:"health_bar"`, params via `properties`). `coords proactivas` en toda mutación (§7). `animation`+`skeleton` comparten `animation_handlers.gd`. `session/diagnose` = integridad plugin (ok/stale/missing/orphan) + grafo headless en sandbox + estado editor. **v4.6 split de tools**: `node_query`/`node_props`/`visual_text`/`visual_image` = schemas MINIMALES (el server mapea al mismo handler interno `node/*`/`visual/*`). **v4.7 UI**: tool `ui` (handler `ui_handlers.gd`) + sistema transversal de templates (`template_registry.gd`, patrón `coords.gd`; templates .tscn + params por nombre de nodo canónico). Errores `node_not_found` incluyen `parent_children` (orientación). `rename`/`move` devuelven `previous_path`/`old_parent`. Recursos: pasar PATH string (`res://...`) para ext_resource; dict inline SIN path → warning `resource_incrusted_inline` (se incrustará al guardar).
 **Comparativa competidores** (README "Frente a otros MCPs"): datos VERIFICADOS de `.competitors/`. NUNCA marcar ❌ capacidad que el competidor SÍ tiene; usar sus propios análisis (gopeak `ANALYSIS.md`); re-verificar contra repos al actualizar.
 
 ---
@@ -409,6 +564,8 @@ Playback+inspección · edición+one_shot · avanzado (blend spaces 1D/2D, tween
 | **v4.6 split tools (2026-08-08)** | El patrón "1 tool N acciones" con schema plano de 15 params hacía el MCP un laberinto: el agente adivinaba qué args aplicaban a qué action → `-32602 required` absurdos (visual exigía `clear`/`viewport` en `summary`) → prefería el .tscn a mano. Fix: (a) **todos los args `Option<>`** con defaults en el plugin (nada required salvo `action`); (b) **split**: `visual` → `visual_text` (coords/summary/ascii, schema 3 args) + `visual_image` (capture/node, 6 args); `node` → `node` (mutaciones) + `node_query` (lecturas) + `node_props` (props); `budget`/`cache` eliminados (handlers inexistentes). El server mapea al MISMO handler interno (`node/get_info` sigue existiendo) → el plugin NO cambió. (c) **Orientación continua**: errores `node_not_found` incluyen `parent_children[]` del padre resoluble más cercano; `rename`/`move` devuelven `previous_path`/`old_parent`. (d) **Anti-incrustado**: recursos inline sin resource_path → warning `resource_incrusted_inline` en add/set_prop (nunca fallo silencioso; el agente pasa `res://...` para ext_resource). Regla de oro: recursos SIEMPRE por PATH. |
   | **Fase F tipos semánticos (2026-08-14)** | `Option<serde_json::Value>` genera schema vacío `{}` sin descripción → clientes MCP (OpenCode, APIs de modelos) no pueden validar ni guiar al usuario. Fix: FlojoMCP añade `types.rs` con wrappers semánticos (`GodotVariant`, `GodotDict`, `Vector2`, `Color`, etc.) con `#[schemars(description = "...")]`. heren-mcp migra 42 propiedades `Option<Value>` → `Option<GodotDict>`/`Option<GodotVariant>` + conversiones `.map(Into::into)`. Resultado: de 42 propiedades vacías a 0 vacías; schemas ahora incluyen `definitions` con descripciones claras. Verificado con `tools/list`: todas las propiedades tienen `$ref` a definiciones descriptivas. |
   | **debug summary (2026-08-15)** | `debug/summary` = snapshot completo en UNA llamada: editor (scene_open, scene_name, selected_nodes) + plugin (connected) + game (is_playing, is_paused, is_breaked, breakpoint_hit, fps) + errors (runtime con stack completo + output_errors del panel) + breakpoints + profiler + console (last_lines). El agente diagnostica con 1 llamada en vez de 5. **🚨 Lección: verificar SIEMPRE que las propiedades del plugin existen antes de usarlas** — `get_session(i)` (no existe; usar `first_session()`), `has_frame_vars` (no existe; usar `vars_pending` + `last_vars`), `breaked_session_id` (no existe) causaban "Unknown error" silencioso en runtime sin error de parseo. |
+  | **🚨 Scene planning v4.8 (2026-08-24)** | E2E tester encontró el flujo planning MUERTO de raíz: (1) adapters/coder reenviaban al editor con nombres MCP `godot_*` — el dispatcher del plugin rutea por prefijo BARE antes del `/` (`scene`, `node_query`, `validate`...) → "no handler for prefix: godot_scene". **Regla: forward() SIEMPRE usa nombres internos `prefijo/metodo`**; los `godot_*` solo existen del lado OpenCode. (2) `node_props` NO tiene handler en el plugin — set_props va por `node`+action `set_props`. (3) Planning integrado como sub-comandos server-side de la tool `scene` (`plan|orchestrate|validate|commit|status|list`) — NUNCA tool separada ni forward al plugin para estos. (4) `health` sin project_path devolvía `project_connected:false` fijo → ahora usa resolve_project fallback. **Lección meta: verificar con grep que las ediciones grandes REALMENTE aplicaron** — dos edits reportaron "OK" y no aplicaron (mojibake en oldString); el binario viejo siguió expuesto y un agente tester perdió su sesión completa. |
+  | **🚨 Planning E2E v4 → fixes P0 (2026-08-24)** | Cuarta iteración E2E: flujo open→plan→orchestrate→commit OK pero escenas VACÍAS. (1) **P0a**: `SceneStep::AddNode` no tenía campo `properties` → serde descartaba mesh/shape/material silenciosamente. Fix: campo `properties: HashMap` passthrough VERBATIM al plugin (su deserialize_value ya convierte colores/vectores/arrays/res://); precedencia: props explícitas SOBREESCRIBEN derivados de local_pos/resource_path. (2) **P0b**: validate chequeaba contra snapshot del open (árbol vacío) → QA ciego. Fix: refresh de contexto vía load_scene_context + `registry.update_context()` ANTES de validar. (3) Workplane enum partido: serde `x_z` vs schemars `XZ` → rename explícito + alias. (4) Swap y/z silencioso en resolve_local_to_global → identidad+offset (el agente escribe coords de mundo). (5) Coder emitía position/rotation como args sueltos que node/add IGNORA → todo va dentro de properties; resource_path mapea a mesh/shape según tipo. (6) plan viaja como ARCHIVO (`plan_file`, patrón orchestrate) — inline `plan` eliminado (anyOf del schema rechazaba planes válidos); `action="plan"` sin plan_file devuelve ejemplo canónico auto-documentado. (7) orchestrate continue-on-error con step_id en warnings; dry_run preview; commit(save=false) con dirty falla accionable; validación de padres simula steps del propio plan (adiós 23 falsos positivos). **Lección: reproducir DIRECTO contra el server (health/session/scene calls) en vez de armar harnesses stdio — OpenCode ya es el harness.** |
 
 ---
 

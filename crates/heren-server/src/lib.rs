@@ -32,12 +32,14 @@
     clippy::too_many_lines,
     clippy::module_name_repetitions
 )]
+#![recursion_limit = "256"]
 
 pub mod constants;
 pub mod editor;
 pub mod launcher;
 pub mod pure;
 pub mod registry;
+pub mod scene_tool;
 pub mod server;
 pub mod ws_plugin_server;
 

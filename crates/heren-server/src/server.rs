@@ -11,6 +11,9 @@ use std::sync::{Mutex, OnceLock};
 use crate::editor::normalize_project_path;
 use crate::pure::{args, normalize_scene_path, unwrap_result};
 use crate::registry::EditorRegistry;
+use crate::scene_tool::get_or_create_scene_registry;
+use crate::scene_tool::registry::SceneRegistryClient;
+use crate::scene_tool::schemas::{SceneMode, ScenePlan};
 
 /// Contexto de escena por proyecto (fix problema sistemÃ¡tico 2026-08-04):
 /// el "edited scene root" del editor cambia con la pestaÃ±a activa. Este mapa
@@ -83,8 +86,10 @@ fn get_last_project() -> Option<String> {
 #[flojo_mcp(name = "heren-server", version = "4.1.0")]
 pub struct Heren;
 
-/// Resuelve el project_path: el editor conectado ES la sesiÃ³n (ADR-004).
+/// Resuelve el project_path: el editor conectado ES la sesión (ADR-004).
+/// Fallback robusto: explicit → last_project → active_role → connected_projects (1) → error con diagnóstico.
 async fn resolve_project(project_path: Option<&str>) -> Result<String, ToolError> {
+    // 1. Parámetro explícito
     if let Some(p) = project_path {
         if !p.trim().is_empty() {
             let norm = normalize_project_path(p);
@@ -92,21 +97,35 @@ async fn resolve_project(project_path: Option<&str>) -> Result<String, ToolError
             return Ok(norm);
         }
     }
+    // 2. Último proyecto usado en esta sesión (persiste entre tool calls)
     if let Some(last) = get_last_project() {
         return Ok(last);
     }
+    // 3. Proyecto con rol activo (Fase S: agente visible tiene prioridad)
+    if let Some((proj, _role)) = {
+        let store = active_role_store().lock().unwrap();
+        store.iter().next().map(|(p, r)| (p.clone(), r.clone()))
+    } {
+        set_last_project(&proj);
+        return Ok(proj);
+    }
+    // 4. Un solo proyecto conectado → usarlo
     let projects = crate::registry::EditorRegistry::global().connected_projects().await;
     if projects.len() == 1 {
         let sole = projects[0].clone();
         set_last_project(&sole);
         return Ok(sole);
     }
-    match project_path {
-        Some(p) if !p.trim().is_empty() => Ok(normalize_project_path(p)),
-        _ => Err(ToolError::invalid_params(
-            "project_path required â€” use session/open first",
-        )),
-    }
+    // 5. Múltiples proyectos → error con diagnóstico
+    let editors = crate::registry::EditorRegistry::global().connected_editors().await;
+    let detail = if editors.is_empty() {
+        "ningún editor conectado".to_string()
+    } else {
+        format!("proyectos conectados: {}", editors.iter().map(|(p, r, _)| format!("{p} (role={r})")).collect::<Vec<_>>().join(", "))
+    };
+    Err(ToolError::invalid_params(format!(
+        "project_path required — {detail}. Usa session/open(project_path=...) primero."
+    )))
 }
 
 /// Reenvía tools/call al editor y devuelve el resultado desenvuelto.
@@ -571,7 +590,11 @@ fn ws_port() -> u16 {
 // SCENE
 // ============================================================
 
-#[tool(description = "Escenas (v4): get_open_scenes|get_edited_scene_root|open|save|create|unload")]
+// allow: los parámetros los dicta el schema MCP de la tool unificada.
+#[allow(clippy::too_many_arguments)]
+#[tool(
+    description = "Escenas (v4.8): get_open_scenes|get_edited_scene_root|open|save|create|unload|plan|orchestrate|validate|commit|status|list. Flujo planning (§0.6): open CON mode/agent_id (lock+contexto en SceneRegistry) → plan_file (escribe el ScenePlan como .json — action=\"plan\" sin plan_file devuelve un ejemplo canónico; el path acepta res:// o absoluto) → orchestrate (batch via coder determinista, continue-on-error con warnings) → validate (QA dual-engine, error_type dimension|topology|fatal) → commit (save+unlock; save=false con dirty falla accionable). status/list consultan el SceneRegistry. create acepta instance_scene/instance_current para instanciar otra escena. open SIN mode/agent_id = open legacy del plugin."
+)]
 async fn scene(
     action: String,
     project_path: Option<String>,
@@ -579,8 +602,52 @@ async fn scene(
     output_path: Option<String>,
     root_type: Option<String>,
     root_name: Option<String>,
+    // Planning/Orchestration args (§0.6)
+    mode: Option<String>,
+    agent_id: Option<String>,
+    save: Option<bool>,
+    // create instanciado: path explícito o pestaña activa del editor
+    instance_scene: Option<String>,
+    instance_current: Option<bool>,
+    // Plan como ARCHIVO JSON (patrón plan_file de orchestrate): el agente
+    // escribe el .json con sus tools de archivo y pasa el path. Evita los
+    // límites de serialización/schema de dicts anidados vía tool args.
+    // Acepta path absoluto o relativo al proyecto (res:// incluido).
+    // Sin plan_file, action="plan" devuelve un ejemplo canónico auto-documentado.
+    plan_file: Option<String>,
+    // E2: orchestrate preview sin ejecutar
+    dry_run: Option<bool>,
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref()).await?;
+
+    // Planning/Orchestration (Fase C §0.6): estos sub-comandos viven SOLO
+    // server-side (SceneRegistry). NUNCA forward al plugin — su dispatcher
+    // no tiene handlers para ellos ("tool method not found").
+    //
+    // `open` es DUAL: con mode/agent_id (args exclusivos del planning) abre
+    // con lock+contexto en el SceneRegistry; sin ellos es el open legacy del
+    // plugin. H2 (2026-08-24): open del planning se iba por la vía legacy y
+    // nunca registraba la escena → status/validate/commit decían
+    // "No active scene".
+    let planning_open = action == "open" && (mode.is_some() || agent_id.is_some());
+    if matches!(
+        action.as_str(),
+        "plan" | "orchestrate" | "validate" | "commit" | "status" | "list"
+    ) || planning_open
+    {
+        return scene_planning(
+            &action,
+            &proj,
+            scene_path.as_deref(),
+            mode.as_deref(),
+            agent_id.as_deref(),
+            plan_file.as_deref(),
+            dry_run,
+            save,
+        )
+        .await;
+    }
+
     let registry = EditorRegistry::global();
     let explicit_path = scene_path
         .clone()
@@ -600,6 +667,16 @@ async fn scene(
         ),
         ("root_type", root_type.map(Value::String)),
         ("root_name", root_name.map(Value::String)),
+        // create instanciado (2026-08-24): nueva escena conteniendo otra como
+        // instancia ExtResource. instance_current usa la pestaña activa.
+        (
+            "instance_scene",
+            instance_scene
+                .as_deref()
+                .map(normalize_scene_path)
+                .map(Value::String),
+        ),
+        ("instance_current", instance_current.map(Value::Bool)),
     ]);
     // Contexto de escena: save/open sin scene_path usan el Ãºltimo conocido
     // (registrado por create o por cualquier node/animation/shader op).
@@ -654,6 +731,363 @@ async fn scene(
     Ok(result)
 }
 
+// ============================================================
+// SCENE — sub-comandos Planning/Orchestration (Fase C §0.6)
+// ============================================================
+// Helper INTERNO invocado desde la tool `scene`. NO es tool MCP propia:
+// antes era `scene_plan` separada y el flujo quedaba partido en dos tools.
+
+// allow: los params los dicta el flujo planning (§0.6) — 8 es el mínimo natural.
+#[allow(clippy::too_many_arguments)]
+async fn scene_planning(
+    action: &str,
+    proj: &str,
+    scene_path: Option<&str>,
+    mode: Option<&str>,
+    agent_id: Option<&str>,
+    plan_file: Option<&str>,
+    dry_run: Option<bool>,
+    save: Option<bool>,
+) -> Result<Value, ToolError> {
+    let registry = get_or_create_scene_registry(proj).await;
+    let agent_id = agent_id.unwrap_or("unknown").to_string();
+
+    match action {
+        "open" => {
+            let scene_path = scene_path
+                .ok_or_else(|| ToolError::invalid_params("scene_path required for open"))?;
+            let mode = mode
+                .and_then(|m| match m {
+                    "isolated" => Some(SceneMode::Isolated),
+                    "attached" => Some(SceneMode::Attached),
+                    "modify" => Some(SceneMode::Modify),
+                    _ => None,
+                })
+                .unwrap_or(SceneMode::Isolated);
+
+            let response = registry
+                .open_scene(scene_path, mode, &agent_id, &RegistryClientAdapter {
+                    project_path: proj.to_string(),
+                })
+                .await
+                .map_err(ToolError::internal)?;
+            Ok(serde_json::to_value(response)?)
+        }
+        "plan" => {
+            // Sin plan_file → devolver ejemplo canónico auto-documentado para
+            // que el agente sepa QUÉ escribir (self-discovery, sin leer fuentes).
+            let Some(file) = plan_file else {
+                return Ok(serde_json::json!({
+                    "ok": true,
+                    "hint": "escribe este JSON (ajustándolo) a un archivo y llama scene(action=\"plan\", plan_file=\"<path>)\"",
+                    "example": crate::scene_tool::schemas::example_plan(),
+                    "notes": {
+                        "steps_action": "add_node|set_transform|add_resource|connect_signal|instantiate_template|remove_node|duplicate_node",
+                        "verification_kind": "node_count|bbox_max|bbox_min|script_attached|resource_exists|signal_connected|node_exists|property_value",
+                        "tolerance": "OBLIGATORIO en cada verification target",
+                        "workplane": "XZ (3D mundo) | XY (UI/pantalla)",
+                        "local_pos": "coords locales al workplane; el coder las resuelve a globales"
+                    }
+                }));
+            };
+            let path = resolve_plan_file_path(proj, file);
+            let text = std::fs::read_to_string(&path).map_err(|e| {
+                ToolError::invalid_params(format!("no se pudo leer plan_file '{path}': {e}"))
+            })?;
+            let plan: ScenePlan = serde_json::from_str(&text).map_err(|e| {
+                ToolError::invalid_params(format!(
+                    "plan_file '{path}' no es un ScenePlan válido: {e}"
+                ))
+            })?;
+            let scene_path = plan.scene_path.clone();
+            let steps = plan.steps.len();
+            let verifications = plan.verification.len();
+            let response = registry
+                .write_plan(&scene_path, plan)
+                .map_err(ToolError::internal)?;
+            Ok(serde_json::json!({
+                "ok": response.ok,
+                "warnings": response.warnings,
+                "scene_path": scene_path,
+                "steps_count": steps,
+                "verification_count": verifications,
+                "next": "scene(action=\"orchestrate\") ejecuta el batch; luego validate y commit"
+            }))
+        }
+        "orchestrate" => {
+            let scene_path = resolve_planning_scene(&registry, scene_path, "orchestrate")?;
+            let dry_run = dry_run.unwrap_or(false);
+            let (mut response, calls) =
+                registry.orchestrate(&scene_path).map_err(ToolError::internal)?;
+
+            // E2: preview sin mutar — el agente revisa coords antes de ejecutar.
+            if dry_run {
+                response.warnings.push("dry_run: NINGÚN step fue ejecutado".to_string());
+                return Ok(serde_json::to_value(response)?);
+            }
+
+            // Ejecutar las calls MCP internas via forward (nombres BARE).
+            // F1 (2026-08-24): continue-on-error — abortar al primer fallo deja
+            // steps previos aplicados sin constancia. Cada fallo va a warnings
+            // con su step; el agente decide reparar y re-orquestrar.
+            let registry_editor = EditorRegistry::global();
+            for call in calls {
+                if let Err(e) = forward(registry_editor, proj, &call.tool, call.args).await {
+                    response.warnings.push(format!(
+                        "step '{}' falló ({}): {} — los steps previos SÍ se aplicaron",
+                        call.step_id, call.description, e
+                    ));
+                }
+            }
+
+            registry
+                .with_scene_mut(&scene_path, |state| state.dirty = true)
+                .map_err(ToolError::internal)?;
+
+            Ok(serde_json::to_value(response)?)
+        }
+        "validate" => {
+            let scene_path = resolve_planning_scene(&registry, scene_path, "validate")?;
+            // P0b (2026-08-24): refrescar contexto desde el editor VIVO antes de
+            // validar. Sin esto, Engine A chequeaba contra el snapshot del open
+            // (árbol vacío) → "Tower_1 exists:false" pese a existir.
+            let fresh = RegistryClientAdapter {
+                project_path: proj.to_string(),
+            }
+            .load_scene_context(&scene_path)
+            .await
+            .map_err(ToolError::internal)?;
+            registry
+                .update_context(&scene_path, fresh)
+                .map_err(ToolError::internal)?;
+            let response = registry
+                .validate(&scene_path, &ValidatorClientAdapter {
+                    project_path: proj.to_string(),
+                })
+                .await
+                .map_err(ToolError::internal)?;
+            Ok(serde_json::to_value(response)?)
+        }
+        "commit" => {
+            let scene_path = resolve_planning_scene(&registry, scene_path, "commit")?;
+            let save = save.unwrap_or(true);
+            // F2 (2026-08-24): descartar cambios sin aviso = pérdida silenciosa.
+            if !save {
+                let st = registry.status(&scene_path).map_err(ToolError::internal)?;
+                if st.dirty {
+                    return Err(ToolError::invalid_params(
+                        "la escena tiene cambios SIN guardar (dirty:true) — pasa save=true para persistirlos, o scene(action=\"open\") de nuevo para descartarlos conscientemente",
+                    ));
+                }
+            }
+            let response = registry
+                .commit(&scene_path, save, &RegistryClientAdapter {
+                    project_path: proj.to_string(),
+                })
+                .await
+                .map_err(ToolError::internal)?;
+            Ok(serde_json::to_value(response)?)
+        }
+        "status" => {
+            let scene_path = resolve_planning_scene(&registry, scene_path, "status")?;
+            let response = registry.status(&scene_path).map_err(ToolError::internal)?;
+            Ok(serde_json::to_value(response)?)
+        }
+        "list" => {
+            let scenes = registry.list_scenes();
+            Ok(serde_json::to_value(scenes)?)
+        }
+        other => Err(ToolError::invalid_params(format!(
+            "unknown scene planning action: {other}. Valid: open|plan|orchestrate|validate|commit|status|list"
+        ))),
+    }
+}
+
+/// Resuelve el path de un plan_file: absoluto tal cual; `res://...` o ruta
+/// relativa se anclan al directorio del proyecto activo.
+fn resolve_plan_file_path(proj: &str, file: &str) -> String {
+    let normalized = file.replace('\\', "/");
+    if std::path::Path::new(&normalized).is_absolute() {
+        normalized
+    } else {
+        let relative = normalized
+            .strip_prefix("res://")
+            .unwrap_or(&normalized)
+            .trim_start_matches('/');
+        format!("{proj}/{relative}")
+    }
+}
+
+/// Resuelve la escena objetivo de un sub-comando planning: explícita si viene,
+/// si no la única/primera escena abierta en el SceneRegistry.
+fn resolve_planning_scene(
+    registry: &std::sync::Arc<crate::scene_tool::registry::SceneRegistry>,
+    scene_path: Option<&str>,
+    action: &str,
+) -> Result<String, ToolError> {
+    if let Some(p) = scene_path {
+        return Ok(p.to_string());
+    }
+    registry
+        .list_scenes()
+        .first()
+        .map(|s| s.scene_path.clone())
+        .ok_or_else(|| {
+            ToolError::invalid_params(format!(
+                "No active scene in SceneRegistry — llama scene(action=\"open\", scene_path=...) antes de \"{action}\""
+            ))
+        })
+}
+
+// Adapter to call MCP tools from registry using forward()
+struct RegistryClientAdapter {
+    project_path: String,
+}
+
+#[async_trait::async_trait]
+impl crate::scene_tool::registry::SceneRegistryClient for RegistryClientAdapter {
+    async fn load_scene_context(&self, scene_path: &str) -> Result<crate::scene_tool::schemas::SceneContext, String> {
+        let registry = EditorRegistry::global();
+
+        // 🚨 Los nombres de tool son los INTERNOS del dispatcher del plugin
+        // (prefijo BARE + "/metodo") — NUNCA el nombre MCP "godot_*".
+        // El dispatcher rutea por lo que va antes del "/" (dispatcher.gd).
+        let _ = forward(registry, &self.project_path, "scene/open", serde_json::json!({
+            "scene_path": scene_path,
+        })).await.map_err(|e| e.to_string())?;
+
+        // Get scene root
+        let root = forward(registry, &self.project_path, "scene/get_edited_scene_root", serde_json::json!({}))
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Get nodes via node handlers (🚨 node_query es nombre SERVER-side;
+        // el plugin solo registra "node" — split v4.6).
+        let nodes_result = forward(registry, &self.project_path, "node/get_children", serde_json::json!({
+            "node_path": ".",
+            "recursive": true,
+            "scene_path": scene_path,
+        })).await.map_err(|e| e.to_string())?;
+
+        // Build SceneContext from results
+        let context = build_scene_context(scene_path, &root, &nodes_result);
+        Ok(context)
+    }
+
+    async fn save_scene(&self, scene_path: &str) -> Result<(), String> {
+        let registry = EditorRegistry::global();
+        forward(registry, &self.project_path, "scene/save", serde_json::json!({
+            "scene_path": scene_path,
+        })).await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+}
+
+/// Adapter for validator client using forward()
+struct ValidatorClientAdapter {
+    project_path: String,
+}
+
+#[async_trait::async_trait]
+impl crate::scene_tool::validator::SceneValidatorClient for ValidatorClientAdapter {
+    async fn validate_scene(&self, scene_path: &str) -> Result<serde_json::Value, String> {
+        let registry = EditorRegistry::global();
+        forward(registry, &self.project_path, "validate/scene", serde_json::json!({
+            "scene_path": scene_path,
+        })).await.map_err(|e| e.to_string())
+    }
+
+    async fn capture_scene(&self, scene_path: &str, viewport: &str) -> Result<serde_json::Value, String> {
+        let registry = EditorRegistry::global();
+        // 🚨 visual_image es nombre SERVER-side; el plugin registra "visual".
+        forward(registry, &self.project_path, "visual/capture", serde_json::json!({
+            "scene_path": scene_path,
+            "viewport": viewport,
+            "source": "scene",
+        })).await.map_err(|e| e.to_string())
+    }
+
+    async fn visual_summary(&self, scene_path: &str) -> Result<serde_json::Value, String> {
+        let registry = EditorRegistry::global();
+        // El método interno es scene_summary (NO summary).
+        forward(registry, &self.project_path, "visual/scene_summary", serde_json::json!({
+            "scene_path": scene_path,
+        })).await.map_err(|e| e.to_string())
+    }
+
+    async fn list_signals(&self, scene_path: &str) -> Result<serde_json::Value, String> {
+        let registry = EditorRegistry::global();
+        forward(registry, &self.project_path, "signal/list", serde_json::json!({
+            "scene_path": scene_path,
+        })).await.map_err(|e| e.to_string())
+    }
+}
+
+/// Build SceneContext from Godot query results
+fn build_scene_context(scene_path: &str, root: &serde_json::Value, nodes_result: &serde_json::Value) -> crate::scene_tool::schemas::SceneContext {
+    let mut nodes = Vec::new();
+    
+    // Parse nodes from node_query/get_children result
+    if let Some(children) = nodes_result.get("children").and_then(|v| v.as_array()) {
+        for child in children {
+            if let Some(node_info) = parse_node_info(child) {
+                nodes.push(node_info);
+            }
+        }
+    }
+    
+    // Calculate bbox from nodes
+    let mut bbox = crate::scene_tool::schemas::AABB::default();
+    for node in &nodes {
+        if let Some(pos) = &node.position {
+            bbox.position.x = bbox.position.x.min(pos.x);
+            bbox.position.y = bbox.position.y.min(pos.y);
+            bbox.position.z = bbox.position.z.min(pos.z);
+            bbox.size.x = bbox.size.x.max(pos.x);
+            bbox.size.y = bbox.size.y.max(pos.y);
+            bbox.size.z = bbox.size.z.max(pos.z);
+        }
+    }
+    
+    crate::scene_tool::schemas::SceneContext {
+        scene_path: scene_path.to_string(),
+        root_name: root.get("name").and_then(|v| v.as_str()).unwrap_or("Main").to_string(),
+        root_type: root.get("type").and_then(|v| v.as_str()).unwrap_or("Node3D").to_string(),
+        workplane: crate::scene_tool::schemas::Workplane::XZ,
+        workplane_offset: crate::scene_tool::schemas::Vector3::default(),
+        bbox,
+        nodes,
+        resources: Vec::new(),
+        scripts: Vec::new(),
+        plan_schema: crate::scene_tool::schemas::generate_plan_schema(),
+    }
+}
+
+// allow: Godot usa f32 para coords; JSON llega como f64 — la conversión es intencional.
+#[allow(clippy::cast_possible_truncation)]
+fn parse_node_info(value: &serde_json::Value) -> Option<crate::scene_tool::schemas::NodeInfo> {
+    Some(crate::scene_tool::schemas::NodeInfo {
+        path: value.get("path").and_then(|v| v.as_str())?.to_string(),
+        name: value.get("name").and_then(|v| v.as_str())?.to_string(),
+        node_type: value.get("type").and_then(|v| v.as_str())?.to_string(),
+        parent: value.get("parent").and_then(|v| v.as_str()).map(std::string::ToString::to_string),
+        position: value.get("position").and_then(|v| {
+            Some(crate::scene_tool::schemas::Vector3 {
+                x: v.get("x").and_then(serde_json::Value::as_f64)? as f32,
+                y: v.get("y").and_then(serde_json::Value::as_f64)? as f32,
+                z: v.get("z").and_then(serde_json::Value::as_f64)? as f32,
+            })
+        }),
+        script_path: value.get("script_path").and_then(|v| v.as_str()).map(std::string::ToString::to_string),
+        children: value.get("children").and_then(|v| v.as_array()).map(|arr| {
+            arr.iter().filter_map(|c| c.get("path").and_then(|p| p.as_str()).map(std::string::ToString::to_string)).collect()
+        }).unwrap_or_default(),
+        ..Default::default()
+    })
+}
+
+// ============================================================
+// NODE
 // ============================================================
 // NODE
 // ============================================================
@@ -1839,7 +2273,11 @@ async fn visual_image(
 async fn health(project_path: Option<String>) -> Result<Value, ToolError> {
     let registry = EditorRegistry::global();
     let editors = registry.connected_projects().await;
-    let project_connected = match project_path.as_deref() {
+    // Sin project_path explícito → resolver con el mismo fallback que las
+    // demás tools (last_project / rol activo / único proyecto conectado).
+    // Antes devolvía `false` fijo con None pese a haber editor vivo.
+    let proj = resolve_project(project_path.as_deref()).await.ok();
+    let project_connected = match &proj {
         Some(p) => registry.has_editor(p).await,
         None => false,
     };
@@ -1848,62 +2286,18 @@ async fn health(project_path: Option<String>) -> Result<Value, ToolError> {
         "server": "heren-server (Rust)",
         "version": env!("CARGO_PKG_VERSION"),
         "connected_projects": editors,
+        "resolved_project": proj,
         "project_connected": project_connected,
-    }))
-}
-
-// ============================================================
-// HELP (introspect) — Fase E3
-// ============================================================
-
-/// Devuelve las tools del server y, si se pide una concreta, su descripción y
-/// los parámetros de su schema (para saber qué args aplican a qué action).
-/// Sin tool concreta → lista todas las tools expuestas.
-#[tool(
-    description = "Ayuda/introspect del toolset: devuelve la lista de tools y, para una tool concreta, su description y los parametros (properties) del schema. Uso: help(tool='node_query') devuelve los args de node_query; help() lista todas."
-)]
-async fn help(tool: Option<String>) -> Result<Value, ToolError> {
-    use flojo_mcp::prelude::{Context, FlojoTester};
-    let tester = FlojoTester::with_context(Heren::new(), Context::default());
-    let tools = tester
-        .list_tools()
-        .await
-        .map_err(|e| ToolError::internal(format!("list_tools: {e}")))?;
-
-    if let Some(name) = tool.filter(|n| !n.trim().is_empty()) {
-        let t = tools
-            .iter()
-            .find(|t| t.name.as_ref() == name)
-            .ok_or_else(|| ToolError::invalid_params(format!("tool desconocida: {name}")))?;
-        let schema = serde_json::to_value(&t.input_schema)
-            .map_err(|e| ToolError::internal(format!("schema: {e}")))?;
-        return Ok(json!({
-            "ok": true,
-            "tool": name,
-            "description": t.description.as_ref().map_or("", |d| d.as_ref()),
-            "parameters": schema.get("properties").cloned().unwrap_or_else(|| json!({})),
-        }));
-    }
-
-    let list: Vec<Value> = tools
-        .iter()
-        .map(|t| {
-            json!({
-                "name": t.name,
-                "description": t.description.as_ref().map_or("", |d| d.as_ref()),
-            })
-        })
-        .collect();
-    Ok(json!({
-        "ok": true,
-        "tools": list,
-        "count": list.len(),
     }))
 }
 
 /// Punto de entrada del binario.
 pub async fn run() -> Result<(), ServerError> {
     EditorRegistry::init_global();
+
+    // Initialize SceneRegistry for scene tool (Fase C)
+    let project_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    crate::scene_tool::init_scene_tool(&project_root);
 
     // WS plugin server: el EditorPlugin Godot conecta aquÃ­ (patrÃ³n gopeak).
     // Multi-sesiÃ³n (fix 2026-08-06): CADA heren-server de cada sesiÃ³n OpenCode

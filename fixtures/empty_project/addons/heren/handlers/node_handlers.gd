@@ -47,7 +47,24 @@ func _resolve_node(root: Node, node_path: Variant) -> Node:
 		return root
 	if normalized == "":
 		return null
-	return root.get_node_or_null(NodePath(normalized))
+	var found: Node = root.get_node_or_null(NodePath(normalized))
+	if found != null:
+		return found
+	# P1a (2026-08-24): fallback — búsqueda recursiva por NOMBRE. El agente
+	# suele pedir "Grunt_3" (bare) cuando el path real es "Enemies/Grunt_3".
+	if not normalized.contains("/"):
+		return _find_by_name_recursive(root, str(node_path))
+	return null
+
+
+func _find_by_name_recursive(node: Node, target_name: String) -> Node:
+	for child in node.get_children():
+		if child.name == target_name:
+			return child
+		var deep: Node = _find_by_name_recursive(child, target_name)
+		if deep != null:
+			return deep
+	return null
 
 
 ## v4.6 (orientaciÃ³n continua): si `node_path` no resuelve, devuelve los hijos
