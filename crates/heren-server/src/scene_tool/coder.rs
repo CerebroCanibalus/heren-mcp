@@ -227,6 +227,21 @@ impl SceneCoder {
                         description: format!("Duplicate '{node_path}' as '{new_name}'"),
                     });
                 }
+                // Fase 1: step genérico → MCPCall directo (sin transformación).
+                // El agente manda tool/action/args tal cual las conoce de tools/list.
+                SceneStep::Generic { id, tool, tool_action, args } => {
+                    let mut full_args = serde_json::to_value(args).unwrap_or(Value::Null);
+                    if let Value::Object(ref mut map) = full_args {
+                        map.insert("action".to_string(), Value::String(tool_action.clone()));
+                        map.insert("scene_path".to_string(), Value::String(plan.scene_path.clone()));
+                    }
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: tool.clone(),
+                        args: full_args,
+                        description: format!("{tool}/{tool_action}"),
+                    });
+                }
             }
         }
         

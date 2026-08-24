@@ -290,6 +290,20 @@ pub enum SceneStep {
         new_name: String,
         new_parent: Option<String>,
     },
+    /// Fase 1 (2026-08-24): step genérico para cualquier tool del plugin
+    /// (animación, esqueleto, shaders, tilemaps…). El agente conoce las tools
+    /// via tools/list y las invoca directamente. El validator lo salta hoy;
+    /// Fase 5 añadirá introspección contra el schema del plugin.
+    Generic {
+        id: String,
+        tool: String,
+        /// Nombre de la action de la tool (ej: "create_player", "add_track").
+        /// Renombrado a `tool_action` para no colisionar con el tag `action`
+        /// de serde (#[serde(tag = "action")] discrimina las variantes).
+        tool_action: String,
+        #[serde(default)]
+        args: HashMap<String, serde_json::Value>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
@@ -370,7 +384,14 @@ pub fn example_plan() -> serde_json::Value {
                 "method": "_on_body_entered"
             },
             {"action": "remove_node", "id": "s6", "node_path": "NodoViejo"},
-            {"action": "duplicate_node", "id": "s7", "node_path": "Caja", "new_name": "Caja2"}
+            {"action": "duplicate_node", "id": "s7", "node_path": "Caja", "new_name": "Caja2"},
+            {
+                "action": "generic",
+                "id": "s8",
+                "tool": "animation",
+                "tool_action": "create_player",
+                "args": {"player_path": "Caja/AnimPlayer"}
+            }
         ],
         "verification": [
             {
@@ -535,7 +556,7 @@ pub fn generate_plan_schema() -> serde_json::Value {
             "steps": {
                 "type": "array",
                 "items": {"type": "object", "properties": {
-                    "action": {"type": "string", "enum": ["add_node", "set_transform", "add_resource", "connect_signal", "instantiate_template", "remove_node", "duplicate_node"]},
+                    "action": {"type": "string", "enum": ["add_node", "set_transform", "add_resource", "connect_signal", "instantiate_template", "remove_node", "duplicate_node", "generic"]},
                     "id": {"type": "string"},
                     "node_type": {"type": "string"},
                     "name": {"type": "string"},
@@ -558,14 +579,16 @@ pub fn generate_plan_schema() -> serde_json::Value {
                     "anchors_preset": {"type": "integer"},
                     "resource_type": {"type": "string"},
                     "path": {"type": "string"},
-                    "properties": {"type": "object"},
+                    "properties": {"type": "object", "description": "props libres del inspector: colores {r,g,b,a}, vectores {x,y,z}, arrays, paths res://"},
                     "from_node": {"type": "string"},
                     "signal_name": {"type": "string"},
                     "to_node": {"type": "string"},
                     "method": {"type": "string"},
                     "new_name": {"type": "string"},
                     "new_parent": {"type": "string"},
-                    "properties": {"type": "object", "description": "props libres del inspector: colores {r,g,b,a}, vectores {x,y,z}, arrays, paths res://"}
+                    "tool": {"type": "string", "description": "nombre de la tool MCP (animation, skeleton, shader, etc.)"},
+                    "tool_action": {"type": "string", "description": "action de la tool (create_player, add_track, etc.)"},
+                    "args": {"type": "object", "description": "argumentos libres de la tool"}
                 }, "required": ["action", "id"]}
             },
             "verification": {
