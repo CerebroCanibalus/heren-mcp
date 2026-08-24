@@ -2,7 +2,7 @@
 
 > Biblia del agente. Léelo antes de tocar código.
 >
-> **ESTADO: v4.8** — EditorPlugin (GDScript→EditorInterface) + heren-server.exe Rust/FlojoMCP.
+> **ESTADO: v4.9** — EditorPlugin (GDScript→EditorInterface) + heren-server.exe Rust/FlojoMCP.
 > 17 tools centralizadas (19 con split), WS plugin server (patrón gopeak), auto-launch, NDJSON por stdio.
 > Workspace Rust local (`crates/heren-server`); FlojoMCP = framework SOLO (flojo-mcp/macros/session @ crates.io, consumido por version, no path).
 > Bridge Python y daemon v3 **archivados en rama `archive/v3`**. **Cambios nuevos → v4/Rust.**
@@ -390,6 +390,36 @@ Mismo patrón para `animation` y `skeleton`:
 - `animation/orchestrate` → batch interno
 - `animation/validate` → QA: track types, key normalization, blend tree connectivity
 - `skeleton/open`, `skeleton/plan`, `skeleton/orchestrate`, `skeleton/validate` — análogo
+
+## 0.7 Plan de extensión del Planning a todo el motor (2026-08-24) — FASE 1 COMPLETADA
+
+> El planning E2E demostró éxito con escenas. Ahora se extiende a animaciones,
+> esqueletos, scripts, shaders y tilemaps. Estrategia: **híbrido** — steps
+> tipados para escena (80% del uso) + `GenericStep` para el resto (20%).
+
+### Arquitectura híbrida
+
+| Step type | Para qué | Ejemplo |
+|-----------|----------|---------|
+| `add_node`, `set_transform`, `add_resource`, etc. | Escena (core) | `{"action":"add_node","node_type":"MeshInstance3D",...}` |
+| `Generic { action:"generic", tool, tool_action, args }` | Cualquier tool del plugin | `{"action":"generic","tool":"animation","tool_action":"create_player",...}` |
+
+### Fases de implementación
+
+| Fase | Estado | Descripción |
+|------|--------|-------------|
+| **Fase 1** — GenericStep | ✅ DONE | `SceneStep::Generic` + coder → MCPCall directo. Validator salta. Schema + ejemplo actualizados. |
+| **Fase 2** — Steps animación tipados | Pendiente | `CreateTrack`, `AddKey`, `SetAnimationProperty` → más expresivos que Generic. |
+| **Fase 3** — Steps esqueleto tipados | Pendiente | `AddBone`, `SetBoneRest`, `SetBonePose`, `CreateIK` → mapeo a `skeleton/*`. |
+| **Fase 4** — Steps script/shader tipados | Pendiente | `AttachScript`, `CreateShader`, `SetShaderUniform` → mapeo a `resource`/`shader`. |
+| **Fase 5** — Validator introspección | Pendiente | Valida GenericStep args contra schema del plugin (FlojoTester). Catch errores antes de ejecutar. |
+
+### Notas de diseño
+
+- **GenericStep** usa `tool_action` (no `action`) para no colisionar con el tag serde `#[serde(tag="action")]`.
+- **Validator** hoy salta Generic (Fase 5 añadirá introspección).
+- **Passthrough verbatim**: args del Generic viajan sin transformación al plugin.
+- **Ejemplo en `scene(action="plan")`**: incluye paso genérico de animación como referencia.
 
 ---
 
