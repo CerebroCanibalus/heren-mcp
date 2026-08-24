@@ -242,6 +242,115 @@ impl SceneCoder {
                         description: format!("{tool}/{tool_action}"),
                     });
                 }
+                // === Fase 2 — Animation typed steps ===
+                SceneStep::AddTrack { id, player_path, anim_name, track_type, node_path, property, skeleton_path } => {
+                    let mut args = serde_json::json!({
+                        "player_path": player_path,
+                        "anim_name": anim_name,
+                        "track_type": track_type,
+                        "node_path": node_path,
+                        "property": property,
+                        "scene_path": plan.scene_path,
+                    });
+                    if let Some(sp) = skeleton_path {
+                        args["skeleton_path"] = Value::String(sp.clone());
+                    }
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "animation".to_string(),
+                        args,
+                        description: format!("animation/add_track '{anim_name}' ({track_type})"),
+                    });
+                }
+                SceneStep::AddKey { id, player_path, anim_name, track_idx, time, value, transition } => {
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "animation".to_string(),
+                        args: serde_json::json!({
+                            "player_path": player_path,
+                            "anim_name": anim_name,
+                            "track_idx": track_idx,
+                            "time": time,
+                            "value": value,
+                            "transition": transition,
+                            "scene_path": plan.scene_path,
+                        }),
+                        description: format!("animation/add_key '{anim_name}' track={track_idx} t={time}"),
+                    });
+                }
+                // === Fase 3 — Skeleton typed steps ===
+                SceneStep::AddBone { id, skeleton_path, bone_name, parent_bone, rest_transform } => {
+                    let mut args = serde_json::json!({
+                        "skeleton_path": skeleton_path,
+                        "bone_name": bone_name,
+                        "scene_path": plan.scene_path,
+                    });
+                    if !parent_bone.is_empty() {
+                        args["parent_bone"] = Value::String(parent_bone.clone());
+                    }
+                    if !rest_transform.is_null() {
+                        args["rest_transform"] = rest_transform.clone();
+                    }
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "skeleton".to_string(),
+                        args,
+                        description: format!("skeleton/add_bone '{bone_name}'"),
+                    });
+                }
+                SceneStep::SetBoneRest { id, skeleton_path, bone_name, rest_transform } => {
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "skeleton".to_string(),
+                        args: serde_json::json!({
+                            "skeleton_path": skeleton_path,
+                            "bone_name": bone_name,
+                            "rest_transform": rest_transform,
+                            "scene_path": plan.scene_path,
+                        }),
+                        description: format!("skeleton/set_rest '{bone_name}'"),
+                    });
+                }
+                // === Fase 4 — Script/Shader typed steps ===
+                SceneStep::AttachScript { id, node_path, script_path } => {
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "node".to_string(),
+                        args: serde_json::json!({
+                            "action": "set_props",
+                            "node_path": node_path,
+                            "properties": {"script": script_path},
+                            "scene_path": plan.scene_path,
+                        }),
+                        description: format!("attach script '{script_path}' to '{node_path}'"),
+                    });
+                }
+                SceneStep::CreateShader { id, shader_path, shader_type, code } => {
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "shader".to_string(),
+                        args: serde_json::json!({
+                            "shader_path": shader_path,
+                            "shader_type": shader_type,
+                            "code": code,
+                        }),
+                        description: format!("shader/create '{shader_path}' ({shader_type})"),
+                    });
+                }
+                SceneStep::SetShaderUniform { id, material_path, uniform_name, value } => {
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "shader".to_string(),
+                        args: serde_json::json!({
+                            "action": "uniform",
+                            "material_path": material_path,
+                            "uniform_name": uniform_name,
+                            "value": value,
+                            "scene_path": plan.scene_path,
+                        }),
+                        description: format!("shader/uniform '{uniform_name}' on '{material_path}'"),
+                    });
+                }
             }
         }
         

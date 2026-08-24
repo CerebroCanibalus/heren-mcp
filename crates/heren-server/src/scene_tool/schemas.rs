@@ -198,6 +198,9 @@ pub struct ScenePlan {
     pub key_dimensions: HashMap<String, serde_json::Value>,
 }
 
+fn default_transition() -> f32 { 1.0 }
+fn default_shader_type() -> String { "canvas_item".to_string() }
+
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case")]
@@ -303,6 +306,72 @@ pub enum SceneStep {
         tool_action: String,
         #[serde(default)]
         args: HashMap<String, serde_json::Value>,
+    },
+    // === Fase 2 — Animation typed steps ===
+    /// Add a track to an animation
+    AddTrack {
+        id: String,
+        player_path: String,
+        anim_name: String,
+        track_type: String,
+        node_path: String,
+        #[serde(default)]
+        property: String,
+        #[serde(default)]
+        skeleton_path: Option<String>,
+    },
+    /// Add a keyframe to a track
+    AddKey {
+        id: String,
+        player_path: String,
+        anim_name: String,
+        track_idx: i32,
+        time: f32,
+        #[serde(default)]
+        value: serde_json::Value,
+        #[serde(default = "default_transition")]
+        transition: f32,
+    },
+    // === Fase 3 — Skeleton typed steps ===
+    /// Add a bone to a skeleton
+    AddBone {
+        id: String,
+        skeleton_path: String,
+        bone_name: String,
+        #[serde(default)]
+        parent_bone: String,
+        #[serde(default)]
+        rest_transform: serde_json::Value,
+    },
+    /// Set rest pose for a bone
+    SetBoneRest {
+        id: String,
+        skeleton_path: String,
+        bone_name: String,
+        rest_transform: serde_json::Value,
+    },
+    // === Fase 4 — Script/Shader typed steps ===
+    /// Attach a script to a node
+    AttachScript {
+        id: String,
+        node_path: String,
+        script_path: String,
+    },
+    /// Create a shader resource
+    CreateShader {
+        id: String,
+        shader_path: String,
+        #[serde(default = "default_shader_type")]
+        shader_type: String,
+        #[serde(default)]
+        code: String,
+    },
+    /// Set a uniform on a shader material
+    SetShaderUniform {
+        id: String,
+        material_path: String,
+        uniform_name: String,
+        value: serde_json::Value,
     },
 }
 
@@ -556,7 +625,7 @@ pub fn generate_plan_schema() -> serde_json::Value {
             "steps": {
                 "type": "array",
                 "items": {"type": "object", "properties": {
-                    "action": {"type": "string", "enum": ["add_node", "set_transform", "add_resource", "connect_signal", "instantiate_template", "remove_node", "duplicate_node", "generic"]},
+                    "action": {"type": "string", "enum": ["add_node", "set_transform", "add_resource", "connect_signal", "instantiate_template", "remove_node", "duplicate_node", "generic", "add_track", "add_key", "add_bone", "set_bone_rest", "attach_script", "create_shader", "set_shader_uniform"]},
                     "id": {"type": "string"},
                     "node_type": {"type": "string"},
                     "name": {"type": "string"},
@@ -588,7 +657,25 @@ pub fn generate_plan_schema() -> serde_json::Value {
                     "new_parent": {"type": "string"},
                     "tool": {"type": "string", "description": "nombre de la tool MCP (animation, skeleton, shader, etc.)"},
                     "tool_action": {"type": "string", "description": "action de la tool (create_player, add_track, etc.)"},
-                    "args": {"type": "object", "description": "argumentos libres de la tool"}
+                    "args": {"type": "object", "description": "argumentos libres de la tool"},
+                    "player_path": {"type": "string"},
+                    "anim_name": {"type": "string"},
+                    "track_type": {"type": "string", "enum": ["value", "position_3d", "rotation_3d", "scale_3d", "method", "bezier", "audio", "bone"]},
+                    "property": {"type": "string"},
+                    "skeleton_path": {"type": "string"},
+                    "track_idx": {"type": "integer"},
+                    "time": {"type": "number"},
+                    "value": {"type": "object"},
+                    "transition": {"type": "number", "default": 1.0},
+                    "bone_name": {"type": "string"},
+                    "parent_bone": {"type": "string"},
+                    "rest_transform": {"type": "object"},
+                    "script_path": {"type": "string"},
+                    "shader_path": {"type": "string"},
+                    "shader_type": {"type": "string", "enum": ["spatial", "canvas_item", "particles", "sky", "fog"], "default": "canvas_item"},
+                    "code": {"type": "string"},
+                    "material_path": {"type": "string"},
+                    "uniform_name": {"type": "string"}
                 }, "required": ["action", "id"]}
             },
             "verification": {
