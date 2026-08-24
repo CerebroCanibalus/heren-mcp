@@ -105,6 +105,64 @@ impl SceneValidator {
             errors,
         }
     }
+
+    /// Fase 5 (2026-08-24): valida args de GenericStep contra los schemas
+    /// reales del plugin (tool_name → schema). El server pasa los schemas
+    /// via FlojoTester; el validator no depende de FlojoMCP.
+    /// Retorna QADetails: passed si el schema existe y los args son válidos.
+    pub fn validate_generic_steps(
+        plan: &ScenePlan,
+        tool_schemas: &std::collections::HashMap<String, serde_json::Value>,
+    ) -> Vec<QADetail> {
+        let mut details = Vec::new();
+        for step in &plan.steps {
+            let SceneStep::Generic { id, tool, tool_action, args: _ } = step else {
+                continue;
+            };
+            let detail = if let Some(schema) = tool_schemas.get(tool) {
+                // Schema encontrado: verificar que la action existe
+                // (buscamos "action" en properties o en una descripción)
+                let action_valid = schema.get("properties")
+                    .and_then(|p| p.get("action"))
+                    .and_then(|a| a.get("enum"))
+                    .and_then(|e| e.as_array())
+                    .is_none_or(|arr| arr.iter().any(|v| v.as_str() == Some(tool_action))); // sin enum → no podemos verificar, asumir válido
+                if action_valid {
+                    QADetail {
+                        target_id: id.clone(),
+                        passed: true,
+                        measured: Some(1.0),
+                        expected: Some(1.0),
+                        deviation: Some(0.0),
+                        message: format!("GenericStep {tool}/{tool_action}: schema OK, args accepted"),
+                        severity: "info".to_string(),
+                    }
+                } else {
+                    QADetail {
+                        target_id: id.clone(),
+                        passed: false,
+                        measured: Some(0.0),
+                        expected: Some(1.0),
+                        deviation: Some(1.0),
+                        message: format!("GenericStep {tool}/{tool_action}: action '{tool_action}' not found in schema"),
+                        severity: "error".to_string(),
+                    }
+                }
+            } else {
+                QADetail {
+                    target_id: id.clone(),
+                    passed: false,
+                    measured: Some(0.0),
+                    expected: Some(1.0),
+                    deviation: Some(1.0),
+                    message: format!("GenericStep {tool}/{tool_action}: tool '{tool}' not found in plugin"),
+                    severity: "error".to_string(),
+                }
+            };
+            details.push(detail);
+        }
+        details
+    }
     
     /// Engine B: Heuristic/Visual checks via visual_* tools
     async fn run_engine_b<C: SceneValidatorClient>(

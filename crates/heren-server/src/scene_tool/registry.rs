@@ -116,6 +116,15 @@ impl SceneRegistry {
         Ok(())
     }
 
+    /// Escribe/actualiza plan (ya existía write_plan; este es un alias para get)
+    pub fn get_plan(&self, scene_path: &str) -> Result<Option<ScenePlan>, String> {
+        let normalized_path = normalize_scene_path(scene_path);
+        let scenes = self.scenes.read().unwrap();
+        let state = scenes.get(&normalized_path)
+            .ok_or_else(|| format!("Scene '{normalized_path}' not opened"))?;
+        Ok(state.plan.clone())
+    }
+
     /// Write/update scene plan
     pub fn write_plan(&self, scene_path: &str, plan: ScenePlan) -> Result<ScenePlanResponse, String> {
         let normalized_path = normalize_scene_path(scene_path);

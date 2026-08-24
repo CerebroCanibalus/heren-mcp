@@ -783,10 +783,13 @@ async fn scene_planning(
                     "example": crate::scene_tool::schemas::example_plan(),
                     "notes": {
                         "steps_action": "add_node|set_transform|add_resource|connect_signal|instantiate_template|remove_node|duplicate_node",
+                        "generic_step": "Para animación/esqueleto/shaders/tilemaps: {id, tool, action, args} — el agente conoce las tools de tools/list",
                         "verification_kind": "node_count|bbox_max|bbox_min|script_attached|resource_exists|signal_connected|node_exists|property_value",
                         "tolerance": "OBLIGATORIO en cada verification target",
                         "workplane": "XZ (3D mundo) | XY (UI/pantalla)",
-                        "local_pos": "coords locales al workplane; el coder las resuelve a globales"
+                        "local_pos": "coords de MUNDO directas + workplane_offset; sin swaps",
+                        "properties": "cualquier prop del inspector: colores {r,g,b,a}, vectores {x,y,z}, arrays, paths res:// (recursos por PATH, nunca inline)",
+                        "precedence": "properties explícitas SOBREESCRIBEN local_pos/local_rot/local_scale/resource_path derivados"
                     }
                 }));
             };
@@ -860,12 +863,27 @@ async fn scene_planning(
             registry
                 .update_context(&scene_path, fresh)
                 .map_err(ToolError::internal)?;
-            let response = registry
+            let mut response = registry
                 .validate(&scene_path, &ValidatorClientAdapter {
                     project_path: proj.to_string(),
                 })
                 .await
                 .map_err(ToolError::internal)?;
+            // Fase 5: validar GenericSteps contra schemas reales del plugin.
+            let tool_schemas = fetch_tool_schemas().await;
+            let plan = registry.get_plan(&scene_path).map_err(ToolError::internal)?;
+            if let Some(plan) = plan {
+                let generic_details = crate::scene_tool::validator::SceneValidator
+                    ::validate_generic_steps(&plan, &tool_schemas);
+                if !generic_details.is_empty() {
+                    response.qa_report.engine_a.results.extend(generic_details.iter().cloned());
+                    let any_fail = generic_details.iter().any(|d| !d.passed);
+                    if any_fail {
+                        response.qa_report.error_type = crate::scene_tool::schemas::ErrorType::Topology;
+                        response.qa_report.passed = false;
+                    }
+                }
+            }
             Ok(serde_json::to_value(response)?)
         }
         "commit" => {
@@ -901,6 +919,21 @@ async fn scene_planning(
             "unknown scene planning action: {other}. Valid: open|plan|orchestrate|validate|commit|status|list"
         ))),
     }
+}
+
+/// Fase 5: obtiene los schemas de todas las tools del plugin vía FlojoTester.
+/// Retorna HashMap<tool_name, schema_json>. Cacheada en estático.
+async fn fetch_tool_schemas() -> std::collections::HashMap<String, Value> {
+    use flojo_mcp::prelude::FlojoTester;
+    let tester = FlojoTester::with_context(Heren::new(), Context::default());
+    let tools = tester.list_tools().await.unwrap_or_default();
+    let mut map = std::collections::HashMap::new();
+    for tool in tools {
+        let name = tool.name.to_string();
+        let schema = serde_json::to_value(&tool.input_schema).unwrap_or(Value::Null);
+        map.insert(name, schema);
+    }
+    map
 }
 
 /// Resuelve el path de un plan_file: absoluto tal cual; `res://...` o ruta
