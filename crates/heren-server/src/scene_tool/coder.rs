@@ -245,6 +245,7 @@ impl SceneCoder {
                 // === Fase 2 — Animation typed steps ===
                 SceneStep::AddTrack { id, player_path, anim_name, track_type, node_path, property, skeleton_path } => {
                     let mut args = serde_json::json!({
+                        "action": "add_track",
                         "player_path": player_path,
                         "anim_name": anim_name,
                         "track_type": track_type,
@@ -267,6 +268,7 @@ impl SceneCoder {
                         step_id: id.clone(),
                         tool: "animation".to_string(),
                         args: serde_json::json!({
+                            "action": "add_key",
                             "player_path": player_path,
                             "anim_name": anim_name,
                             "track_idx": track_idx,
@@ -281,6 +283,7 @@ impl SceneCoder {
                 // === Fase 3 — Skeleton typed steps ===
                 SceneStep::AddBone { id, skeleton_path, bone_name, parent_bone, rest_transform } => {
                     let mut args = serde_json::json!({
+                        "action": "skeleton_add_bone",
                         "skeleton_path": skeleton_path,
                         "bone_name": bone_name,
                         "scene_path": plan.scene_path,
@@ -303,6 +306,7 @@ impl SceneCoder {
                         step_id: id.clone(),
                         tool: "skeleton".to_string(),
                         args: serde_json::json!({
+                            "action": "skeleton_set_rest",
                             "skeleton_path": skeleton_path,
                             "bone_name": bone_name,
                             "rest_transform": rest_transform,
@@ -330,6 +334,7 @@ impl SceneCoder {
                         step_id: id.clone(),
                         tool: "shader".to_string(),
                         args: serde_json::json!({
+                            "action": "create",
                             "shader_path": shader_path,
                             "shader_type": shader_type,
                             "code": code,

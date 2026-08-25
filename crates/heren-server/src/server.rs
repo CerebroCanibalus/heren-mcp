@@ -617,6 +617,8 @@ async fn scene(
     plan_file: Option<String>,
     // E2: orchestrate preview sin ejecutar
     dry_run: Option<bool>,
+    // S2: engine filter para validate — "a"=solo estructura, "b"=solo visual, "all"=ambos
+    engine: Option<String>,
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref()).await?;
 
@@ -643,6 +645,7 @@ async fn scene(
             agent_id.as_deref(),
             plan_file.as_deref(),
             dry_run,
+            engine.as_deref(),
             save,
         )
         .await;
@@ -747,6 +750,7 @@ async fn scene_planning(
     agent_id: Option<&str>,
     plan_file: Option<&str>,
     dry_run: Option<bool>,
+    engine: Option<&str>,
     save: Option<bool>,
 ) -> Result<Value, ToolError> {
     let registry = get_or_create_scene_registry(proj).await;
@@ -851,9 +855,8 @@ async fn scene_planning(
         }
         "validate" => {
             let scene_path = resolve_planning_scene(&registry, scene_path, "validate")?;
-            // P0b (2026-08-24): refrescar contexto desde el editor VIVO antes de
-            // validar. Sin esto, Engine A chequeaba contra el snapshot del open
-            // (árbol vacío) → "Tower_1 exists:false" pese a existir.
+            let engine_filter = engine.unwrap_or("all");
+            // P0b: refrescar contexto del editor vivo
             let fresh = RegistryClientAdapter {
                 project_path: proj.to_string(),
             }
@@ -869,7 +872,17 @@ async fn scene_planning(
                 })
                 .await
                 .map_err(ToolError::internal)?;
-            // Fase 5: validar GenericSteps contra schemas reales del plugin.
+            // S2: si engine="a", saltar Engine B (capture offscreen → timeout en 3D)
+            if engine_filter == "a" {
+                response.qa_report.engine_b = crate::scene_tool::schemas::EngineReport {
+                    engine_name: "skipped (engine=a)".to_string(),
+                    results: vec![],
+                    summary: "Skipped by engine filter".to_string(),
+                    warnings: vec![],
+                    errors: vec![],
+                };
+            }
+            // Fase 5: validar GenericSteps
             let tool_schemas = fetch_tool_schemas().await;
             let plan = registry.get_plan(&scene_path).map_err(ToolError::internal)?;
             if let Some(plan) = plan {

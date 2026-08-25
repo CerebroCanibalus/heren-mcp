@@ -1268,8 +1268,11 @@ func handle_add_track(args: Dictionary) -> Dictionary:
 	var property: String = str(args.get("property", ""))
 
 	var anim: Animation = player.get_animation(anim_name) if player.has_animation(anim_name) else null
+	# S3 (2026-08-24): auto-crear animación si no existe.
 	if anim == null:
-		return {"ok": false, "error": "animation_not_found: " + anim_name}
+		anim = Animation.new()
+		anim.resource_name = anim_name
+		player.add_animation(anim_name, anim)
 
 	# P1: track_type="bone" — resuelve el path del hueso por nombre.
 	if track_type == "bone":
