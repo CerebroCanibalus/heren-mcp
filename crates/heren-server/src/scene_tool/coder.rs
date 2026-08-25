@@ -342,18 +342,18 @@ impl SceneCoder {
                         description: format!("shader/create '{shader_path}' ({shader_type})"),
                     });
                 }
-                SceneStep::SetShaderUniform { id, material_path, uniform_name, value } => {
+                SceneStep::SetShaderUniform { id, node_path, uniform_name, value } => {
                     calls.push(MCPCall {
                         step_id: id.clone(),
                         tool: "shader".to_string(),
                         args: serde_json::json!({
                             "action": "uniform",
-                            "material_path": material_path,
+                            "node_path": node_path,
                             "uniform_name": uniform_name,
                             "value": value,
                             "scene_path": plan.scene_path,
                         }),
-                        description: format!("shader/uniform '{uniform_name}' on '{material_path}'"),
+                        description: format!("shader/uniform '{uniform_name}' on '{node_path}'"),
                     });
                 }
             }

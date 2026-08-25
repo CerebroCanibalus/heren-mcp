@@ -369,7 +369,7 @@ pub enum SceneStep {
     /// Set a uniform on a shader material
     SetShaderUniform {
         id: String,
-        material_path: String,
+        node_path: String,
         uniform_name: String,
         value: serde_json::Value,
     },
@@ -674,7 +674,7 @@ pub fn generate_plan_schema() -> serde_json::Value {
                     "shader_path": {"type": "string"},
                     "shader_type": {"type": "string", "enum": ["spatial", "canvas_item", "particles", "sky", "fog"], "default": "canvas_item"},
                     "code": {"type": "string"},
-                    "material_path": {"type": "string"},
+                    "node_path": {"type": "string"},
                     "uniform_name": {"type": "string"}
                 }, "required": ["action", "id"]}
             },

@@ -218,14 +218,17 @@ func handle_add_key(args: Dictionary) -> Dictionary:
 	var track_type := anim.track_get_type(track_idx)
 	match track_type:
 		Animation.TYPE_ROTATION_3D:
-			# rotation_3d exige Quaternion NORMALIZADO (norma=1).
+			# rotation_3d exige Quaternion NORMALIZADO (norma≈1).
 			# Vector3 NO se auto-convierte (Godot track_insert_key lo rechaza).
 			# El agente debe pasar Quaternion {x,y,z,w} directamente.
 			if not (value is Quaternion):
 				return {"ok": false, "error": "rotation_3d track requires normalized Quaternion {x,y,z,w}; got: " + str(typeof(value))}
-			if value.normalized() != value:
-				return {"ok": false, "error": "rotation_3d track requires normalized Quaternion {x,y,z,w} (norm=1); got: " + str(typeof(value))}
-			# Asegurar que value sea el normalizado (por si no lo estaba)
+			# E4 (2026-08-24): comparar con tolerancia, no exacta.
+			# value.normalized() crea float ligeramente distinto → != siempre true.
+			var len: float = value.length()
+			if abs(len - 1.0) > 0.01:
+				return {"ok": false, "error": "rotation_3d track requires normalized Quaternion (|q|≈1); got |q|=" + str(len)}
+			# Normalizar por consistencia (por si no estaba exactamente unitario)
 			value = value.normalized()
 		Animation.TYPE_POSITION_3D, Animation.TYPE_SCALE_3D:
 			if not (value is Vector3):
@@ -1276,8 +1279,9 @@ func handle_add_track(args: Dictionary) -> Dictionary:
 
 	# P1: track_type="bone" — resuelve el path del hueso por nombre.
 	if track_type == "bone":
+		# E1 (2026-08-24): usar _resolve_skeleton (auto-detect) en vez de _resolve_node.
 		var skeleton_path: Variant = args.get("skeleton_path", "")
-		var skeleton := _resolve_node(root, skeleton_path)
+		var skeleton := _resolve_skeleton(root, skeleton_path)
 		if skeleton == null:
 			return {"ok": false, "error": "skeleton_not_found"}
 		if skeleton is Skeleton3D:
