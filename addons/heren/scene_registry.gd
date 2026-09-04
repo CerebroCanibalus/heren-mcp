@@ -26,6 +26,11 @@ static var _mtimes: Dictionary = {}  # scene_path → int (mtime al registrar)
 static var _pending_ops: Dictionary = {}  # scene_path → Array[Dictionary] (ops del agente re-aplicables)
 static var _dirty: Dictionary = {}  # scene_path → bool (hay mutaciones pendientes)
 
+# Cache de mtime para evitar FileAccess.open en cada llamada.
+# TTL 1s: suficiente para detectar cambios reales del disco sin overhead.
+const MTIME_CACHE_TTL := 1.0
+static var _mtime_cache: Dictionary = {}  # abs_path → {mtime: int, time: float}
+
 
 ## Normaliza la key a la forma canónica (res://, forward slashes, sin
 ## trailing) para que coincida SIEMPRE con scene_file_path de las pestañas.
@@ -42,15 +47,25 @@ static func _norm(path: String) -> String:
 
 
 ## Obtiene el mtime de un archivo en disco (0 si no existe).
+## Usa cache con TTL 1s para evitar FileAccess.open en cada llamada.
 static func _get_file_mtime(path: String) -> int:
 	if not ResourceLoader.exists(path):
 		return 0
 	var abs_path := ProjectSettings.globalize_path(path)
+	var now := Time.get_ticks_msec() / 1000.0
+	# Cache hit: mtime consultado hace < TTL
+	var cached: Variant = _mtime_cache.get(abs_path, null)
+	if cached is Dictionary:
+		var age: float = now - (cached as Dictionary).get("time", 0.0)
+		if age < MTIME_CACHE_TTL:
+			return (cached as Dictionary).get("mtime", 0)
+	# Cache miss: leer del disco
 	var file := FileAccess.open(abs_path, FileAccess.READ)
 	if file == null:
 		return 0
 	var mtime := file.get_modified_time(abs_path)
 	file.close()
+	_mtime_cache[abs_path] = {"mtime": mtime, "time": now}
 	return mtime
 
 
@@ -118,6 +133,7 @@ static func clear() -> void:
 	_mtimes.clear()
 	_pending_ops.clear()
 	_dirty.clear()
+	_mtime_cache.clear()
 
 
 ## Actualiza el mtime registrado para una escena (llamar después de save).
@@ -165,6 +181,22 @@ static func has_pending_ops(path: String) -> bool:
 static func is_dirty(path: String) -> bool:
 	var p := _norm(path)
 	return _dirty.get(p, false)
+
+
+## Devuelve la escena dirty más reciente (por mtime), o "" si no hay ninguna.
+## Útil para commit inteligente: si el agente no pasa scene_path, usar la
+## última escena que fue editada por el MCP.
+static func most_recent_dirty() -> String:
+	var best_path := ""
+	var best_mtime := -1
+	for path in _dirty.keys():
+		if not _dirty[path]:
+			continue
+		var mtime := _get_file_mtime(path)
+		if mtime > best_mtime:
+			best_mtime = mtime
+			best_path = path
+	return best_path
 
 
 ## Re-aplica UNA op sobre un root fresco. Devuelve true si se re-aplicó.

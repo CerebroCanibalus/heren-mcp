@@ -16,6 +16,10 @@ extends "res://addons/heren/handlers/heren_handler.gd"
 #   skeleton_set_rest -> set_bone_rest
 #   skeleton_skin  -> Polygon2D.skeleton + weights
 #   skeleton_attachment -> BoneAttachment3D en bone
+#   tree_set_param -> asigna parámetro de AnimationTree (acepta param_name|name)
+#   tree_add_blend_node -> bt.add_node(name, node, pos) [planning P-B2]
+#   tree_connect_blend_nodes -> bt.connect_node(from, port, to) [planning P-B3]
+#   tree_set_anim_player -> tree.anim_player = NodePath [planning P-B5]
 
 const HerenCoordsScript := preload("coords.gd")
 const HerenSceneRegistryScript := preload("../scene_registry.gd")
@@ -218,14 +222,17 @@ func handle_add_key(args: Dictionary) -> Dictionary:
 	var track_type := anim.track_get_type(track_idx)
 	match track_type:
 		Animation.TYPE_ROTATION_3D:
-			# rotation_3d exige Quaternion NORMALIZADO (norma=1).
+			# rotation_3d exige Quaternion NORMALIZADO (norma≈1).
 			# Vector3 NO se auto-convierte (Godot track_insert_key lo rechaza).
 			# El agente debe pasar Quaternion {x,y,z,w} directamente.
 			if not (value is Quaternion):
 				return {"ok": false, "error": "rotation_3d track requires normalized Quaternion {x,y,z,w}; got: " + str(typeof(value))}
-			if value.normalized() != value:
-				return {"ok": false, "error": "rotation_3d track requires normalized Quaternion {x,y,z,w} (norm=1); got: " + str(typeof(value))}
-			# Asegurar que value sea el normalizado (por si no lo estaba)
+			# E4 (2026-08-24): comparar con tolerancia, no exacta.
+			# value.normalized() crea float ligeramente distinto → != siempre true.
+			var len: float = value.length()
+			if abs(len - 1.0) > 0.01:
+				return {"ok": false, "error": "rotation_3d track requires normalized Quaternion (|q|≈1); got |q|=" + str(len)}
+			# Normalizar por consistencia (por si no estaba exactamente unitario)
 			value = value.normalized()
 		Animation.TYPE_POSITION_3D, Animation.TYPE_SCALE_3D:
 			if not (value is Vector3):
@@ -1268,13 +1275,17 @@ func handle_add_track(args: Dictionary) -> Dictionary:
 	var property: String = str(args.get("property", ""))
 
 	var anim: Animation = player.get_animation(anim_name) if player.has_animation(anim_name) else null
+	# S3 (2026-08-24): auto-crear animación si no existe.
 	if anim == null:
-		return {"ok": false, "error": "animation_not_found: " + anim_name}
+		anim = Animation.new()
+		anim.resource_name = anim_name
+		player.add_animation(anim_name, anim)
 
 	# P1: track_type="bone" — resuelve el path del hueso por nombre.
 	if track_type == "bone":
+		# E1 (2026-08-24): usar _resolve_skeleton (auto-detect) en vez de _resolve_node.
 		var skeleton_path: Variant = args.get("skeleton_path", "")
-		var skeleton := _resolve_node(root, skeleton_path)
+		var skeleton := _resolve_skeleton(root, skeleton_path)
 		if skeleton == null:
 			return {"ok": false, "error": "skeleton_not_found"}
 		if skeleton is Skeleton3D:
@@ -1301,16 +1312,18 @@ func handle_add_track(args: Dictionary) -> Dictionary:
 		return {"ok": false, "error": "invalid_skeleton_type"}
 
 	var track_idx := -1
+	# property vacío = no concatenar ":" (track raíz apunta solo a node_path).
+	var sub := "" if property.is_empty() else ":" + property
 	match track_type:
 		"value":
 			track_idx = anim.add_track(Animation.TYPE_VALUE)
-			anim.track_set_path(track_idx, node_path + ":" + property)
+			anim.track_set_path(track_idx, node_path + sub)
 		"position_3d", "rotation_3d", "scale_3d", "method":
 			track_idx = anim.add_track(Animation.TYPE_POSITION_3D if track_type == "position_3d" else Animation.TYPE_ROTATION_3D if track_type == "rotation_3d" else Animation.TYPE_SCALE_3D if track_type == "scale_3d" else Animation.TYPE_METHOD)
 			anim.track_set_path(track_idx, node_path)
 		"bezier":
 			track_idx = anim.add_track(Animation.TYPE_BEZIER)
-			anim.track_set_path(track_idx, node_path + ":" + property)
+			anim.track_set_path(track_idx, node_path + sub)
 		"audio":
 			track_idx = anim.add_track(Animation.TYPE_AUDIO)
 			anim.track_set_path(track_idx, node_path)
@@ -1377,9 +1390,10 @@ func handle_tree_set_param(args: Dictionary) -> Dictionary:
 	var tree := _resolve_tree(root, args)
 	if tree == null:
 		return {"ok": false, "error": "animation_tree_not_found"}
-	var name: String = str(args.get("name", ""))
+	# Acepta 'param_name' (planning) o alias 'name' (compat).
+	var name: String = str(args.get("param_name", args.get("name", "")))
 	if name == "":
-		return {"ok": false, "error": "name required"}
+		return {"ok": false, "error": "param_name required"}
 	var param_name := "parameters/" + name
 	if tree.get(param_name) == null:
 		return {"ok": false, "error": "parameter_not_found: " + param_name}
@@ -1394,7 +1408,7 @@ func handle_tree_get_param(args: Dictionary) -> Dictionary:
 	var tree := _resolve_tree(root, args)
 	if tree == null:
 		return {"ok": false, "error": "animation_tree_not_found"}
-	var name: String = str(args.get("name", ""))
+	var name: String = str(args.get("param_name", args.get("name", "")))
 	if name == "":
 		# Devuelve todos los parámetros.
 		var all := {}
@@ -1405,6 +1419,128 @@ func handle_tree_get_param(args: Dictionary) -> Dictionary:
 	if tree.get(param_name) == null:
 		return {"ok": false, "error": "parameter_not_found: " + param_name}
 	return {"ok": true, "parameter": param_name, "value": HerenCoordsScript.serialize_value(tree.get(param_name), true)}
+
+
+## P-B2 (P-B2): add_blend_node — usa bt.add_node(name, node, position). El tree_root
+## debe ser un AnimationNodeBlendTree. Si no existe todavía, lo crea.
+func handle_tree_add_blend_node(args: Dictionary) -> Dictionary:
+	var root := _scene_root(args)
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var tree := _resolve_tree(root, args)
+	if tree == null:
+		return {"ok": false, "error": "animation_tree_not_found"}
+	var bt: AnimationNodeBlendTree = tree.tree_root as AnimationNodeBlendTree
+	if bt == null:
+		# Auto-crear un BlendTree vacío la primera vez.
+		bt = AnimationNodeBlendTree.new()
+		tree.tree_root = bt
+
+	var node_name: String = str(args.get("node_name", ""))
+	if node_name == "":
+		return {"ok": false, "error": "node_name required"}
+	# Si ya existe, lo reemplazamos.
+	if bt.has_node(node_name):
+		bt.remove_node(node_name)
+
+	var node_type: String = str(args.get("node_type", "AnimationNodeAnimation"))
+	var anim_node: AnimationNode = null
+	match node_type:
+		"AnimationNodeAnimation", "animation":
+			var an := AnimationNodeAnimation.new()
+			an.animation = str(args.get("animation", ""))
+			anim_node = an
+		"AnimationNodeOneShot", "one_shot":
+			anim_node = AnimationNodeOneShot.new()
+		"AnimationNodeBlend2", "blend2":
+			anim_node = AnimationNodeBlend2.new()
+		"AnimationNodeBlend3", "blend3":
+			anim_node = AnimationNodeBlend3.new()
+		"AnimationNodeAdd2", "add2":
+			anim_node = AnimationNodeAdd2.new()
+		"AnimationNodeAdd3", "add3":
+			anim_node = AnimationNodeAdd3.new()
+		"AnimationNodeSub2", "sub2":
+			anim_node = AnimationNodeSub2.new()
+		"AnimationNodeSync", "sync":
+			anim_node = AnimationNodeSync.new()
+		"AnimationNodeTimeScale", "time_scale":
+			anim_node = AnimationNodeTimeScale.new()
+		"AnimationNodeTimeSeek", "time_seek":
+			anim_node = AnimationNodeTimeSeek.new()
+		"AnimationNodeTransition", "transition":
+			anim_node = AnimationNodeTransition.new()
+		"AnimationNodeOutput", "output":
+			anim_node = AnimationNodeOutput.new()
+		_:
+			return {"ok": false, "error": "unknown_node_type: " + node_type}
+
+	var pos_dict: Dictionary = _args_dict(args, "graph_position")
+	var pos := Vector2(float(pos_dict.get("x", 0.0)), float(pos_dict.get("y", 0.0)))
+	bt.add_node(node_name, anim_node, pos)
+
+	return {
+		"ok": true,
+		"tree_path": _node_path_relative(tree, root),
+		"node_name": node_name,
+		"node_type": node_type,
+		"animation": anim_node.animation if anim_node is AnimationNodeAnimation else "",
+	}
+
+
+## P-B3: connect_blend_nodes — usa bt.connect_node(input_node, input_index, output_node).
+## Godot 4 usa 3 args: el port de salida se asigna automáticamente por bt.
+func handle_tree_connect_blend_nodes(args: Dictionary) -> Dictionary:
+	var root := _scene_root(args)
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var tree := _resolve_tree(root, args)
+	if tree == null:
+		return {"ok": false, "error": "animation_tree_not_found"}
+	var bt: AnimationNodeBlendTree = tree.tree_root as AnimationNodeBlendTree
+	if bt == null:
+		return {"ok": false, "error": "tree_root_must_be_blend_tree"}
+
+	var from_node: String = str(args.get("from_node", ""))
+	var to_node: String = str(args.get("to_node", ""))
+	var from_port: int = int(args.get("from_port", 0))
+	if from_node == "" or to_node == "":
+		return {"ok": false, "error": "from_node and to_node required"}
+	if not bt.has_node(from_node):
+		return {"ok": false, "error": "source_node_not_found: " + from_node}
+	if not bt.has_node(to_node):
+		return {"ok": false, "error": "target_node_not_found: " + to_node}
+
+	bt.connect_node(from_node, from_port, to_node)
+	return {
+		"ok": true,
+		"tree_path": _node_path_relative(tree, root),
+		"from": from_node,
+		"from_port": from_port,
+		"to": to_node,
+	}
+
+
+## P-B5: set_anim_player — asigna el NodePath del AnimationPlayer que el tree usa.
+func handle_tree_set_anim_player(args: Dictionary) -> Dictionary:
+	var root := _scene_root(args)
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var tree := _resolve_tree(root, args)
+	if tree == null:
+		return {"ok": false, "error": "animation_tree_not_found"}
+	var player_path: String = str(args.get("player_path", ""))
+	if player_path == "":
+		return {"ok": false, "error": "player_path required"}
+	var player := _resolve_node(root, player_path) as AnimationPlayer
+	if player == null:
+		return {"ok": false, "error": "animation_player_not_found: " + player_path}
+	tree.anim_player = player.get_path()
+	return {
+		"ok": true,
+		"tree_path": _node_path_relative(tree, root),
+		"player_path": player_path,
+	}
 
 
 # ---------------------------------------------------------------- P1: IK a profundidad (procedural)

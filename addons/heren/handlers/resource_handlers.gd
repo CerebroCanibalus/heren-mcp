@@ -19,6 +19,7 @@ extends "res://addons/heren/handlers/heren_handler.gd"
 # la escena viva se edita con node_handlers, sin tocar el archivo a mano).
 
 const HerenCoordsScript := preload("coords.gd")
+const HerenSceneRegistryScript := preload("../scene_registry.gd")
 
 
 
@@ -161,7 +162,23 @@ func handle_read(args: Dictionary) -> Dictionary:
 	if not ResourceLoader.exists(resource_path):
 		return {"ok": false, "error": "not_found: " + resource_path}
 
+	# P0.7 (2026-09-03): forzar re-scan del EFS antes de load(). Si el archivo
+	# es nuevo (recién creado por handle_create) o modificado a mano, el EFS
+	# cache puede no haber reconocido el tipo → load() retorna Resource base
+	# en lugar de PackedScene. update_file() refresca el cache.
+	var ei := _editor_interface()
+	if ei:
+		var efs: EditorFileSystem = ei.get_resource_filesystem()
+		if efs:
+			efs.update_file(resource_path)
+
 	var res: Resource = load(resource_path)
+	# Fallback explícito para PackedScene: si load() devolvió Resource base
+	# (raro pero posible tras crear .tscn sin scan completo), forzar el tipo.
+	if res != null and res.get_class() == "Resource" and resource_path.ends_with(".tscn"):
+		var typed: Resource = ResourceLoader.load(resource_path, "PackedScene", ResourceLoader.CACHE_MODE_REUSE)
+		if typed != null:
+			res = typed
 	return {
 		"ok": true,
 		"resource_path": resource_path,
@@ -308,3 +325,69 @@ func handle_edit_script(args: Dictionary) -> Dictionary:
 		efs.update_file(script_path)
 
 	return {"ok": true, "script_path": script_path, "appended": append}
+
+
+## v4.9: set_script también funciona desde resource (fallback redirect).
+## El agente suele llamar resource/set_script pensando que es operación de
+## recurso. Implementamos directamente — es load() + node.set_script().
+func handle_set_script(args: Dictionary) -> Dictionary:
+	var ei := _editor_interface()
+	if ei == null:
+		return {"ok": false, "error": "no editor interface"}
+
+	var scene_path: String = str(args.get("scene_path", ""))
+	var node_path: Variant = args.get("node_path", "")
+	var script_path: String = str(args.get("script_path", ""))
+	if node_path == "" or script_path == "":
+		return {"ok": false, "error": "node_path and script_path required"}
+	if not ResourceLoader.exists(script_path):
+		return {"ok": false, "error": "script_not_found: " + script_path}
+
+	# Resolver root: registry → pestaña → disco.
+	var root: Node = HerenSceneRegistryScript.resolve_root(ei, scene_path)
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+
+	# Copiar la resolución de node_handlers: normalize + get_node + fallback por nombre.
+	var normalized := HerenCoordsScript.normalize_node_path(node_path, root)
+	var node: Node = null
+	if normalized == ".":
+		node = root
+	elif normalized != "":
+		node = root.get_node_or_null(NodePath(normalized))
+		if node == null and not normalized.contains("/"):
+			# Fallback: búsqueda recursiva por nombre (mismo patrón que node_handlers).
+			node = _find_by_name(root, str(node_path))
+	if node == null:
+		return {"ok": false, "error": "node_not_found: " + str(node_path)}
+
+	var script: Script = load(script_path)
+	if script == null:
+		return {"ok": false, "error": "failed_to_load: " + script_path}
+	node.set_script(script)
+	return {
+		"ok": true,
+		"node_path": _node_path_relative(node, root),
+		"script": script_path,
+	}
+
+
+func _find_by_name(node: Node, target_name: String) -> Node:
+	for child in node.get_children():
+		if child.name == target_name:
+			return child
+		var deep: Node = _find_by_name(child, target_name)
+		if deep != null:
+			return deep
+	return null
+
+
+func _node_path_relative(node: Node, root: Node) -> String:
+	if node == root:
+		return "."
+	var path := node.get_path()
+	var root_path := root.get_path()
+	var path_str := str(path)
+	if path_str.begins_with(str(root_path) + "/"):
+		return path_str.substr(str(root_path).length() + 1)
+	return path_str

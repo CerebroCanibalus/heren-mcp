@@ -746,9 +746,20 @@ func handle_skeleton_ik(args: Dictionary) -> Dictionary:
 	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
-	var skeleton := _resolve_node(root, args.get("skeleton_path", "")) as Skeleton3D
-	if skeleton == null:
-		return {"ok": false, "error": "skeleton3d_not_found"}
+	# P-B6 (2026-09-03): dispatch según dimension o tipo real del nodo.
+	# "2d" → Skeleton2D (FABRIK); "3d" → Skeleton3D (SkeletonIK3D).
+	# Default: detectar por tipo del nodo resuelto.
+	var dimension: String = str(args.get("dimension", ""))
+	var skeleton_path: String = str(args.get("skeleton_path", ""))
+	var node: Node = _resolve_node(root, skeleton_path)
+	if node == null:
+		return {"ok": false, "error": "skeleton_not_found: " + skeleton_path}
+	var is_2d: bool = dimension == "2d" or (dimension == "" and node is Skeleton2D)
+	if is_2d:
+		return _ik_2d(root, node as Skeleton2D, args)
+	if not (node is Skeleton3D):
+		return {"ok": false, "error": "not_skeleton3d: " + skeleton_path}
+	var skeleton := node as Skeleton3D
 
 	var ik_name: String = str(args.get("ik_name", "SkeletonIK3D"))
 	var ik := SkeletonIK3D.new()
@@ -795,6 +806,38 @@ func handle_skeleton_ik(args: Dictionary) -> Dictionary:
 		"tip_bone": ik.tip_bone,
 		"influence": ik.influence,
 		"running": ik.running,
+	}
+
+
+## P-B6: IK 2D vía FABRIK — no hay BoneAttachment2D, se usa la cadena
+## declarada en args (chain: ["Arm", "Forearm", "Hand"]) y un target.
+func _ik_2d(root: Node, skel: Skeleton2D, args: Dictionary) -> Dictionary:
+	if skel == null:
+		return {"ok": false, "error": "skeleton2d_not_found"}
+	var ik_name: String = str(args.get("ik_name", "IK2D"))
+	var chain: Array = args.get("chain", [])
+	if chain.is_empty():
+		return {"ok": false, "error": "chain required (lista de nombres de hueso en orden)"}
+	# El FABRIK real está en skeleton_fabrik — aquí solo creamos el marker
+	# del target (BoneAttachment2D no existe en Godot 4).
+	var target := Node2D.new()
+	target.name = ik_name + "_Target"
+	if args.has("target_position"):
+		var tp: Dictionary = _args_dict(args, "target_position")
+		target.position = Vector2(float(tp.get("x", 0.0)), float(tp.get("y", 0.0)))
+	elif args.has("target_path"):
+		var t := _resolve_node(root, str(args.get("target_path", "")))
+		if t != null:
+			target.position = (t as Node2D).global_position
+	skel.add_child(target)
+	target.owner = root
+	return {
+		"ok": true,
+		"ik_name": ik_name,
+		"dimension": "2d",
+		"chain": chain,
+		"tip_target": target.name,
+		"note": "usar skeleton_fabrik para resolver la cadena hacia el target",
 	}
 
 

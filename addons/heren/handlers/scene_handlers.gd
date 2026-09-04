@@ -232,7 +232,23 @@ func handle_save(args: Dictionary) -> Dictionary:
 					ei.open_scene_from_path(scene_path)
 					root = ei.get_edited_scene_root()
 
-	# 2) Sin scene_path → pestaña activa (usa su propio scene_file_path).
+	# 2) Sin scene_path → COMMIT INTELIGENTE:
+	#    a) Escena dirty más reciente del registry (editada por MCP)
+	#    b) Pestaña activa (fallback)
+	if root == null:
+		# a) Buscar escena dirty en registry (la más reciente).
+		var dirty_path := HerenSceneRegistryScript.most_recent_dirty()
+		if dirty_path != "":
+			var synced := HerenSceneRegistryScript.sync_from_disk(ei, dirty_path)
+			if synced != null:
+				root = synced
+				synced_root_had_sync = true
+				scene_path = dirty_path
+			else:
+				root = HerenSceneRegistryScript.get_root(dirty_path)
+				if root != null:
+					scene_path = dirty_path
+	#    b) Fallback: pestaña activa.
 	if root == null:
 		root = ei.get_edited_scene_root()
 		if root != null:
@@ -285,12 +301,24 @@ func handle_open(args: Dictionary) -> Dictionary:
 	var scene_path: String = str(args.get("scene_path", ""))
 	if scene_path == "":
 		return {"ok": false, "error": "scene_path required"}
+	if not ResourceLoader.exists(scene_path):
+		return {"ok": false, "error": "scene_not_found: " + scene_path}
+	# P0.1 (2026-09-03): open_scene_from_path es DEFERRED en Godot 4
+	# (issue #13816). Si retornamos ok:true en el mismo frame, el agente ve
+	# la pestaña anterior. Esperamos 2 frames para garantizar que la pestaña
+	# activa SÍ es la nueva, y verificamos scene_file_path antes de confirmar.
 	ei.open_scene_from_path(scene_path)
-	# Re-registrar el árbol de la pestaña (puede diferir del guardado en disco).
+	await get_tree().process_frame
+	await get_tree().process_frame
 	var opened := ei.get_edited_scene_root()
-	if opened != null and opened.scene_file_path == scene_path:
-		HerenSceneRegistryScript.register(scene_path, opened)
-	return {"ok": true, "opened": scene_path}
+	if opened == null or opened.scene_file_path != scene_path:
+		return {
+			"ok": false,
+			"error": "open_failed: editor kept previous scene as active (path=" + scene_path + ")",
+			"current_active": (opened.scene_file_path if opened != null else ""),
+		}
+	HerenSceneRegistryScript.register(scene_path, opened)
+	return {"ok": true, "opened": scene_path, "root_name": opened.name}
 
 
 ## BUG 4 fix: unload cierra la escena del registry y del editor.

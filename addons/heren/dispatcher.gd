@@ -20,7 +20,7 @@ func execute(tool_name: String, args: Dictionary) -> Dictionary:
 
 	# Resolver método en orden:
 	#   1. "node/add" → handle_node_add
-	#   2. "node" + args.action="add" (orchestrate normaliza tool/action) → handle_add
+	#   2. "node" + args.action="add" (scene/plan + GenericStep normaliza tool/action) → handle_add
 	#   3. "scene/create" → handle_create (fallback strip prefix)
 	var method_name := "handle_" + tool_name.replace("/", "_")
 	if not handler.has_method(method_name):

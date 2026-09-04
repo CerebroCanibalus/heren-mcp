@@ -100,7 +100,9 @@ func handle_setting(args: Dictionary) -> Dictionary:
 			"value": _serialize_setting(ProjectSettings.get_setting(setting_name)),
 			"op": "get",
 			"type": _variant_type_name(ProjectSettings.get_setting(setting_name)),
-			"restart_required": _setting_requires_restart(setting_name),
+			# P0.6 (2026-09-03): GET NO requiere restart (solo SET).
+			# Antes siempre decía true para application/run/, etc.
+			"restart_required": false,
 		}
 
 	# ---- LIST ---------------------------------------------------------
@@ -288,15 +290,26 @@ func handle_input_map(args: Dictionary) -> Dictionary:
 			return {"ok": true, "action": action_name, "op": "removed"}
 
 		"list":
+			# P0.5 (2026-09-03): antes leía InputMap.get_actions() (runtime del
+			# editor → solo acciones builtin spatial_editor). Ahora leemos
+			# ProjectSettings.get_property_list() filtrado por "input/" → TODAS
+			# las acciones del proyecto desde disco (move_forward, grab_left,
+			# etc.) sin importar si el editor las cargó en InputMap.
 			var include_ui: bool = bool(args.get("include_ui", false))
 			var prefix: String = str(args.get("prefix", ""))
 			var out: Array = []
-			for action in InputMap.get_actions():
-				if not include_ui and action.begins_with("ui_"):
+			for prop in ProjectSettings.get_property_list():
+				var pname: String = str(prop.name)
+				if not pname.begins_with("input/"):
 					continue
-				if prefix != "" and not action.begins_with(prefix):
+				var action_name: String = pname.substr("input/".length())
+				if action_name == "":
 					continue
-				out.append(_describe_input_action(action))
+				if not include_ui and action_name.begins_with("ui_"):
+					continue
+				if prefix != "" and not action_name.begins_with(prefix):
+					continue
+				out.append(_describe_input_action(action_name))
 			return {"ok": true, "actions": out, "count": out.size()}
 
 		"get":

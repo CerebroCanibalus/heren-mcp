@@ -5,6 +5,14 @@ use crate::scene_tool::schemas::{ScenePlan, SceneContext, SceneStep, Vector3};
 use serde_json::Value;
 use std::collections::HashMap;
 
+/// P-M10: pose tracking para consolidar AddNode + SetTransform del mismo nodo.
+#[derive(Debug, Clone, Default)]
+struct Poses {
+    position: Vector3,
+    rotation: Vector3,
+    scale: Vector3,
+}
+
 /// Represents a single MCP tool call to be executed
 #[derive(Debug, Clone)]
 pub struct MCPCall {
@@ -23,7 +31,23 @@ impl SceneCoder {
     pub fn plan_to_mcp_calls(plan: &ScenePlan, context: &SceneContext) -> Vec<MCPCall> {
         let mut calls = Vec::new();
         let mut node_props_batch: HashMap<String, Value> = HashMap::new();
-        
+        // P-M10: trackea el "last position/rotation/scale" por nodo añadido en
+        // este plan. SetTransform posterior con el mismo node_path omite el campo
+        // si ya está en el mapa (evita pisar la pose del AddNode).
+        let mut last_posed: HashMap<String, Poses> = HashMap::new();
+
+        // Primera pasada: AddNode → registra poses.
+        for step in &plan.steps {
+            if let SceneStep::AddNode { name, parent, local_pos, local_rot, local_scale, .. } = step {
+                let path = if parent == "." { name.clone() } else { format!("{parent}/{name}") };
+                last_posed.insert(path, Poses {
+                    position: local_pos.clone(),
+                    rotation: local_rot.clone(),
+                    scale: local_scale.clone(),
+                });
+            }
+        }
+
         for step in &plan.steps {
             match step {
                 SceneStep::AddNode { id, node_type, name, parent, workplane, local_pos, local_rot, local_scale, resource_path, script_path, template, template_params, properties } => {
@@ -43,7 +67,7 @@ impl SceneCoder {
                     if local_rot.x != 0.0 || local_rot.y != 0.0 || local_rot.z != 0.0 {
                         props["rotation_degrees"] = serde_json::to_value(local_rot).unwrap_or(Value::Null);
                     }
-                    if local_scale.x != 0.0 || local_scale.y != 0.0 || local_scale.z != 0.0 {
+                    if local_scale.x != 1.0 || local_scale.y != 1.0 || local_scale.z != 1.0 {
                         props["scale"] = serde_json::to_value(local_scale).unwrap_or(Value::Null);
                     }
                     if let Some(res_path) = resource_path {
@@ -64,6 +88,17 @@ impl SceneCoder {
 
                     // Handle template instantiation
                     if let Some(tmpl) = template {
+                        // P-B13: merge template_params + properties del step.
+                        // Las properties explícitas del agente ganan sobre template_params.
+                        let mut tmpl_props = serde_json::Map::new();
+                        for (k, v) in template_params {
+                            tmpl_props.insert(k.clone(), v.clone());
+                        }
+                        if let Value::Object(map) = &props {
+                            for (k, v) in map {
+                                tmpl_props.insert(k.clone(), v.clone());
+                            }
+                        }
                         calls.push(MCPCall {
                             step_id: id.clone(),
                             tool: "node".to_string(),
@@ -72,7 +107,7 @@ impl SceneCoder {
                                 "template": tmpl,
                                 "parent_path": parent,
                                 "node_name": name,
-                                "properties": template_params,
+                                "properties": Value::Object(tmpl_props),
                                 "scene_path": plan.scene_path,
                             }),
                             description: format!("Instantiate template '{tmpl}' as '{name}' under '{parent}'"),
@@ -104,15 +139,26 @@ impl SceneCoder {
                 
                 SceneStep::SetTransform { id: _, node_path, position, rotation, scale, transform, anchors, offsets, anchors_preset } => {
                     let mut props = serde_json::Map::new();
-                    
+                    // P-M10: si este nodo se acaba de añadir con local_pos y el
+                    // SetTransform NO cambia nada, omitimos position/rotation/scale
+                    // para no emitir una segunda call que pise el AddNode.
+                    let last = last_posed.get(node_path);
+                    let skip_pose = last.is_some();
+
                     if let Some(pos) = position {
-                        props.insert("position".to_string(), serde_json::to_value(pos).unwrap_or(Value::Null));
+                        if !skip_pose || last.is_none_or(|p| p.position != *pos) {
+                            props.insert("position".to_string(), serde_json::to_value(pos).unwrap_or(Value::Null));
+                        }
                     }
                     if let Some(rot) = rotation {
-                        props.insert("rotation".to_string(), serde_json::to_value(rot).unwrap_or(Value::Null));
+                        if !skip_pose || last.is_none_or(|p| p.rotation != *rot) {
+                            props.insert("rotation".to_string(), serde_json::to_value(rot).unwrap_or(Value::Null));
+                        }
                     }
                     if let Some(scl) = scale {
-                        props.insert("scale".to_string(), serde_json::to_value(scl).unwrap_or(Value::Null));
+                        if !skip_pose || last.is_none_or(|p| p.scale != *scl) {
+                            props.insert("scale".to_string(), serde_json::to_value(scl).unwrap_or(Value::Null));
+                        }
                     }
                     if let Some(t) = transform {
                         props.insert("transform".to_string(), serde_json::to_value(t).unwrap_or(Value::Null));
@@ -132,7 +178,7 @@ impl SceneCoder {
                     if let Some(preset) = anchors_preset {
                         props.insert("anchors_preset".to_string(), Value::Number((*preset).into()));
                     }
-                    
+
                     if !props.is_empty() {
                         // Batch set_props by node_path
                         node_props_batch.entry(node_path.clone())
@@ -250,9 +296,13 @@ impl SceneCoder {
                         "anim_name": anim_name,
                         "track_type": track_type,
                         "node_path": node_path,
-                        "property": property,
                         "scene_path": plan.scene_path,
                     });
+                    // P-B4: omitir property si vacío — evita path "Node:" con
+                    // dos puntos colgantes en handlers que concatenan.
+                    if !property.is_empty() {
+                        args["property"] = Value::String(property.clone());
+                    }
                     if let Some(sp) = skeleton_path {
                         args["skeleton_path"] = Value::String(sp.clone());
                     }
@@ -280,6 +330,186 @@ impl SceneCoder {
                         description: format!("animation/add_key '{anim_name}' track={track_idx} t={time}"),
                     });
                 }
+                // === Fase 2 — Animation typed steps (new) ===
+                SceneStep::CreateAnimationPlayer { id, node_path, player_name } => {
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "animation".to_string(),
+                        args: serde_json::json!({
+                            "action": "create_player",
+                            "node_path": node_path,
+                            "player_name": player_name,
+                            "scene_path": plan.scene_path,
+                        }),
+                        description: format!("animation/create_player '{player_name}' under '{node_path}'"),
+                    });
+                }
+                SceneStep::CreateAnimation { id, player_path, anim_name, length, loop_mode } => {
+                    let mut args = serde_json::json!({
+                        "action": "create",
+                        "player_path": player_path,
+                        "anim_name": anim_name,
+                        "length": length,
+                        "scene_path": plan.scene_path,
+                    });
+                    if !loop_mode.is_empty() {
+                        args["loop_mode"] = Value::String(loop_mode.clone());
+                    }
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "animation".to_string(),
+                        args,
+                        description: format!("animation/create '{anim_name}' length={length}s"),
+                    });
+                }
+                SceneStep::SetAnimPlayerProps { id, player_path, properties } => {
+                    let mut args = serde_json::json!({
+                        "action": "update_props",
+                        "player_path": player_path,
+                        "scene_path": plan.scene_path,
+                    });
+                    // Merge properties into top-level args for the handler.
+                    for (k, v) in properties {
+                        args[k] = v.clone();
+                    }
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "animation".to_string(),
+                        args,
+                        description: format!("animation/update_props '{player_path}'"),
+                    });
+                }
+                SceneStep::DuplicateAnimation { id, player_path, source_anim, new_anim } => {
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "animation".to_string(),
+                        args: serde_json::json!({
+                            "action": "duplicate",
+                            "player_path": player_path,
+                            "anim_name": source_anim,
+                            "new_name": new_anim,
+                            "scene_path": plan.scene_path,
+                        }),
+                        description: format!("animation/duplicate '{source_anim}' → '{new_anim}'"),
+                    });
+                }
+                SceneStep::RemoveAnimation { id, player_path, anim_name } => {
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "animation".to_string(),
+                        args: serde_json::json!({
+                            "action": "delete",
+                            "player_path": player_path,
+                            "anim_name": anim_name,
+                            "scene_path": plan.scene_path,
+                        }),
+                        description: format!("animation/delete '{anim_name}'"),
+                    });
+                }
+                // === Fase 2b — AnimationTree typed steps ===
+                SceneStep::CreateAnimationTree { id, node_path, tree_name, root_type, player_path } => {
+                    // AnimationTree is a Node — create it via node/add.
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "node".to_string(),
+                        args: serde_json::json!({
+                            "action": "add",
+                            "node_type": "AnimationTree",
+                            "node_name": tree_name,
+                            "parent_path": node_path,
+                            "scene_path": plan.scene_path,
+                        }),
+                        description: format!("node/add AnimationTree '{tree_name}' ({root_type}) under '{node_path}'"),
+                    });
+                    // P-B5: si hay player_path, asigna tree.anim_player inmediatamente
+                    // (evita que el tree quede huérfano).
+                    if let Some(pp) = player_path {
+                        calls.push(MCPCall {
+                            step_id: format!("{id}_player"),
+                            tool: "animation".to_string(),
+                            args: serde_json::json!({
+                                "action": "tree_set_anim_player",
+                                "tree_path": tree_name,
+                                "player_path": pp,
+                                "scene_path": plan.scene_path,
+                            }),
+                            description: format!("animation/tree_set_anim_player '{tree_name}' <- '{pp}'"),
+                        });
+                    }
+                }
+                SceneStep::AddBlendNode { id, tree_path, node_name, node_type, animation, graph_position } => {
+                    // P-B2: usa el handler real tree_add_blend_node (bt.add_node).
+                    // Antes esto emitía tree_set_param con un dict falso → falla.
+                    let mut args = serde_json::json!({
+                        "action": "tree_add_blend_node",
+                        "tree_path": tree_path,
+                        "node_name": node_name,
+                        "node_type": node_type,
+                        "scene_path": plan.scene_path,
+                    });
+                    if !animation.is_empty() {
+                        args["animation"] = Value::String(animation.clone());
+                    }
+                    if let Some(pos) = graph_position {
+                        args["graph_position"] = pos.clone();
+                    }
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "animation".to_string(),
+                        args,
+                        description: format!("animation/tree_add_blend_node '{node_name}' ({node_type})"),
+                    });
+                }
+                SceneStep::ConnectBlendNodes { id, tree_path, from_node, from_port, to_node, to_port: _ } => {
+                    // P-B3: usa el handler real tree_connect_blend_nodes (bt.connect_node).
+                    // Godot 4 acepta 3 args (to_port lo asigna el tree); el
+                    // cuarto argumento se ignora silenciosamente.
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "animation".to_string(),
+                        args: serde_json::json!({
+                            "action": "tree_connect_blend_nodes",
+                            "tree_path": tree_path,
+                            "from_node": from_node,
+                            "from_port": from_port,
+                            "to_node": to_node,
+                            "scene_path": plan.scene_path,
+                        }),
+                        description: format!("connect '{from_node}':{from_port} → '{to_node}'"),
+                    });
+                }
+                SceneStep::SetTreeRoot { id, tree_path, root_node } => {
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "node_props".to_string(),
+                        args: serde_json::json!({
+                            "action": "set_prop",
+                            "node_path": tree_path,
+                            "property_name": "tree_root",
+                            "value": root_node,
+                            "scene_path": plan.scene_path,
+                        }),
+                        description: format!("set tree_root = '{root_node}'"),
+                    });
+                }
+                SceneStep::SetTreeParam { id, tree_path, param_name, value } => {
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "animation".to_string(),
+                        args: serde_json::json!({
+                            "action": "tree_set_param",
+                            "tree_path": tree_path,
+                            "param_name": param_name,
+                            "value": value,
+                            "scene_path": plan.scene_path,
+                        }),
+                        description: format!("animation/tree_set_param '{param_name}'"),
+                    });
+                }
+                // Step dedicado para asignar el AnimationPlayer del tree
+                // (alternativa a CreateAnimationTree.player_path).
+                // Si llega como GenericStep, el coder lo trata igual — este
+                // step tipado evita ambigüedad.
                 // === Fase 3 — Skeleton typed steps ===
                 SceneStep::AddBone { id, skeleton_path, bone_name, parent_bone, rest_transform } => {
                     let mut args = serde_json::json!({
@@ -313,6 +543,109 @@ impl SceneCoder {
                             "scene_path": plan.scene_path,
                         }),
                         description: format!("skeleton/set_rest '{bone_name}'"),
+                    });
+                }
+                // === Fase C — Skeleton typed steps (new) ===
+                SceneStep::CreateSkeleton { id, node_path, dimension, skeleton_name, bones } => {
+                    // Skeleton is a Node — create it via node/add.
+                    let node_type = if dimension == "2d" { "Skeleton2D" } else { "Skeleton3D" };
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "node".to_string(),
+                        args: serde_json::json!({
+                            "action": "add",
+                            "node_type": node_type,
+                            "node_name": skeleton_name,
+                            "parent_path": node_path,
+                            "scene_path": plan.scene_path,
+                        }),
+                        description: format!("node/add {node_type} '{skeleton_name}' under '{node_path}'"),
+                    });
+                    // If bones are provided, create them sequentially.
+                    for bone in bones {
+                        let bone_obj = bone.as_object();
+                        let bone_name = bone_obj
+                            .and_then(|o| o.get("name"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        if bone_name.is_empty() {
+                            continue;
+                        }
+                        let parent_bone = bone_obj
+                            .and_then(|o| o.get("parent"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let rest_transform = bone_obj
+                            .and_then(|o| o.get("rest_transform"))
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null);
+                        let mut bone_args = serde_json::json!({
+                            "action": "skeleton_add_bone",
+                            "skeleton_path": skeleton_name,
+                            "bone_name": bone_name,
+                            "scene_path": plan.scene_path,
+                        });
+                        if !parent_bone.is_empty() {
+                            bone_args["parent_bone"] = Value::String(parent_bone.to_string());
+                        }
+                        if !rest_transform.is_null() {
+                            bone_args["rest_transform"] = rest_transform;
+                        }
+                        calls.push(MCPCall {
+                            step_id: id.clone(),
+                            tool: "skeleton".to_string(),
+                            args: bone_args,
+                            description: format!("skeleton/add_bone '{bone_name}' → '{skeleton_name}'"),
+                        });
+                    }
+                }
+                SceneStep::SetBonePose { id, skeleton_path, bone_name, pose } => {
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "skeleton".to_string(),
+                        args: serde_json::json!({
+                            "action": "skeleton_set_pose",
+                            "skeleton_path": skeleton_path,
+                            "bone_name": bone_name,
+                            "pose": pose,
+                            "scene_path": plan.scene_path,
+                        }),
+                        description: format!("skeleton/set_pose '{bone_name}'"),
+                    });
+                }
+                SceneStep::CreateIK { id, skeleton_path, ik_name, dimension, properties } => {
+                    let mut args = serde_json::json!({
+                        "action": "skeleton_ik",
+                        "skeleton_path": skeleton_path,
+                        "ik_name": ik_name,
+                        "scene_path": plan.scene_path,
+                    });
+                    // P-B6: dimension vacío → el handler auto-detecta.
+                    if !dimension.is_empty() {
+                        args["dimension"] = Value::String(dimension.clone());
+                    }
+                    for (k, v) in properties {
+                        args[k] = v.clone();
+                    }
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "skeleton".to_string(),
+                        args,
+                        description: format!("skeleton/ik '{ik_name}' ({dimension})"),
+                    });
+                }
+                SceneStep::SetSkin { id, mesh_path, skeleton_path } => {
+                    // SetSkin via skeleton/skin action.
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "skeleton".to_string(),
+                        args: serde_json::json!({
+                            "action": "skeleton_skin",
+                            "skeleton_path": skeleton_path,
+                            "mesh_path": mesh_path,
+                            "scene_path": plan.scene_path,
+                        }),
+                        description: format!("skeleton/skin mesh='{mesh_path}' → skeleton='{skeleton_path}'"),
                     });
                 }
                 // === Fase 4 — Script/Shader typed steps ===
@@ -548,5 +881,292 @@ mod tests {
         assert!(props["position"].is_object());
         assert!(props["scale"].is_object());
         assert!(props["rotation"].is_object());
+    }
+
+    // ========== Tests de fixes del General (2026-09-03) ==========
+
+    /// P-B4: AddTrack SIN property (vacío) no debe emitir `"property": ""` en el JSON.
+    #[test]
+    fn test_add_track_omits_empty_property() {
+        let plan = ScenePlan {
+            plan_id: "p1".into(),
+            scene_path: "res://test.tscn".into(),
+            workplane: Workplane::XZ,
+            workplane_offset: Vector3::default(),
+            steps: vec![SceneStep::AddTrack {
+                id: "s1".into(),
+                player_path: "AnimationPlayer".into(),
+                anim_name: "idle".into(),
+                track_type: "value".into(),
+                node_path: "Caja".into(),
+                property: String::new(),
+                skeleton_path: None,
+            }],
+            verification: vec![],
+            key_dimensions: HashMap::new(),
+        };
+        let calls = SceneCoder::plan_to_mcp_calls(&plan, &SceneContext::default());
+        assert_eq!(calls.len(), 1);
+        let args = &calls[0].args;
+        assert!(args.get("property").is_none(), "property vacío NO debe aparecer en JSON");
+    }
+
+    /// P-B13: AddNode con template mergea properties + template_params.
+    #[test]
+    fn test_add_node_template_merges_properties() {
+        let mut template_params = HashMap::new();
+        template_params.insert("Fill.color".into(), serde_json::json!({"r":1.0,"g":0.0,"b":0.0,"a":1.0}));
+        let mut properties = HashMap::new();
+        properties.insert("modulate".into(), serde_json::json!({"r":1.0,"g":1.0,"b":1.0,"a":0.5}));
+
+        let plan = ScenePlan {
+            plan_id: "p2".into(),
+            scene_path: "res://test.tscn".into(),
+            workplane: Workplane::XY,
+            workplane_offset: Vector3::default(),
+            steps: vec![SceneStep::AddNode {
+                id: "s1".into(),
+                node_type: "Control".into(),
+                name: "HealthBar".into(),
+                parent: "UI/HUD".into(),
+                workplane: Workplane::XY,
+                local_pos: Vector3::default(),
+                local_rot: Vector3::default(),
+                local_scale: Vector3::default(),
+                resource_path: None,
+                script_path: None,
+                template: Some("health_bar".into()),
+                template_params,
+                properties,
+            }],
+            verification: vec![],
+            key_dimensions: HashMap::new(),
+        };
+        let calls = SceneCoder::plan_to_mcp_calls(&plan, &SceneContext::default());
+        assert_eq!(calls.len(), 1);
+        let props = &calls[0].args["properties"];
+        // Ambos campos deben estar presentes.
+        assert!(props.get("Fill.color").is_some(), "template_params pasaron");
+        assert!(props.get("modulate").is_some(), "properties del step pasaron");
+    }
+
+    /// P-B5: CreateAnimationTree con player_path emite 2 calls:
+    /// una para añadir el nodo y otra para asignar anim_player.
+    #[test]
+    fn test_create_animation_tree_with_player() {
+        let plan = ScenePlan {
+            plan_id: "p3".into(),
+            scene_path: "res://test.tscn".into(),
+            workplane: Workplane::XZ,
+            workplane_offset: Vector3::default(),
+            steps: vec![SceneStep::CreateAnimationTree {
+                id: "s1".into(),
+                node_path: "Robot".into(),
+                tree_name: "AnimationTree".into(),
+                root_type: "AnimationNodeBlendTree".into(),
+                player_path: Some("AnimationPlayer".into()),
+            }],
+            verification: vec![],
+            key_dimensions: HashMap::new(),
+        };
+        let calls = SceneCoder::plan_to_mcp_calls(&plan, &SceneContext::default());
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].args["action"], "add");
+        assert_eq!(calls[0].args["node_type"], "AnimationTree");
+        assert_eq!(calls[1].args["action"], "tree_set_anim_player");
+        assert_eq!(calls[1].args["player_path"], "AnimationPlayer");
+    }
+
+    /// P-B2: AddBlendNode emite `tree_add_blend_node`, NO `tree_set_param`.
+    #[test]
+    fn test_add_blend_node_uses_real_handler() {
+        let plan = ScenePlan {
+            plan_id: "p4".into(),
+            scene_path: "res://test.tscn".into(),
+            workplane: Workplane::XZ,
+            workplane_offset: Vector3::default(),
+            steps: vec![SceneStep::AddBlendNode {
+                id: "s1".into(),
+                tree_path: "AnimationTree".into(),
+                node_name: "Idle".into(),
+                node_type: "AnimationNodeAnimation".into(),
+                animation: "idle".into(),
+                graph_position: Some(serde_json::json!({"x": 100.0, "y": 50.0})),
+            }],
+            verification: vec![],
+            key_dimensions: HashMap::new(),
+        };
+        let calls = SceneCoder::plan_to_mcp_calls(&plan, &SceneContext::default());
+        assert_eq!(calls[0].args["action"], "tree_add_blend_node");
+        assert_eq!(calls[0].args["animation"], "idle");
+        assert_eq!(calls[0].args["graph_position"]["x"], 100.0);
+    }
+
+    /// P-B3: ConnectBlendNodes emite `tree_connect_blend_nodes` con 3 campos clave.
+    #[test]
+    fn test_connect_blend_nodes_uses_real_handler() {
+        let plan = ScenePlan {
+            plan_id: "p5".into(),
+            scene_path: "res://test.tscn".into(),
+            workplane: Workplane::XZ,
+            workplane_offset: Vector3::default(),
+            steps: vec![SceneStep::ConnectBlendNodes {
+                id: "s1".into(),
+                tree_path: "AnimationTree".into(),
+                from_node: "Idle".into(),
+                from_port: 0,
+                to_node: "output".into(),
+                to_port: 0,
+            }],
+            verification: vec![],
+            key_dimensions: HashMap::new(),
+        };
+        let calls = SceneCoder::plan_to_mcp_calls(&plan, &SceneContext::default());
+        assert_eq!(calls[0].args["action"], "tree_connect_blend_nodes");
+        assert_eq!(calls[0].args["from_node"], "Idle");
+        assert_eq!(calls[0].args["to_node"], "output");
+        // NO debe existir una propiedad "connections"
+        assert!(calls[0].args.get("property_name").is_none());
+    }
+
+    /// P-B6: CreateIK emite `dimension` cuando se pasa.
+    #[test]
+    fn test_create_ik_dimension_passed_through() {
+        let plan = ScenePlan {
+            plan_id: "p6".into(),
+            scene_path: "res://test.tscn".into(),
+            workplane: Workplane::XZ,
+            workplane_offset: Vector3::default(),
+            steps: vec![SceneStep::CreateIK {
+                id: "s1".into(),
+                skeleton_path: "Skeleton2D".into(),
+                ik_name: "ArmIK".into(),
+                dimension: "2d".into(),
+                properties: HashMap::new(),
+            }],
+            verification: vec![],
+            key_dimensions: HashMap::new(),
+        };
+        let calls = SceneCoder::plan_to_mcp_calls(&plan, &SceneContext::default());
+        assert_eq!(calls[0].args["dimension"], "2d");
+    }
+
+    /// P-M10: AddNode con local_pos + SetTransform sobre el mismo nodo → 1 call,
+    /// no se duplica el position en set_props posterior.
+    #[test]
+    fn test_add_node_then_set_transform_consolidated() {
+        let plan = ScenePlan {
+            plan_id: "p7".into(),
+            scene_path: "res://test.tscn".into(),
+            workplane: Workplane::XZ,
+            workplane_offset: Vector3::default(),
+            steps: vec![
+                SceneStep::AddNode {
+                    id: "s1".into(),
+                    node_type: "Node3D".into(),
+                    name: "Body".into(),
+                    parent: "Robot".into(),
+                    workplane: Workplane::XZ,
+                    local_pos: Vector3 { x: 1.0, y: 2.0, z: 3.0 },
+                    local_rot: Vector3::default(),
+                    local_scale: Vector3::default(),
+                    resource_path: None,
+                    script_path: None,
+                    template: None,
+                    template_params: HashMap::new(),
+                    properties: HashMap::new(),
+                },
+                SceneStep::SetTransform {
+                    id: "s2".into(),
+                    node_path: "Robot/Body".into(),
+                    position: Some(Vector3 { x: 1.0, y: 2.0, z: 3.0 }),
+                    rotation: None,
+                    scale: None,
+                    transform: None,
+                    anchors: None,
+                    offsets: None,
+                    anchors_preset: None,
+                },
+            ],
+            verification: vec![],
+            key_dimensions: HashMap::new(),
+        };
+        let calls = SceneCoder::plan_to_mcp_calls(&plan, &SceneContext::default());
+        // Debe haber 1 call de add, y 0 calls adicionales (SetTransform se consolidó).
+        let total: usize = calls.len();
+        assert_eq!(total, 1, "SetTransform debe consolidarse con AddNode");
+        assert_eq!(calls[0].args["action"], "add");
+        assert_eq!(calls[0].args["properties"]["position"]["x"], 1.0);
+    }
+
+    /// P-M10 negativo: SetTransform con position DIFERENTE sí se emite.
+    #[test]
+    fn test_set_transform_different_position_emitted() {
+        let plan = ScenePlan {
+            plan_id: "p8".into(),
+            scene_path: "res://test.tscn".into(),
+            workplane: Workplane::XZ,
+            workplane_offset: Vector3::default(),
+            steps: vec![
+                SceneStep::AddNode {
+                    id: "s1".into(),
+                    node_type: "Node3D".into(),
+                    name: "Body".into(),
+                    parent: "Robot".into(),
+                    workplane: Workplane::XZ,
+                    local_pos: Vector3 { x: 0.0, y: 0.0, z: 0.0 },
+                    local_rot: Vector3::default(),
+                    local_scale: Vector3::default(),
+                    resource_path: None,
+                    script_path: None,
+                    template: None,
+                    template_params: HashMap::new(),
+                    properties: HashMap::new(),
+                },
+                SceneStep::SetTransform {
+                    id: "s2".into(),
+                    node_path: "Robot/Body".into(),
+                    position: Some(Vector3 { x: 5.0, y: 0.0, z: 0.0 }),
+                    rotation: None,
+                    scale: None,
+                    transform: None,
+                    anchors: None,
+                    offsets: None,
+                    anchors_preset: None,
+                },
+            ],
+            verification: vec![],
+            key_dimensions: HashMap::new(),
+        };
+        let calls = SceneCoder::plan_to_mcp_calls(&plan, &SceneContext::default());
+        assert_eq!(calls.len(), 2, "SetTransform con position distinta debe emitirse");
+        assert_eq!(calls[1].args["properties"]["position"]["x"], 5.0);
+    }
+
+    /// P-M10: SetTransform sobre un nodo NO presente en AddNode → emite set_props.
+    #[test]
+    fn test_set_transform_no_prior_add() {
+        let plan = ScenePlan {
+            plan_id: "p9".into(),
+            scene_path: "res://test.tscn".into(),
+            workplane: Workplane::XZ,
+            workplane_offset: Vector3::default(),
+            steps: vec![SceneStep::SetTransform {
+                id: "s1".into(),
+                node_path: "ExistingBody".into(),
+                position: Some(Vector3 { x: 1.0, y: 2.0, z: 3.0 }),
+                rotation: None,
+                scale: None,
+                transform: None,
+                anchors: None,
+                offsets: None,
+                anchors_preset: None,
+            }],
+            verification: vec![],
+            key_dimensions: HashMap::new(),
+        };
+        let calls = SceneCoder::plan_to_mcp_calls(&plan, &SceneContext::default());
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].args["action"], "set_props");
     }
 }

@@ -278,6 +278,13 @@ func handle_run_scene(args: Dictionary) -> Dictionary:
 	if ei == null:
 		return {"ok": false, "error": "no editor interface"}
 
+	# P0.4 (2026-09-03): limpiar buffer debug ANTES de play — `last_output` y
+	# `last_output_errors` son append-only globales; sin clear, el output de
+	# la corrida anterior se mezcla con el de la nueva (BUG #9).
+	if _dbg_plugin:
+		_dbg_plugin.last_output.clear()
+		_dbg_plugin.last_output_errors.clear()
+
 	var scene_path: String = str(args.get("scene_path", ""))
 	if scene_path != "":
 		if not ResourceLoader.exists(scene_path):

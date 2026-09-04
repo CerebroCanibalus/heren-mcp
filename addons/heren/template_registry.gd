@@ -30,6 +30,7 @@ const CoordsScript := preload("handlers/coords.gd")
 
 static var _metadata: Array = []          # cache RAM (primera lectura disco)
 static var _metadata_loaded := false
+static var _metadata_mtime: int = 0       # mtime de metadata.json al cargar
 
 
 ## Lista todos los templates: Array[Dictionary] con name/category/description/params.
@@ -69,11 +70,23 @@ static func instantiate(template_name: String, params: Dictionary = {}) -> Node:
 # ---------------------------------------------------------------- internals
 
 static func _load_metadata() -> void:
-	if _metadata_loaded:
-		return
+	# Si ya cargamos, verificar si el archivo cambió (mtime check).
+	var abs_path := ProjectSettings.globalize_path(METADATA_PATH) if ResourceLoader.exists(METADATA_PATH) else ""
+	if _metadata_loaded and abs_path != "":
+		var file := FileAccess.open(abs_path, FileAccess.READ)
+		if file != null:
+			var current_mtime := file.get_modified_time(abs_path)
+			file.close()
+			if current_mtime == _metadata_mtime:
+				return  # Cache fresco, no re-leer
+	# Primera carga o archivo cambió
 	_metadata_loaded = true
 	if not ResourceLoader.exists(METADATA_PATH):
 		return
+	var file := FileAccess.open(abs_path, FileAccess.READ)
+	if file != null:
+		_metadata_mtime = file.get_modified_time(abs_path)
+		file.close()
 	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(METADATA_PATH))
 	if data is Dictionary:
 		var templates: Variant = data.get("templates", [])

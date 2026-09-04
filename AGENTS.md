@@ -3,13 +3,14 @@
 > Biblia del agente. Léelo antes de tocar código.
 >
 > **ESTADO: v4.9** — EditorPlugin (GDScript→EditorInterface) + heren-server.exe Rust/FlojoMCP.
-> 17 tools centralizadas (19 con split), WS plugin server (patrón gopeak), auto-launch, NDJSON por stdio.
+> 18 tools centralizadas, WS plugin server (patrón gopeak), auto-launch, NDJSON por stdio.
 > Workspace Rust local (`crates/heren-server`); FlojoMCP = framework SOLO (flojo-mcp/macros/session @ crates.io, consumido por version, no path).
 > Bridge Python y daemon v3 **archivados en rama `archive/v3`**. **Cambios nuevos → v4/Rust.**
 > Plugin SIEMPRE ENCENDIDO + sync incremental por contenido + `session/diagnose` (debugger unificado).
 > **Limpieza 2026-08-10→14**: Fases A-F + UI-1/2/3 COMPLETADAS (historial en CHANGELOG.md). Plan de limpieza por fases eliminado (todo [x]).
 > **E2E 2026-08-15**: escena compleja real → 11 problemas encontrados → **§0.1 Plan de Mejoría E2E** (P1-P11).
 > **Detección/Apertura/Debug 2026-08-15**: feedback General → **§0.3 Plan D1-D4** (wmic eliminado en Win11 24H2+, open fire-and-forget, debug con sleep fijo).
+> **Performance 2026-09-03**: auditoría completa → 5 fixes (ws_client Timer, scene_registry mtime cache, template_registry mtime check, visual_handlers SubViewport pool, server discovery `.heren/server_port.json`). Fix raíz: editor reconecta automáticamente al server correcto cuando OpenCode reinicia.
 
 ---
 
@@ -20,7 +21,7 @@
 - **M2** `visual/summary`: `node_count:0` inconsistente (by_type OK). Handler cuenta mal.
 - **M3** `validate/node`: `script_cannot_instantiate` — scripts MCP no se compilan. Falta re-import/scan.
 - **Visual**: `coords` incompleto (3 nodos, paths ".."). `budget`/`cache` ELIMINADOS del toolset (v4.6) — handlers inexistentes; re-implementar si se necesita presupuesto.
-- **Gaps tool**: `node_query` no expone `by` (find por tipo) ni `owner_path`/`script` en get_info (usar `orchestrate`); `resource` exige requireds irrelevantes en create_script/edit_script (hacerlos opcionales).
+- **Gaps tool**: `node_query` no expone `by` (find por tipo) ni `owner_path`/`script` en get_info; `resource` exige requireds irrelevantes en create_script/edit_script (hacerlos opcionales).
 
 ### 🔴 Críticos del E2E (2026-08-15) — ver §0.1
 - **P1** `orchestrate` roto (Unknown error en TODAS las ops) — el batch es inútil. **[FIXED: método resolución ordenado en dispatcher.gd; verificado con sesión nueva]**
@@ -391,7 +392,7 @@ Mismo patrón para `animation` y `skeleton`:
 - `animation/validate` → QA: track types, key normalization, blend tree connectivity
 - `skeleton/open`, `skeleton/plan`, `skeleton/orchestrate`, `skeleton/validate` — análogo
 
-## 0.7 Plan de extensión del Planning a todo el motor (2026-08-24) — FASE 1 COMPLETADA
+## 0.7 Plan de extensión del Planning a todo el motor (2026-08-24) — FASES 1-2b COMPLETADAS
 
 > El planning E2E demostró éxito con escenas. Ahora se extiende a animaciones,
 > esqueletos, scripts, shaders y tilemaps. Estrategia: **híbrido** — steps
@@ -409,9 +410,10 @@ Mismo patrón para `animation` y `skeleton`:
 | Fase | Estado | Descripción |
 |------|--------|-------------|
 | **Fase 1** — GenericStep | ✅ DONE | `SceneStep::Generic` + coder → MCPCall directo. Validator salta. Schema + ejemplo actualizados. |
-| **Fase 2** — Steps animación tipados | Pendiente | `CreateTrack`, `AddKey`, `SetAnimationProperty` → más expresivos que Generic. |
-| **Fase 3** — Steps esqueleto tipados | Pendiente | `AddBone`, `SetBoneRest`, `SetBonePose`, `CreateIK` → mapeo a `skeleton/*`. |
-| **Fase 4** — Steps script/shader tipados | Pendiente | `AttachScript`, `CreateShader`, `SetShaderUniform` → mapeo a `resource`/`shader`. |
+| **Fase 2** — Steps animación tipados | ✅ DONE | `CreateAnimationPlayer`, `CreateAnimation`, `SetAnimPlayerProps`, `DuplicateAnimation`, `RemoveAnimation` + existentes `AddTrack`, `AddKey`. Coder + validator actualizados. |
+| **Fase 2b** — Steps AnimationTree tipados | ✅ DONE | `CreateAnimationTree`, `AddBlendNode`, `ConnectBlendNodes`, `SetTreeRoot`, `SetTreeParam`. Coder + validator actualizados. |
+| **Fase 3** — Steps esqueleto tipados | ✅ DONE | `CreateSkeleton`, `SetBonePose`, `CreateIK`, `SetSkin` + existentes `AddBone`, `SetBoneRest`. Coder + validator actualizados. |
+| **Fase 4** — Steps script/shader tipados | ✅ DONE (parcial) | `AttachScript`, `CreateShader`, `SetShaderUniform` → mapeo a `resource`/`shader`. |
 | **Fase 5** — Validator introspección | Pendiente | Valida GenericStep args contra schema del plugin (FlojoTester). Catch errores antes de ejecutar. |
 
 ### Notas de diseño
@@ -420,6 +422,170 @@ Mismo patrón para `animation` y `skeleton`:
 - **Validator** hoy salta Generic (Fase 5 añadirá introspección).
 - **Passthrough verbatim**: args del Generic viajan sin transformación al plugin.
 - **Ejemplo en `scene(action="plan")`**: incluye paso genérico de animación como referencia.
+
+---
+
+## 0.8 Plan Radiográfico — 10 bugs sesión 2026-09-03 — EN CURSO (Fase 0)
+
+> **Origen**: reporte de desarrollador tras sesión real — el agente recibía mentiras sistemáticas (`ok:true` sin verificación), no podía abrir escenas, no veía input_map del proyecto, capture off-screen colgaba 30s en play. Sospecha: bugs arquitectónicos, no puntuales. **Confirmado**: hay 4 problemas de diseño que encubran 10 bugs.
+
+### Diagnóstico por bug (causa raíz + severidad real)
+
+| # | Bug | Causa raíz | Severidad | Fix |
+|---|-----|-----------|-----------|-----|
+| **#1** | `scene/open` miente (retorna `ok:true` sin verificar pestaña activa) | `handle_open` (scene_handlers.gd L4-16) llama `ei.open_scene_from_path()` que es **deferred en Godot 4** (issue #13816 ya documentado) — `get_edited_scene_root()` corre en el mismo frame, retorna pestaña anterior. **NO valida `scene_file_path` antes de retornar `ok:true`**. | 🔴 Crítico | `await process_frame × 2` + verificar `opened.scene_file_path == scene_path` antes de `ok:true` |
+| **#2** | `visual_text coords/ascii` ignora `scene_path` | `handle_scene_coords/summary/ascii` usan `_root_node()` (L61-65) que NO acepta args; `handle_capture` usa `_scene_root(args)` (L4-9) que SÍ acepta. **Inconsistencia copy-paste**. | 🟠 Alto | Sustituir 3 llamadas `_root_node()` por `_scene_root(args)` |
+| **#3** | `scene open` con `mode=plan` falla con `-32603 no scene open` | `scene_planning` (server.rs L757-764) acepta `"isolated"/"attached"/"modify"` — `"plan"` cae en `_ => None` y silenciosamente `unwrap_or(Isolated)`. Pero el planning path dispara `load_scene_context` que llama al plugin que lee la pestaña REAL del editor (main_menu), no la escena del plan. **Validación faltante** + bug arquitectónico A2. | 🔴 Crítico | Validar `mode ∈ {isolated, attached, modify, plan}`, devolver error claro si no |
+| **#4** | `scene/status` vacío tras open legacy | **Bug arquitectónico A1**: server tiene `SceneRegistry` propio en RAM (`crates/heren-server/src/scene_tool/registry.rs`), plugin tiene `HerenSceneRegistry` propio (`addons/heren/scene_registry.gd`). **NO se sincronizan**. El plugin registra al abrir; el server solo se entera si pasas por el planning path con `mode`/`agent_id`. | 🔴 Crítico | Fase 1: eliminar server-registry, plugin-registry es source-of-truth único |
+| **#5** | Editor siempre arranca con main_menu | `application/run/main_scene` apunta a `src/ui/main_menu.tscn`. `open_scene_from_path` deferred — bug #1 raíz. **Doble main_menu.tscn** (raíz y `/src/ui/`) confunde al plugin sobre cuál cargar. | 🟡 Medio | Fix #1 + limpieza manual: borrar `main_menu.tscn` raíz |
+| **#6** | `input_map/list` solo retorna 16 builtin spatial_editor | `project_handlers.gd::handle_input_map type="list"` (L168-178) itera `InputMap.get_actions()` — runtime del EDITOR (no del proyecto). Las acciones del proyecto (move_forward, grab_left, etc.) NO aparecen. **El plugin lee del sitio equivocado**. | 🟠 Alto | Iterar `ProjectSettings.get_property_list()` filtrado `name.begins_with("input/")` |
+| **#7** | `setting get` reporta `restart_required: true` siempre | `handle_setting` (L40-50) llama `_setting_requires_restart(setting_name)` también en GET. Es cosmético pero miente. | 🟡 Bajo (cosmético) | En GET: `restart_required: false` siempre |
+| **#8** | `visual_image capture` timeout >30s durante play | `_render_scene_offscreen` clona root en SubViewport; durante `is_playing_scene()` el renderer compite por GPU → `frame_post_draw` no resuelve. **Comentario en server.rs L869 ya lo sabe**: "capture offscreen → timeout en 3D". | 🟠 Alto | `handle_capture`: si `ei.is_playing_scene()` → rechazar con error claro (`capture_blocked_during_play`) |
+| **#9** | `debug/output` retorna log viejo entre runs | `handle_output` (L4-26) lee `_dbg_plugin.last_output` que es buffer global append-only. `handle_run_scene` NO lo limpia antes de play. | 🟡 Medio | En `handle_run_scene`: `_dbg_plugin.last_output.clear()` antes de `play_*` |
+| **#10** | `resource/read` para PackedScene retorna `{__type:Resource, resource_class:"Resource"}` sin props | `handle_read` (L4-19) llama `load()` directo sin forzar `efs.update_file()` antes. Si EFS no escaneó el archivo todavía, `load()` retorna `Resource` base en vez de `PackedScene`. | 🟡 Medio | `efs.update_file()` antes de `load()`; fallback explícito `ResourceLoader.load(path, "PackedScene", CACHE_MODE_REUSE)` |
+
+### 🔴 Causas arquitectónicas (raíz del mal)
+
+| # | Problema | Patrón violado |
+|---|----------|----------------|
+| **A1** | **Dos SceneRegistry sin sincronizar**: server (`crates/heren-server/src/scene_tool/registry.rs`) y plugin (`addons/heren/scene_registry.gd`) mantienen el mismo estado en RAM. El plugin NO reporta hacia arriba; el server solo reconstruye vía `load_scene_context` que hace 3 `forward()` encadenados. | "Single source of truth" — cualquier sistema con ≥2 caches del mismo dato necesita invalidación explícita. Aquí NO la hay. |
+| **A2** | **Flujo `open` dual bifurca silenciosamente**: server.rs L628 — `planning_open = action=="open" && (mode.is_some() || agent_id.is_some())`. Si pasan, va a `scene_planning` (server-registry); si no, va a `handle_open` (plugin-registry). El agente no tiene manera de saber cuál path se eligió. | "Explicit routing" — el routing debe ser declarativo, no implícito |
+| **A3** | **`ok:true` sin verificación**: `handle_open`, `handle_run_scene`, varios otros retornan éxito sin chequear que la operación realmente ocurrió. Filosofía "fail-fast" violada sistemáticamente. | "Fail-fast" (§10 decisiones, ya documentado) |
+| **A4** | **Dispatcher routing frágil**: `dispatcher.gd` L25-35 tiene 3 fallbacks mágicos para resolver método (`handle_<tool_with_slash>` → action del args → strip prefix). Cualquier renombre silencioso rompe el routing. | "Explicit > implicit" |
+
+### 🧹 Auditoría de parámetros zombies (limpieza Fase 0)
+
+**Confirmados como muertos**:
+
+| Tool | Parámetro | Archivo:línea | Razón |
+|------|-----------|---------------|-------|
+| `session` | `visibility` | server.rs L189, L324 | Solo se reporta en JSON, nunca afecta comportamiento. Nunca implementado `--headless` para agent editor |
+| `session` | `agent_id` | server.rs L188, L299 | Solo se usa cuando `mode=isolated` — flujo que el agente típico NO usa. Default = "default" |
+| `scene` | `agent_id` | server.rs L601, L639 | Solo se pasa a `scene_planning` → `open_scene` → `LockInfo`. El flujo planning es opcional y agent_id puede ser interno |
+| `orchestrate` | `_auto_save` | server.rs L2127 | **Prefijo `_` = marcado como muerto por el autor original**. Nunca usado en el cuerpo |
+
+**Decisión**: **quitarlos del schema público**. Mantener la lógica interna (role = "default", mode planning inferido). El agente ya no tiene que adivinar si agent_id/visibility son relevantes.
+
+### ⚡ Automatizaciones de path (Fase 0)
+
+| Contexto | Antes | Después |
+|----------|-------|---------|
+| `node/add` sin scene_path | Agente repite path o falla | Usar `apply_scene_context` (ya existe) — recuerda el último scene_path usado |
+| `node_query/get_info` sin node_path | Asumir "." (root) automáticamente | Implementado en `handle_get_info` — si no viene, default `"."` |
+| `project_path` en cualquier tool | resolve_project tiene 5 fallbacks (explícito → last → role → único → error) | ✅ Ya robusto, mantener |
+| `scene_path` en scene_planning | Agente debe repetir | `resolve_planning_scene` toma `first()` del registry si no se pasa |
+| `scene/open` | Requiere `mode`/`agent_id` para bifurcarse | Bifurcación sigue pero se valida — `"plan"` ya no falla silenciosamente |
+
+### 📋 Plan de remediación por fases
+
+| Fase | Estado | Descripción | Esfuerzo | Cierre |
+|------|--------|-------------|----------|--------|
+| **Fase 0 — 止血 (Parches)** | 🔨 EN CURSO | 6 parches quirúrgicos + limpieza parámetros zombies + automatizaciones path | 2-3h | `heren-build.bat` verde + tests Rust/GDScript |
+| **Fase 1 — Single registry** | Pendiente | Eliminar `crates/heren-server/src/scene_tool/registry.rs`. Plugin-registry es source-of-truth. `scene/status/list` forward al plugin vía `scene/get_open_scenes` extendido. `load_scene_context` del adapter desaparece | 1 día | scene_planning ya no mantiene estado propio; planning metadata vive en `.heren/scenes/<scene>.json` opcional |
+| **Fase 2 — Fail-fast sistemático** | Pendiente | Audit TODO handler que retorna `ok:true`. Helper `assert_effect_applied(action, predicate)`. Lista de sospechosos en §10 ya documentada | ½ día | Test E2E: cada handler con efecto verificable retorna error claro si no aplica |
+| **Fase 3 — Dispatcher explícito** | Pendiente | `dispatcher.gd` con tabla declarativa `(tool_name, action) → handler_method`. Tests Rust `tools_parity.rs` verifican cobertura | ½ día | Cada tool/action tiene routing declarado; renames rompen tests |
+
+### 🛠 Fase 0 — Detalle de parches
+
+| # | Cambio | Archivo | Líneas |
+|---|--------|---------|--------|
+| P0.1 | `handle_open`: `await process_frame ×2` + verificar `scene_file_path == path` antes de `ok:true` | `addons/heren/handlers/scene_handlers.gd` | L4-16 → reescribir como async |
+| P0.2 | `handle_scene_coords/summary/ascii`: `_root_node()` → `_scene_root(args)` | `addons/heren/handlers/visual_handlers.gd` | 3 llamadas a sustituir |
+| P0.3 | `handle_capture`: rechazar si `ei.is_playing_scene()` | `addons/heren/handlers/visual_handlers.gd` | L4 (nueva guarda) |
+| P0.4 | `handle_run_scene`: `_dbg_plugin.last_output.clear()` antes de play | `addons/heren/handlers/debug_handlers.gd` | L29-42 |
+| P0.5 | `handle_input_map type="list"`: leer `ProjectSettings.get_property_list()` filtrado | `addons/heren/handlers/project_handlers.gd` | L168-178 |
+| P0.6 | `handle_setting op="get"`: `restart_required: false` siempre | `addons/heren/handlers/project_handlers.gd` | L40-50 |
+| P0.7 | `resource/read`: `efs.update_file()` antes de `load()`; fallback con tipo explícito | `addons/heren/handlers/resource_handlers.gd` | L4-19 |
+| P0.8 | Limpiar `visibility` del schema de `session` | `crates/heren-server/src/server.rs` | L189, L324, JSON response |
+| P0.9 | Limpiar `agent_id` del schema de `session` y `scene` (mantener lógica interna default="default") | `crates/heren-server/src/server.rs` | L188, L601, L639, L744, L751 |
+| P0.10 | Limpiar `_auto_save` del schema de `orchestrate` | `crates/heren-server/src/server.rs` | L2127 |
+| P0.11 | `scene`: validar `mode ∈ {isolated, attached, modify, plan}` — rechazar otros | `crates/heren-server/src/server.rs` | L757-764 |
+
+### ✅ Checklist Fase 0
+
+- [x] AGENTS.md §0.8 redactado
+- [x] P0.1 handle_open await + verify
+- [x] P0.2 visual_text scene_path
+- [x] P0.3 capture play guard
+- [x] P0.4 run_scene clear buffer
+- [x] P0.5 input_map list from ProjectSettings
+- [x] P0.6 setting get restart_required false
+- [x] P0.7 resource/read efs.update_file
+- [x] P0.8 session.visibility removed
+- [x] P0.9 session/scene agent_id removed (default internal)
+- [x] P0.10 orchestrate _auto_save removed
+- [x] P0.11 scene mode validation
+- [x] Limpieza masiva de descripciones: quitar "(v4.X)" y "P0.X" de las 18 tools (regla: descripciones compactas, sin fechas)
+- [x] `orchestrate` (tool plana) quitada del schema — duplicaba `scene/plan`+`scene/orchestrate` (Fase 0); §6 actualizado a "Las 18 Tools"
+- [x] `heren-build.bat` → 74 tests verdes
+- [x] **Plan Round-2 (Fase 0-bis)** — fixes completos del flujo de planning, ver §0.9
+- [ ] E2E manual con el proyecto del bug report (humanoid.tscn + 8 input actions)
+- [ ] Commit + tag
+
+### 📌 Lección aprendida (descripciones de tools)
+
+**REGLA**: descripciones de tools SOLO son genéricas para que el agente sepa QUÉ hace la tool. NO llevan fechas, NO llevan "v4.X", NO llevan "P0.X (2026-09-03)", NO llevan notas internas de desarrollo, NO llevan cambios de versión. Compactas, lo justo. Cada palabra extra en la description consume contexto del agente y confunde. Lo que el desarrollador hace se registra en AGENTS.md §0, no en el schema.
+
+## 0.9 Plan Round-2 — Planning fixes para skeleton/animation/tree (2026-09-03)
+
+> **Origen**: radiografía del flujo de planning detectó **13 bugs reales** entre coder y plugin. La mayoría silenciosos (commit "exitoso" pero el árbol queda inconsistente). Todos arreglados en esta ronda.
+
+### Cambios por archivo
+
+| Archivo | Fix | Bug |
+|---------|-----|-----|
+| `animation_handlers.gd` | `handle_tree_set_param` lee `param_name` (alias `name`) | **P-B1**: el coder enviaba `param_name` pero el handler leía `name` → siempre `name required` |
+| `animation_handlers.gd` | `handle_tree_get_param` también acepta `param_name` (alias) | Mismo bug espejo en `get_param` |
+| `animation_handlers.gd` | `handle_add_track` no concatena `:` si `property` vacío | **P-B4**: path "Node:" con dos puntos colgantes |
+| `animation_handlers.gd` | **NUEVO** `handle_tree_add_blend_node` (usa `bt.add_node`) | **P-B2**: el coder emitía `tree_set_param` con dict falso |
+| `animation_handlers.gd` | **NUEVO** `handle_tree_connect_blend_nodes` (usa `bt.connect_node 3-args`) | **P-B3**: emitía `set_prop connections=[...]` sobre propiedad inexistente |
+| `animation_handlers.gd` | **NUEVO** `handle_tree_set_anim_player` (`tree.anim_player = NodePath`) | **P-B5**: AnimationTree huérfano sin `anim_player` |
+| `skeleton_handlers.gd` | `handle_skeleton_ik` dispatch 2D/3D según `dimension` o tipo del nodo | **P-B6**: `_resolve_node(... as Skeleton3D)` fallaba con Skeleton2D |
+| `coder.rs` | `AddTrack` omite `property` si está vacío | P-B4 (coder side) |
+| `coder.rs` | `CreateAnimationTree` con `player_path` opcional → 2 calls (add + tree_set_anim_player) | P-B5 |
+| `coder.rs` | `AddBlendNode` → `action:tree_add_blend_node` (antes `tree_set_param` fake) | P-B2 |
+| `coder.rs` | `ConnectBlendNodes` → `action:tree_connect_blend_nodes` (antes `set_prop connections`) | P-B3 |
+| `coder.rs` | `CreateIK` pasa `dimension` al handler | P-B6 |
+| `coder.rs` | `AddNode { template }` mergea `template_params` + `properties` | **P-B13**: properties del step se ignoraban en template |
+| `coder.rs` | Pre-pasada registra poses de AddNode → `SetTransform` posterior omite campos ya cubiertos | **P-M10**: `AddNode` + `SetTransform` mismo nodo duplicaba `position` |
+| `coder.rs` | `AddNode` solo emite `scale` si != 1.0 | Coherencia con `position` (que se omite en 0,0,0) |
+| `schemas.rs` | `CreateAnimationTree` añade `player_path: Option<String>` | P-B5 |
+| `schemas.rs` | `CreateIK` añade `dimension: String` | P-B6 |
+| `validator.rs` | `check_property_value` lee la propiedad REAL vía `node_query/get_prop` (no siempre `passed:true`) | **P-M3**: implementación placeholder |
+| `validator.rs` | `SceneValidatorClient` trait añade `get_prop` | P-M3 |
+| `server.rs` | `ValidatorClientAdapter` implementa `get_prop` (forward a `node_query/get_prop`) | P-M3 |
+| `server.rs` | `validate` con `engine="b"` filtra solo Engine B (antes solo `"a"` filtraba) | **P-M7** |
+| `server.rs` | `orchestrate` marca `dirty:true` solo si al menos 1 call pasó | **P-B9**: dirty=true incluso con 0 calls exitosas |
+
+### Tests añadidos (11 nuevos)
+
+| Test | Cubre |
+|------|-------|
+| `test_add_track_omits_empty_property` | P-B4 coder |
+| `test_add_node_template_merges_properties` | P-B13 |
+| `test_create_animation_tree_with_player` | P-B5 |
+| `test_add_blend_node_uses_real_handler` | P-B2 |
+| `test_connect_blend_nodes_uses_real_handler` | P-B3 |
+| `test_create_ik_dimension_passed_through` | P-B6 |
+| `test_add_node_then_set_transform_consolidated` | P-M10 (caso positivo) |
+| `test_set_transform_different_position_emitted` | P-M10 (caso negativo: posición distinta SÍ emite) |
+| `test_set_transform_no_prior_add` | P-M10 (nodo no presente en AddNode → emite set_props normal) |
+| `test_property_value_reads_real_value` | P-M3 |
+
+**Total tests: 84 verdes (49 → 59 unit + 11 + 3 + 4 + 6 + 1)**.
+
+### Notas
+
+- Las actions `animation/tree_add_blend_node`, `animation/tree_connect_blend_nodes`, `animation/tree_set_anim_player` son **NUEVAS** en el plugin (v4.9+). Compatibilidad hacia atrás: si el plugin es viejo, el coder emite y el plugin retorna `"tool method not found"` → el step falla con warning, el agente decide fallback a GenericStep o re-orquestrar.
+- El `to_port` del step `ConnectBlendNodes` queda en el schema pero se IGNORA (Godot 4 acepta 3 args en `connect_node`). Se documenta en el step que el campo es no-op.
+- `_ik_2d` no implementa IK real (no hay BoneAttachment2D en Godot 4): crea un Node2D target + sugiere usar `skeleton_fabrik` para resolver la cadena. El FABRIK real está en `handle_skeleton_fabrik` desde v4.6.
+
+### 📌 Notas operativas (Round-2)
+
+- **NO** renombrar `HerenSceneRegistry` ni cambiar su API en Fase 0 — Fase 1 lo hará.
+- **NO** romper compat: agentes existentes siguen funcionando con los mismos tool names.
+- **NO** quitar TODOS los parámetros opcionales del schema — solo los confirmados zombies. `mode`, `dry_run`, `engine`, `save`, `plan_file` SÍ tienen uso real.
+- **Tests**: agregar 3 tests GDScript (`run_tests.gd`) — uno por bug arreglado (open_async, visual_scene_path, input_map_from_disk).
 
 ---
 
@@ -479,14 +645,14 @@ fixtures/               # proyectos Godot mínimos para tests (empty_project/)
 
 ---
 
-## 6. Las 17 Tools
+## 6. Las 18 Tools
 
 > **Checklist añadir/quitar tool (2026-08-24)**: AÑADIR = escribir la fn `#[tool]` en server.rs (los tests estructurales de `tests/tools_parity.rs` la cubren solos). QUITAR = borrar la fn; si quieres guarda de regresión, añade el nombre a `FORBIDDEN_TOOLS`. Si la tool no sigue el patrón "1 tool N acciones", añadirla a `TOOLS_WITHOUT_ACTION`. NUNCA mantener listas enumerativas de tools — los invariantes + conteo mínimo (`MIN_TOOLS`) hacen el resto.
 
 | # | Tool | Actions | Dominio |
 |---|------|---------|---------|
 | 1 | `session` | open, close, list, info, health, **diagnose** | Sesiones |
-| 2 | `scene` | get_open_scenes, get_edited_scene_root, open, save, create, unload | Escenas |
+| 2 | `scene` | get_open_scenes, get_edited_scene_root, open, save, create, unload, **plan, orchestrate, validate, commit, status, list** (planning) | Escenas |
 | 3 | `node` | add, instantiate, remove, duplicate, rename, move, set_owner, reorder | Nodos (mutaciones) |
 | 3b | `node_query` | get_prop, get_info, get_children, find | Nodos (lecturas) |
 | 3c | `node_props` | set_prop, set_props, array_append, array_remove | Nodos (propiedades) |
@@ -499,14 +665,14 @@ fixtures/               # proyectos Godot mínimos para tests (empty_project/)
 | 10 | `debug` | summary, status, breakpoint, control, stack, vars, profiler, run_scene, stop_scene, is_playing, get_editor_errors, **output** | Depuración |
 | 11 | `validate` | scene, script, node, resource | Validación |
 | 12 | `signal` | connect, disconnect, list, set_script | Señales |
-| 13 | `orchestrate` | batch multi-op (plan_file evita dicts anidados) | Batch |
-| 14 | `visual_text` | coords, summary, ascii (NIVEL 0-1, sin imagen, barato) | Visión textual |
-| 14b | `visual_image` | capture, node (NIVEL 2-3, image_content base64) | Visión imagen |
-| 14c | `ui` | create, layout, canvas_layer, templates, get_info, **theme** | UI 2D (v4.7): Control desde template o desde cero + presets anchors + CanvasLayer + lista templates + info Control + Theme .tres |
-| 15 | `health` | server + editor status | Health |
-| 16 | `help` | introspect (lista tools + description + parameters por tool) | Ayuda/introspect |
+| 13 | `visual_text` | coords, summary, ascii | Visión textual |
+| 13b | `visual_image` | capture, node | Visión imagen |
+| 13c | `ui` | create, layout, canvas_layer, templates, get_info, **theme** | UI 2D: Control desde template o desde cero + presets anchors + CanvasLayer + lista templates + info Control + Theme .tres |
+| 14 | `health` | server + editor status | Health |
 
-**Notas:** `scene/create` acepta `instance_scene` (path) o `instance_current:true` (pestaña activa) → la escena nueva contiene otra como instancia ExtResource; guardas: no instanciarse a sí misma, fuente debe existir en disco. Planning v4.8: `orchestrate` es continue-on-error (fallos van a warnings con su step — abortar dejaba steps aplicados sin constancia); `commit(save=false)` con dirty falla con error accionable (antes descartaba trabajo silenciosamente). `node/instantiate` = instancia EXTERNA (`instance=ExtResource`, no copia inline) **o template del registry transversal** (`template:"health_bar"`, params via `properties`). `coords proactivas` en toda mutación (§7). `animation`+`skeleton` comparten `animation_handlers.gd`. `session/diagnose` = integridad plugin (ok/stale/missing/orphan) + grafo headless en sandbox + estado editor. **v4.6 split de tools**: `node_query`/`node_props`/`visual_text`/`visual_image` = schemas MINIMALES (el server mapea al mismo handler interno `node/*`/`visual/*`). **v4.7 UI**: tool `ui` (handler `ui_handlers.gd`) + sistema transversal de templates (`template_registry.gd`, patrón `coords.gd`; templates .tscn + params por nombre de nodo canónico). Errores `node_not_found` incluyen `parent_children` (orientación). `rename`/`move` devuelven `previous_path`/`old_parent`. Recursos: pasar PATH string (`res://...`) para ext_resource; dict inline SIN path → warning `resource_incrusted_inline` (se incrustará al guardar).
+> **Batch unificado**: ya NO hay tool `orchestrate` separada. El batch se hace con `scene(action="plan", plan_file=...)` + `scene(action="orchestrate")` (continue-on-error, fallos a warnings con step_id). El flujo planning cubre steps tipados (`AddNode`, `SetTransform`, ...) y genéricos (`GenericStep` con `{tool, tool_action, args}`) verbatim.
+
+**Notas:** `scene/create` acepta `instance_scene` (path) o `instance_current:true` (pestaña activa) → la escena nueva contiene otra como instancia ExtResource; guardas: no instanciarse a sí misma, fuente debe existir en disco. `scene/orchestrate` es continue-on-error (fallos van a warnings con su step — abortar dejaba steps aplicados sin constancia); `scene/commit` con `save=false` y dirty falla con error accionable (antes descartaba trabajo silenciosamente). `node/instantiate` = instancia EXTERNA (`instance=ExtResource`, no copia inline) **o template del registry transversal** (`template:"health_bar"`, params via `properties`). `coords proactivas` en toda mutación (§7). `animation`+`skeleton` comparten `animation_handlers.gd`. `session/diagnose` = integridad plugin (ok/stale/missing/orphan) + grafo headless en sandbox + estado editor. **v4.6 split de tools**: `node_query`/`node_props`/`visual_text`/`visual_image` = schemas MINIMALES (el server mapea al mismo handler interno `node/*`/`visual/*`). **v4.7 UI**: tool `ui` (handler `ui_handlers.gd`) + sistema transversal de templates (`template_registry.gd`, patrón `coords.gd`; templates .tscn + params por nombre de nodo canónico). Errores `node_not_found` incluyen `parent_children` (orientación). `rename`/`move` devuelven `previous_path`/`old_parent`. Recursos: pasar PATH string (`res://...`) para ext_resource; dict inline SIN path → warning `resource_incrusted_inline` (se incrustará al guardar).
 **Comparativa competidores** (README "Frente a otros MCPs"): datos VERIFICADOS de `.competitors/`. NUNCA marcar ❌ capacidad que el competidor SÍ tiene; usar sus propios análisis (gopeak `ANALYSIS.md`); re-verificar contra repos al actualizar.
 
 ---
@@ -571,7 +737,7 @@ Playback+inspección · edición+one_shot · avanzado (blend spaces 1D/2D, tween
 |------|--------------------|
 | **Arquitectura** | EditorPlugin > GodotDaemon (daemon corre is_editor_hint=false → nunca toca el editor real; plugin gana undo/redo, viewports, EFS, breakpoints). WS plugin=cliente (patrón gopeak: editor NO depende del server, push de eventos). Sesión = editor vivo RAM + last_project disco. FlojoMCP > FastMCP (schemas compile-time; introspection runtime → vacíos). |
 | **Protocolo** | NDJSON, NO Content-Length (OpenCode 1.18, verificado con stdin-spy; `flojo_run_stdio_cl` = timeout). Schemas booleanos `true` → `{}` (schemars rompía tools). `args()` omite keys None (`str(null)`="<null>" rompía guards). id JSON-RPC tolera `1`/`"1"`/`"1.0"`. |
-| **Multi-instancia** | ❌ `kill_previous_servers()` ELIMINADO — mataba servers de sesiones OpenCode hermanas (`MCP connection closed` + agentes sin tools). `ws_port()` cachea con OnceLock + busca `9099+N` libre → 1 puerto por instancia. E2E: 2 servers simultáneos viven en 9100/9101. |
+| **Multi-instancia** | ❌ `kill_previous_servers()` ELIMINADO — mataba servers de sesiones OpenCode hermanas (`MCP connection closed` + agentes sin tools). `ws_port()` cachea con OnceLock + busca `9099+N` libre → 1 puerto por instancia. **Discovery (fix 2026-09-03)**: cada server escribe `.heren/server_port.json` {port, pid}; el editor lee cada 5s y reconecta si el puerto cambia. Cleanup: `ctrlc` handler + `flojo_run_stdio` return borran el archivo. `is_process_alive` usa `tasklist /FI PID eq N` (Windows) o `kill -0` (Unix). |
 | **plugin.cfg** | Formato Godot 4: `enabled=PackedStringArray("res://addons/heren/plugin.cfg")` (path completo, verificado contra `editor_node.cpp`). `"heren"` desnudo se acepta al leer pero se re-escribe completo; `PackedStringArray()` vacío = lost-update (editor vivo pisa el enable). |
 | **enable idempotente** | Reemplaza CUALQUIER `enabled=` por la canónica; solo escribe si difiere + verifica. Contrato `Result<bool,String>`: Ok(true)=escribió, **Ok(false)=ya canónico = ÉXITO** (antes false → "failed" → nunca lanzaba = misterio "heren"), Err=fallo real. |
 | **Sync plugin** | Incremental por contenido: solo diffs, borra huérfanos (.uid), reporta COPY FAILURES (nunca `is_ok()` silencioso). **🚨 BUG RAÍZ**: `collect_files` perdía el prefijo `handlers/` → copy contra ruta inexistente → NotFound tragado → "plugin up-to-date" MENTIRA → core nuevo + handlers viejos → SCRIPT ERROR `set_debugger_plugin` → crash. Fix: `walk(root, dir)` con root original. |

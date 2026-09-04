@@ -163,6 +163,265 @@ impl SceneValidator {
         }
         details
     }
+
+    /// Valida steps tipados de animación/esqueleto/tree contra el contexto.
+    /// Verifica que player_path, skeleton_path, tree_path existen en la escena.
+    pub fn validate_typed_steps(
+        plan: &ScenePlan,
+        context: &SceneContext,
+    ) -> Vec<QADetail> {
+        let mut details = Vec::new();
+        // Build a set of known node paths for quick lookup.
+        let known_paths: std::collections::HashSet<&str> = context.nodes.iter()
+            .map(|n| n.path.as_str())
+            .collect();
+
+        for step in &plan.steps {
+            match step {
+                // Animation steps — check player_path exists
+                SceneStep::CreateAnimationPlayer { id, node_path, .. } => {
+                    details.push(Self::check_path_exists(id, node_path, "CreateAnimationPlayer.node_path", &known_paths));
+                }
+                SceneStep::CreateAnimation { id, player_path, anim_name, .. } => {
+                    details.push(Self::check_path_exists(id, player_path, "CreateAnimation.player_path", &known_paths));
+                    if anim_name.is_empty() {
+                        details.push(QADetail {
+                            target_id: id.clone(),
+                            passed: false,
+                            measured: Some(0.0),
+                            expected: Some(1.0),
+                            deviation: Some(1.0),
+                            message: "CreateAnimation: anim_name is empty".to_string(),
+                            severity: "error".to_string(),
+                        });
+                    }
+                }
+                SceneStep::SetAnimPlayerProps { id, player_path, .. } => {
+                    details.push(Self::check_path_exists(id, player_path, "SetAnimPlayerProps.player_path", &known_paths));
+                }
+                SceneStep::DuplicateAnimation { id, player_path, source_anim, .. } => {
+                    details.push(Self::check_path_exists(id, player_path, "DuplicateAnimation.player_path", &known_paths));
+                    if source_anim.is_empty() {
+                        details.push(QADetail {
+                            target_id: id.clone(),
+                            passed: false,
+                            measured: Some(0.0),
+                            expected: Some(1.0),
+                            deviation: Some(1.0),
+                            message: "DuplicateAnimation: source_anim is empty".to_string(),
+                            severity: "error".to_string(),
+                        });
+                    }
+                }
+                SceneStep::RemoveAnimation { id, player_path, anim_name } => {
+                    details.push(Self::check_path_exists(id, player_path, "RemoveAnimation.player_path", &known_paths));
+                    if anim_name.is_empty() {
+                        details.push(QADetail {
+                            target_id: id.clone(),
+                            passed: false,
+                            measured: Some(0.0),
+                            expected: Some(1.0),
+                            deviation: Some(1.0),
+                            message: "RemoveAnimation: anim_name is empty".to_string(),
+                            severity: "error".to_string(),
+                        });
+                    }
+                }
+                SceneStep::AddTrack { id, player_path, anim_name, track_type, .. } => {
+                    details.push(Self::check_path_exists(id, player_path, "AddTrack.player_path", &known_paths));
+                    if anim_name.is_empty() {
+                        details.push(QADetail {
+                            target_id: id.clone(),
+                            passed: false,
+                            message: "AddTrack: anim_name is empty".to_string(),
+                            severity: "error".to_string(),
+                            ..Default::default()
+                        });
+                    }
+                    let valid_types = ["value", "position_3d", "rotation_3d", "scale_3d", "method", "bezier", "audio", "position", "rotation", "scale"];
+                    if !valid_types.contains(&track_type.as_str()) {
+                        details.push(QADetail {
+                            target_id: id.clone(),
+                            passed: false,
+                            message: format!("AddTrack: invalid track_type '{track_type}' (valid: {valid_types:?})"),
+                            severity: "warning".to_string(),
+                            ..Default::default()
+                        });
+                    }
+                }
+                SceneStep::AddKey { id, player_path, anim_name, track_idx, .. } => {
+                    details.push(Self::check_path_exists(id, player_path, "AddKey.player_path", &known_paths));
+                    if anim_name.is_empty() {
+                        details.push(QADetail {
+                            target_id: id.clone(),
+                            passed: false,
+                            message: "AddKey: anim_name is empty".to_string(),
+                            severity: "error".to_string(),
+                            ..Default::default()
+                        });
+                    }
+                    if *track_idx < 0 {
+                        details.push(QADetail {
+                            target_id: id.clone(),
+                            passed: false,
+                            message: format!("AddKey: track_idx={track_idx} is negative"),
+                            severity: "error".to_string(),
+                            ..Default::default()
+                        });
+                    }
+                }
+                // AnimationTree steps — check tree_path exists
+                SceneStep::CreateAnimationTree { id, node_path, .. } => {
+                    details.push(Self::check_path_exists(id, node_path, "CreateAnimationTree.node_path", &known_paths));
+                }
+                SceneStep::AddBlendNode { id, tree_path, node_name, .. } => {
+                    details.push(Self::check_path_exists(id, tree_path, "AddBlendNode.tree_path", &known_paths));
+                    if node_name.is_empty() {
+                        details.push(QADetail {
+                            target_id: id.clone(),
+                            passed: false,
+                            message: "AddBlendNode: node_name is empty".to_string(),
+                            severity: "error".to_string(),
+                            ..Default::default()
+                        });
+                    }
+                }
+                SceneStep::ConnectBlendNodes { id, tree_path, from_node, to_node, .. } => {
+                    details.push(Self::check_path_exists(id, tree_path, "ConnectBlendNodes.tree_path", &known_paths));
+                    if from_node.is_empty() || to_node.is_empty() {
+                        details.push(QADetail {
+                            target_id: id.clone(),
+                            passed: false,
+                            message: "ConnectBlendNodes: from_node or to_node is empty".to_string(),
+                            severity: "error".to_string(),
+                            ..Default::default()
+                        });
+                    }
+                }
+                SceneStep::SetTreeRoot { id, tree_path, root_node } => {
+                    details.push(Self::check_path_exists(id, tree_path, "SetTreeRoot.tree_path", &known_paths));
+                    if root_node.is_empty() {
+                        details.push(QADetail {
+                            target_id: id.clone(),
+                            passed: false,
+                            message: "SetTreeRoot: root_node is empty".to_string(),
+                            severity: "error".to_string(),
+                            ..Default::default()
+                        });
+                    }
+                }
+                SceneStep::SetTreeParam { id, tree_path, param_name, .. } => {
+                    details.push(Self::check_path_exists(id, tree_path, "SetTreeParam.tree_path", &known_paths));
+                    if param_name.is_empty() {
+                        details.push(QADetail {
+                            target_id: id.clone(),
+                            passed: false,
+                            message: "SetTreeParam: param_name is empty".to_string(),
+                            severity: "error".to_string(),
+                            ..Default::default()
+                        });
+                    }
+                }
+                // Skeleton steps — check skeleton_path exists
+                SceneStep::AddBone { id, skeleton_path, bone_name, .. } => {
+                    details.push(Self::check_path_exists(id, skeleton_path, "AddBone.skeleton_path", &known_paths));
+                    if bone_name.is_empty() {
+                        details.push(QADetail {
+                            target_id: id.clone(),
+                            passed: false,
+                            message: "AddBone: bone_name is empty".to_string(),
+                            severity: "error".to_string(),
+                            ..Default::default()
+                        });
+                    }
+                }
+                SceneStep::SetBoneRest { id, skeleton_path, bone_name, .. } => {
+                    details.push(Self::check_path_exists(id, skeleton_path, "SetBoneRest.skeleton_path", &known_paths));
+                    if bone_name.is_empty() {
+                        details.push(QADetail {
+                            target_id: id.clone(),
+                            passed: false,
+                            message: "SetBoneRest: bone_name is empty".to_string(),
+                            severity: "error".to_string(),
+                            ..Default::default()
+                        });
+                    }
+                }
+                // Skeleton typed steps (Fase C)
+                SceneStep::CreateSkeleton { id, node_path, bones, .. } => {
+                    details.push(Self::check_path_exists(id, node_path, "CreateSkeleton.node_path", &known_paths));
+                    // Validate bone names are not empty
+                    for bone in bones {
+                        if let Some(obj) = bone.as_object() {
+                            if let Some(name) = obj.get("name").and_then(|v| v.as_str()) {
+                                if name.is_empty() {
+                                    details.push(QADetail {
+                                        target_id: id.clone(),
+                                        passed: false,
+                                        message: "CreateSkeleton: bone name is empty".to_string(),
+                                        severity: "warning".to_string(),
+                                        ..Default::default()
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                SceneStep::SetBonePose { id, skeleton_path, bone_name, .. } => {
+                    details.push(Self::check_path_exists(id, skeleton_path, "SetBonePose.skeleton_path", &known_paths));
+                    if bone_name.is_empty() {
+                        details.push(QADetail {
+                            target_id: id.clone(),
+                            passed: false,
+                            message: "SetBonePose: bone_name is empty".to_string(),
+                            severity: "error".to_string(),
+                            ..Default::default()
+                        });
+                    }
+                }
+                SceneStep::CreateIK { id, skeleton_path, ik_name, .. } => {
+                    details.push(Self::check_path_exists(id, skeleton_path, "CreateIK.skeleton_path", &known_paths));
+                    if ik_name.is_empty() {
+                        details.push(QADetail {
+                            target_id: id.clone(),
+                            passed: false,
+                            message: "CreateIK: ik_name is empty".to_string(),
+                            severity: "error".to_string(),
+                            ..Default::default()
+                        });
+                    }
+                }
+                SceneStep::SetSkin { id, mesh_path, skeleton_path } => {
+                    details.push(Self::check_path_exists(id, mesh_path, "SetSkin.mesh_path", &known_paths));
+                    details.push(Self::check_path_exists(id, skeleton_path, "SetSkin.skeleton_path", &known_paths));
+                }
+                // Skip Generic, AddNode, SetTransform, etc. — already validated elsewhere
+                _ => {}
+            }
+        }
+        details
+    }
+
+    /// Helper: check a node path exists in the context.
+    fn check_path_exists(id: &str, path: &str, field: &str, known: &std::collections::HashSet<&str>) -> QADetail {
+        if path == "." || known.contains(path) {
+            QADetail {
+                target_id: id.to_string(),
+                passed: true,
+                message: format!("{field} = '{path}' OK"),
+                severity: "info".to_string(),
+                ..Default::default()
+            }
+        } else {
+            QADetail {
+                target_id: id.to_string(),
+                passed: false,
+                message: format!("{field} = '{path}' NOT FOUND in scene context"),
+                severity: "warning".to_string(),
+                ..Default::default()
+            }
+        }
+    }
     
     /// Engine B: Heuristic/Visual checks via visual_* tools
     async fn run_engine_b<C: SceneValidatorClient>(
@@ -459,27 +718,57 @@ impl SceneValidator {
     async fn check_property_value<C: SceneValidatorClient>(
         target: &VerificationTarget,
         context: &SceneContext,
-        _client: &C,
+        client: &C,
     ) -> QADetail {
         let node_path = target.node_path.as_deref().unwrap_or("");
         let selector = target.selector.as_deref().unwrap_or("");
-        
-        // Find node and check property
-        let node = context.nodes.iter().find(|n| n.path == node_path);
-        let (measured, passed) = if let Some(_n) = node {
-            // Simplified - would need property lookup
-            (target.nominal.unwrap_or(0.0), true)
-        } else {
-            (0.0, false)
+        // Verifica primero que el nodo existe en el contexto; sin eso no
+        // podemos ni intentar get_prop (evita falsos negativos).
+        let exists = context.nodes.iter().any(|n|
+            n.path == node_path || n.name == node_path
+        );
+        if !exists {
+            return QADetail {
+                target_id: target.id.clone(),
+                passed: false,
+                measured: Some(0.0),
+                expected: target.nominal,
+                deviation: target.nominal,
+                message: format!("Property '{selector}' on '{node_path}': node not found"),
+                severity: "error".to_string(),
+            };
+        }
+        // P-M3: leer la propiedad REAL vía el plugin (no del snapshot del open).
+        let (measured_f, raw_str) = match client.get_prop(&context.scene_path, node_path, selector).await {
+            Ok(value) => {
+                // Si viene nominal numérico, intentar comparar como número;
+                // si no, comparar como string.
+                let num = value.get("value")
+                    .and_then(serde_json::Value::as_f64)
+                    .map(|f| f as f32);
+                let s = value.to_string();
+                (num.unwrap_or(0.0), s)
+            }
+            Err(e) => return QADetail {
+                target_id: target.id.clone(),
+                passed: false,
+                measured: Some(0.0),
+                expected: target.nominal,
+                deviation: target.nominal,
+                message: format!("Property '{selector}' on '{node_path}': get_prop failed ({e})"),
+                severity: "error".to_string(),
+            },
         };
-        
+        let expected = target.nominal.unwrap_or(measured_f);
+        let deviation = (measured_f - expected).abs();
+        let passed = deviation <= target.tolerance.max(0.0);
         QADetail {
             target_id: target.id.clone(),
             passed,
-            measured: Some(measured),
-            expected: target.nominal,
-            deviation: Some((measured - target.nominal.unwrap_or(0.0)).abs()),
-            message: format!("Property '{selector}' on '{node_path}': {measured:?}"),
+            measured: Some(measured_f),
+            expected: Some(expected),
+            deviation: Some(deviation),
+            message: format!("Property '{selector}' on '{node_path}': {raw_str} (measured={measured_f}, expected={expected})"),
             severity: if passed { "info" } else { "error" }.to_string(),
         }
     }
@@ -492,6 +781,8 @@ pub trait SceneValidatorClient: Send + Sync {
     async fn capture_scene(&self, scene_path: &str, viewport: &str) -> Result<Value, String>;
     async fn visual_summary(&self, scene_path: &str) -> Result<Value, String>;
     async fn list_signals(&self, scene_path: &str) -> Result<Value, String>;
+    /// P-M3: lee una propiedad de un nodo vía node_query/get_prop.
+    async fn get_prop(&self, scene_path: &str, node_path: &str, property: &str) -> Result<Value, String>;
 }
 
 #[cfg(test)]
@@ -515,6 +806,11 @@ mod tests {
         }
         async fn list_signals(&self, _scene_path: &str) -> Result<Value, String> {
             Ok(serde_json::json!({"signals": []}))
+        }
+        async fn get_prop(&self, _scene_path: &str, _node_path: &str, _property: &str) -> Result<Value, String> {
+            // Mock simple: retornar 0.0 para tests. Tests específicos pueden
+            // sobrescribir usando un MockClient con valores custom.
+            Ok(serde_json::json!({"value": 0.0}))
         }
     }
     
@@ -589,8 +885,82 @@ mod tests {
         
         let client = MockClient;
         let report = SceneValidator::validate_scene(&plan, &context, &client).await;
-        
+
         assert!(!report.passed);
         assert_eq!(report.error_type, ErrorType::Dimension);
+    }
+
+    /// P-M3: PropertyValue lee propiedad real (no siempre passed=true).
+    #[tokio::test]
+    async fn test_property_value_reads_real_value() {
+        // Mock con valores concretos para validar lectura real.
+        struct PropMockClient;
+        #[async_trait::async_trait]
+        impl SceneValidatorClient for PropMockClient {
+            async fn validate_scene(&self, _: &str) -> Result<Value, String> { Ok(serde_json::json!({"valid":true})) }
+            async fn capture_scene(&self, _: &str, _: &str) -> Result<Value, String> { Ok(serde_json::json!({"node_count":1})) }
+            async fn visual_summary(&self, _: &str) -> Result<Value, String> { Ok(serde_json::json!({"bbox":{}})) }
+            async fn list_signals(&self, _: &str) -> Result<Value, String> { Ok(serde_json::json!({"signals":[]})) }
+            async fn get_prop(&self, _: &str, _: &str, prop: &str) -> Result<Value, String> {
+                // Simula una propiedad medida = 3.0 cuando pide "count", error en otro caso.
+                if prop == "count" { Ok(serde_json::json!({"value": 3.0})) }
+                else if prop == "missing" { Err("not found".into()) }
+                else { Ok(serde_json::json!({"value": 0.0})) }
+            }
+        }
+
+        let plan = ScenePlan {
+            plan_id: "t".into(),
+            scene_path: "res://test.tscn".into(),
+            workplane: Workplane::XZ,
+            workplane_offset: Vector3::default(),
+            steps: vec![],
+            verification: vec![
+                // Caso 1: nominal 3.0, mide 3.0 → passed.
+                VerificationTarget {
+                    id: "v_ok".into(),
+                    kind: VerificationKind::PropertyValue,
+                    description: "count == 3".into(),
+                    nominal: Some(3.0),
+                    tolerance: 0.0,
+                    node_path: Some("A".into()),
+                    selector: Some("count".into()),
+                },
+                // Caso 2: nominal 5.0, mide 3.0 → failed.
+                VerificationTarget {
+                    id: "v_fail".into(),
+                    kind: VerificationKind::PropertyValue,
+                    description: "count == 5".into(),
+                    nominal: Some(5.0),
+                    tolerance: 0.0,
+                    node_path: Some("A".into()),
+                    selector: Some("count".into()),
+                },
+                // Caso 3: get_prop error → failed por nodo-ilegal.
+                VerificationTarget {
+                    id: "v_err".into(),
+                    kind: VerificationKind::PropertyValue,
+                    description: "missing".into(),
+                    nominal: Some(1.0),
+                    tolerance: 0.0,
+                    node_path: Some("A".into()),
+                    selector: Some("missing".into()),
+                },
+            ],
+            key_dimensions: HashMap::new(),
+        };
+        let context = SceneContext {
+            scene_path: "res://test.tscn".into(),
+            nodes: vec![NodeInfo { path: "A".into(), ..Default::default() }],
+            ..Default::default()
+        };
+        let report = SceneValidator::validate_scene(&plan, &context, &PropMockClient).await;
+        // 1 passed, 2 failed.
+        let counts: (usize, usize) = report.engine_a.results.iter()
+            .filter(|d| d.target_id == "v_ok" || d.target_id == "v_fail" || d.target_id == "v_err")
+            .fold((0, 0), |(p, f), d| if d.passed { (p + 1, f) } else { (p, f + 1) });
+        assert_eq!(counts.0, 1, "caso v_ok debe pasar: {:?}", report.engine_a.results);
+        assert_eq!(counts.1, 2, "casos v_fail y v_err deben fallar: {:?}", report.engine_a.results);
+        assert!(!report.passed);
     }
 }

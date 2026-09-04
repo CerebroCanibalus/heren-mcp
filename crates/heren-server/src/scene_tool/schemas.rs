@@ -200,6 +200,12 @@ pub struct ScenePlan {
 
 fn default_transition() -> f32 { 1.0 }
 fn default_shader_type() -> String { "canvas_item".to_string() }
+fn default_anim_player_name() -> String { "AnimationPlayer".to_string() }
+fn default_anim_length() -> f32 { 1.0 }
+fn default_anim_tree_name() -> String { "AnimationTree".to_string() }
+fn default_blend_tree_type() -> String { "AnimationNodeBlendTree".to_string() }
+fn default_skeleton_dim() -> String { "3d".to_string() }
+fn default_skeleton_name() -> String { "Skeleton3D".to_string() }
 
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -308,6 +314,47 @@ pub enum SceneStep {
         args: HashMap<String, serde_json::Value>,
     },
     // === Fase 2 — Animation typed steps ===
+    /// Create an AnimationPlayer node (or find existing)
+    CreateAnimationPlayer {
+        id: String,
+        /// Path to the node that will own the AnimationPlayer (e.g., "." for root)
+        node_path: String,
+        /// Optional name for the AnimationPlayer node
+        #[serde(default = "default_anim_player_name")]
+        player_name: String,
+    },
+    /// Create a new animation in an AnimationPlayer
+    CreateAnimation {
+        id: String,
+        player_path: String,
+        anim_name: String,
+        /// Duration in seconds
+        #[serde(default = "default_anim_length")]
+        length: f32,
+        /// Loop mode: "none", "linear", "pingpong"
+        #[serde(default)]
+        loop_mode: String,
+    },
+    /// Set properties on an AnimationPlayer (speed, active, etc.)
+    SetAnimPlayerProps {
+        id: String,
+        player_path: String,
+        #[serde(default)]
+        properties: std::collections::HashMap<String, serde_json::Value>,
+    },
+    /// Duplicate an existing animation
+    DuplicateAnimation {
+        id: String,
+        player_path: String,
+        source_anim: String,
+        new_anim: String,
+    },
+    /// Remove an animation from an AnimationPlayer
+    RemoveAnimation {
+        id: String,
+        player_path: String,
+        anim_name: String,
+    },
     /// Add a track to an animation
     AddTrack {
         id: String,
@@ -332,6 +379,60 @@ pub enum SceneStep {
         #[serde(default = "default_transition")]
         transition: f32,
     },
+    // === Fase 2b — AnimationTree typed steps ===
+    /// Create an AnimationTree node
+    CreateAnimationTree {
+        id: String,
+        /// Path to parent node (where AnimationTree will be added)
+        node_path: String,
+        /// Optional name for the AnimationTree node
+        #[serde(default = "default_anim_tree_name")]
+        tree_name: String,
+        /// Root node type: "AnimationNodeBlendTree", "AnimationNodeStateMachine", etc.
+        #[serde(default = "default_blend_tree_type")]
+        root_type: String,
+        /// P-B5: AnimationPlayer al que el tree debe apuntar (NodePath).
+        /// Si se omite, el agente debe setearlo después con SetTreeAnimPlayer.
+        #[serde(default)]
+        player_path: Option<String>,
+    },
+    /// Add a blend node to an AnimationTree's BlendTree
+    AddBlendNode {
+        id: String,
+        tree_path: String,
+        node_name: String,
+        /// Type: "AnimationNodeAnimation", "AnimationNodeOneShot", "AnimationNodeBlendSpace2D", etc.
+        node_type: String,
+        /// For AnimationNodeAnimation: which animation to play
+        #[serde(default)]
+        animation: String,
+        /// Position in the BlendTree graph (for visual editors)
+        #[serde(default)]
+        graph_position: Option<serde_json::Value>,
+    },
+    /// Connect two blend nodes inside an AnimationTree
+    ConnectBlendNodes {
+        id: String,
+        tree_path: String,
+        from_node: String,
+        from_port: i32,
+        to_node: String,
+        to_port: i32,
+    },
+    /// Set the root node of an AnimationTree
+    SetTreeRoot {
+        id: String,
+        tree_path: String,
+        /// Name of the blend node to set as root
+        root_node: String,
+    },
+    /// Set a parameter on an AnimationTree
+    SetTreeParam {
+        id: String,
+        tree_path: String,
+        param_name: String,
+        value: serde_json::Value,
+    },
     // === Fase 3 — Skeleton typed steps ===
     /// Add a bone to a skeleton
     AddBone {
@@ -349,6 +450,47 @@ pub enum SceneStep {
         skeleton_path: String,
         bone_name: String,
         rest_transform: serde_json::Value,
+    },
+    /// Create a Skeleton2D or Skeleton3D node
+    CreateSkeleton {
+        id: String,
+        /// Parent path where the skeleton will be added
+        node_path: String,
+        /// "2d" or "3d"
+        #[serde(default = "default_skeleton_dim")]
+        dimension: String,
+        /// Optional name for the skeleton node
+        #[serde(default = "default_skeleton_name")]
+        skeleton_name: String,
+        /// Optional list of bones to create: [{name, parent, rest_transform}]
+        #[serde(default)]
+        bones: Vec<serde_json::Value>,
+    },
+    /// Set bone pose (transform at runtime, different from rest)
+    SetBonePose {
+        id: String,
+        skeleton_path: String,
+        bone_name: String,
+        /// Pose transform (Transform2D for 2D, Transform3D for 3D)
+        pose: serde_json::Value,
+    },
+    /// Create an IK node (SkeletonIK3D for 3D, FABRIK chain marker for 2D)
+    CreateIK {
+        id: String,
+        skeleton_path: String,
+        ik_name: String,
+        /// P-B6: "2d" → FABRIK (Skeleton2D); "3d" → SkeletonIK3D. Vacío = auto-detectar por tipo.
+        #[serde(default)]
+        dimension: String,
+        /// For 3D: tip_bone, target_path, magnet, etc.
+        #[serde(default)]
+        properties: std::collections::HashMap<String, serde_json::Value>,
+    },
+    /// Set a Skin resource on a MeshInstance3D referencing a skeleton
+    SetSkin {
+        id: String,
+        mesh_path: String,
+        skeleton_path: String,
     },
     // === Fase 4 — Script/Shader typed steps ===
     /// Attach a script to a node
@@ -455,11 +597,92 @@ pub fn example_plan() -> serde_json::Value {
             {"action": "remove_node", "id": "s6", "node_path": "NodoViejo"},
             {"action": "duplicate_node", "id": "s7", "node_path": "Caja", "new_name": "Caja2"},
             {
-                "action": "generic",
+                "action": "create_animation_player",
                 "id": "s8",
+                "node_path": ".",
+                "player_name": "AnimationPlayer"
+            },
+            {
+                "action": "create_animation",
+                "id": "s9",
+                "player_path": ".",
+                "anim_name": "idle",
+                "length": 2.0,
+                "loop_mode": "linear"
+            },
+            {
+                "action": "add_track",
+                "id": "s10",
+                "player_path": ".",
+                "anim_name": "idle",
+                "track_type": "rotation_3d",
+                "node_path": "Caja",
+                "property": "rotation"
+            },
+            {
+                "action": "add_key",
+                "id": "s11",
+                "player_path": ".",
+                "anim_name": "idle",
+                "track_idx": 0,
+                "time": 0.0,
+                "value": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+            },
+            {
+                "action": "create_animation_tree",
+                "id": "s12",
+                "node_path": ".",
+                "tree_name": "AnimationTree",
+                "root_type": "AnimationNodeBlendTree"
+            },
+            {
+                "action": "add_blend_node",
+                "id": "s13",
+                "tree_path": "AnimationTree",
+                "node_name": "Idle",
+                "node_type": "AnimationNodeAnimation",
+                "animation": "idle"
+            },
+            {
+                "action": "connect_blend_nodes",
+                "id": "s14",
+                "tree_path": "AnimationTree",
+                "from_node": "Idle",
+                "from_port": 0,
+                "to_node": "output",
+                "to_port": 0
+            },
+            {
+                "action": "set_tree_root",
+                "id": "s15",
+                "tree_path": "AnimationTree",
+                "root_node": "Idle"
+            },
+            {
+                "action": "create_skeleton",
+                "id": "s16",
+                "node_path": ".",
+                "dimension": "3d",
+                "skeleton_name": "Skeleton3D",
+                "bones": [
+                    {"name": "Root", "parent": ""},
+                    {"name": "Spine", "parent": "Root"},
+                    {"name": "Head", "parent": "Spine"}
+                ]
+            },
+            {
+                "action": "set_bone_pose",
+                "id": "s17",
+                "skeleton_path": "Skeleton3D",
+                "bone_name": "Spine",
+                "pose": {"origin": {"x": 0.0, "y": 1.0, "z": 0.0}, "basis_x": {"x": 1.0, "y": 0.0, "z": 0.0}, "basis_y": {"x": 0.0, "y": 1.0, "z": 0.0}, "basis_z": {"x": 0.0, "y": 0.0, "z": 1.0}}
+            },
+            {
+                "action": "generic",
+                "id": "s18",
                 "tool": "animation",
-                "tool_action": "create_player",
-                "args": {"player_path": "Caja/AnimPlayer"}
+                "tool_action": "play",
+                "args": {"player_path": ".", "anim_name": "idle"}
             }
         ],
         "verification": [

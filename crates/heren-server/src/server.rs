@@ -177,7 +177,7 @@ async fn forward_mutating(
 // ============================================================
 
 #[tool(
-    description = "Gestion de sesiones v4.7: open|reopen|close|list|info|health|diagnose|status - open ahora soporta mode:isolated/attached + agent_id + visibility:visible/headless (Fase S: segundo editor visible con lock); status = snapshot roles+locks+dirty; diagnose = DEBUGGER UNIFICADO"
+    description = "Sesiones: open|reopen|close|list|info|health|diagnose|status. open lanza el editor si no hay uno conectado (auto-launch) y espera conexión WS. mode={isolated,attached} (default attached). status = snapshot de roles, locks y escenas dirty. diagnose = integridad del plugin + grafo headless + estado editor."
 )]
 async fn session(
     action: String,
@@ -185,8 +185,10 @@ async fn session(
     godot_path: Option<String>,
     close_editor: Option<bool>,
     mode: Option<String>,
+    // Mantenido en signatura para compat binaria con clientes que lo envíen.
+    // Solo se usa cuando mode=isolated; en flujo normal es ignorado.
+    #[allow(dead_code)]
     agent_id: Option<String>,
-    visibility: Option<String>,
 ) -> Result<Value, ToolError> {
     let registry = EditorRegistry::global();
     let kill_editor = close_editor.unwrap_or(false);
@@ -320,8 +322,6 @@ async fn session(
                     "project_path": proj,
                     "mode": "isolated",
                     "role": role,
-                    "agent_id": aid,
-                    "visibility": visibility.clone().unwrap_or_else(|| "visible".to_string()),
                     "launched": outcome.launched,
                     "connected": connected,
                     "connect_wait_ms": wait_ms,
@@ -555,15 +555,9 @@ async fn session(
     }
 }
 
-/// Lee el puerto WS (default 9099). SIEMPRE cacheado con OnceLock: todas las
-/// llamadas del proceso devuelven el mismo puerto (el WS server bindea Y
-/// `session/open` lo pasa al editor vÃ­a HEREN_MCP_PORT â€” deben coincidir).
-///
-/// CRÃTICO multi-sesiÃ³n (fix 2026-08-06): OpenCode lanza un heren-server por
-/// sesiÃ³n/chat/agente. Si 9099 ya estÃ¡ tomado por OTRA sesiÃ³n viva, este
-/// proceso prueba 9099+1, 9099+2â€¦ hasta encontrar uno libre. NUNCA matamos
-/// otros heren-server (kill_previous_servers ELIMINADO: mataba los servers
-/// de sesiones OpenCode hermanas â†’ "MCP connection closed" + AbortError).
+/// Lee el puerto WS (default 9099). SIEMPRE cacheado con OnceLock.
+/// Discovery (fix 2026-09-03): el caller escribe `.heren/server_port.json`
+/// para que el editor sepa reconectar al server correcto.
 fn ws_port() -> u16 {
     static PORT: OnceLock<u16> = OnceLock::new();
     *PORT.get_or_init(|| {
@@ -593,7 +587,7 @@ fn ws_port() -> u16 {
 // allow: los parámetros los dicta el schema MCP de la tool unificada.
 #[allow(clippy::too_many_arguments)]
 #[tool(
-    description = "Escenas (v4.8): get_open_scenes|get_edited_scene_root|open|save|create|unload|plan|orchestrate|validate|commit|status|list. Flujo planning (§0.6): open CON mode/agent_id (lock+contexto en SceneRegistry) → plan_file (escribe el ScenePlan como .json — action=\"plan\" sin plan_file devuelve un ejemplo canónico; el path acepta res:// o absoluto) → orchestrate (batch via coder determinista, continue-on-error con warnings) → validate (QA dual-engine, error_type dimension|topology|fatal) → commit (save+unlock; save=false con dirty falla accionable). status/list consultan el SceneRegistry. create acepta instance_scene/instance_current para instanciar otra escena. open SIN mode/agent_id = open legacy del plugin."
+    description = "Escenas: get_open_scenes|get_edited_scene_root|open|save|create|unload|plan|orchestrate|validate|commit|status|list. Flujo planning: open con mode={isolated,attached,modify} activa lock+contexto en SceneRegistry; plan_file (path JSON) escribe el ScenePlan; orchestrate ejecuta el batch; validate hace QA dual-engine; commit guarda+unlock. Sin mode, open usa la pestaña del editor. mode inválido devuelve error."
 )]
 async fn scene(
     action: String,
@@ -602,20 +596,22 @@ async fn scene(
     output_path: Option<String>,
     root_type: Option<String>,
     root_name: Option<String>,
-    // Planning/Orchestration args (§0.6)
+    // Planning/Orchestration args. mode válido: isolated|attached|modify.
     mode: Option<String>,
+    // Mantenido en signatura para compat binaria. Solo usado por planning.
+    #[allow(dead_code)]
     agent_id: Option<String>,
     save: Option<bool>,
     // create instanciado: path explícito o pestaña activa del editor
     instance_scene: Option<String>,
     instance_current: Option<bool>,
-    // Plan como ARCHIVO JSON (patrón plan_file de orchestrate): el agente
-    // escribe el .json con sus tools de archivo y pasa el path. Evita los
-    // límites de serialización/schema de dicts anidados vía tool args.
-    // Acepta path absoluto o relativo al proyecto (res:// incluido).
-    // Sin plan_file, action="plan" devuelve un ejemplo canónico auto-documentado.
+    // Plan como ARCHIVO JSON: el agente escribe el .json con sus tools de
+    // archivo y pasa el path. Evita los límites de serialización/schema de
+    // dicts anidados vía tool args. Acepta path absoluto o relativo al
+    // proyecto (res:// incluido). Sin plan_file, action="plan" devuelve un
+    // ejemplo canónico auto-documentado.
     plan_file: Option<String>,
-    // E2: orchestrate preview sin ejecutar
+    // Orchestrate preview sin ejecutar (devuelve los calls que ejecutaría).
     dry_run: Option<bool>,
     // S2: engine filter para validate — "a"=solo estructura, "b"=solo visual, "all"=ambos
     engine: Option<String>,
@@ -760,14 +756,17 @@ async fn scene_planning(
         "open" => {
             let scene_path = scene_path
                 .ok_or_else(|| ToolError::invalid_params("scene_path required for open"))?;
-            let mode = mode
-                .and_then(|m| match m {
-                    "isolated" => Some(SceneMode::Isolated),
-                    "attached" => Some(SceneMode::Attached),
-                    "modify" => Some(SceneMode::Modify),
-                    _ => None,
-                })
-                .unwrap_or(SceneMode::Isolated);
+            let mode = match mode {
+                Some("isolated") => SceneMode::Isolated,
+                Some("attached") => SceneMode::Attached,
+                Some("modify") => SceneMode::Modify,
+                Some(other) => {
+                    return Err(ToolError::invalid_params(format!(
+                        "mode '{other}' invalido. Validos: isolated|attached|modify."
+                    )));
+                }
+                None => SceneMode::Isolated,
+            };
 
             let response = registry
                 .open_scene(scene_path, mode, &agent_id, &RegistryClientAdapter {
@@ -837,19 +836,29 @@ async fn scene_planning(
             // F1 (2026-08-24): continue-on-error — abortar al primer fallo deja
             // steps previos aplicados sin constancia. Cada fallo va a warnings
             // con su step; el agente decide reparar y re-orquestrar.
+            // P-B9: contar cuántas calls pasaron — dirty=true solo si al menos 1.
             let registry_editor = EditorRegistry::global();
+            let mut applied = 0usize;
+            let total = calls.len();
             for call in calls {
-                if let Err(e) = forward(registry_editor, proj, &call.tool, call.args).await {
-                    response.warnings.push(format!(
+                match forward(registry_editor, proj, &call.tool, call.args).await {
+                    Ok(_) => applied += 1,
+                    Err(e) => response.warnings.push(format!(
                         "step '{}' falló ({}): {} — los steps previos SÍ se aplicaron",
                         call.step_id, call.description, e
-                    ));
+                    )),
                 }
             }
 
-            registry
-                .with_scene_mut(&scene_path, |state| state.dirty = true)
-                .map_err(ToolError::internal)?;
+            if applied > 0 {
+                registry
+                    .with_scene_mut(&scene_path, |state| state.dirty = true)
+                    .map_err(ToolError::internal)?;
+            } else {
+                response.warnings.push(format!(
+                    "P-B9: 0/{total} calls pasaron — escena NO marcada como dirty (commit sería vacío)"
+                ));
+            }
 
             Ok(serde_json::to_value(response)?)
         }
@@ -866,14 +875,17 @@ async fn scene_planning(
             registry
                 .update_context(&scene_path, fresh)
                 .map_err(ToolError::internal)?;
+            // P-M7: engine="b" → solo visual; engine="a" → solo estructural.
+            // Para engine="b" pre-construimos el Engine A como skipped antes
+            // de llamar validate (que siempre corre A por dentro).
             let mut response = registry
                 .validate(&scene_path, &ValidatorClientAdapter {
                     project_path: proj.to_string(),
                 })
                 .await
                 .map_err(ToolError::internal)?;
-            // S2: si engine="a", saltar Engine B (capture offscreen → timeout en 3D)
             if engine_filter == "a" {
+                // Saltar Engine B (capture offscreen → timeout en 3D).
                 response.qa_report.engine_b = crate::scene_tool::schemas::EngineReport {
                     engine_name: "skipped (engine=a)".to_string(),
                     results: vec![],
@@ -881,8 +893,18 @@ async fn scene_planning(
                     warnings: vec![],
                     errors: vec![],
                 };
+            } else if engine_filter == "b" {
+                // Saltar Engine A — pero como validate ya corrió A, lo marcamos
+                // skipped retroactivamente y conservamos solo Engine B.
+                response.qa_report.engine_a = crate::scene_tool::schemas::EngineReport {
+                    engine_name: "skipped (engine=b)".to_string(),
+                    results: vec![],
+                    summary: "Skipped by engine filter".to_string(),
+                    warnings: vec![],
+                    errors: vec![],
+                };
             }
-            // Fase 5: validar GenericSteps
+            // Fase 5: validar GenericSteps (siempre; schema check no requiere captura)
             let tool_schemas = fetch_tool_schemas().await;
             let plan = registry.get_plan(&scene_path).map_err(ToolError::internal)?;
             if let Some(plan) = plan {
@@ -1067,6 +1089,16 @@ impl crate::scene_tool::validator::SceneValidatorClient for ValidatorClientAdapt
             "scene_path": scene_path,
         })).await.map_err(|e| e.to_string())
     }
+
+    // P-M3: lectura real de propiedad vía node_query/get_prop.
+    async fn get_prop(&self, scene_path: &str, node_path: &str, property: &str) -> Result<serde_json::Value, String> {
+        let registry = EditorRegistry::global();
+        forward(registry, &self.project_path, "node_query/get_prop", serde_json::json!({
+            "scene_path": scene_path,
+            "node_path": node_path,
+            "property_name": property,
+        })).await.map_err(|e| e.to_string())
+    }
 }
 
 /// Build SceneContext from Godot query results
@@ -1139,7 +1171,7 @@ fn parse_node_info(value: &serde_json::Value) -> Option<crate::scene_tool::schem
 // ============================================================
 
 #[tool(
-    description = "Nodos (v4.6): MUTACIONES estructurales â€” add|instantiate|remove|duplicate|rename|move|set_owner|reorder. args: node_path, parent_path, node_type, node_name, instance_path, properties (dict), new_name, new_parent, index, parent_path, template (instantiate: usa template del registry transversal en vez de instance_path), script (path res:// opcional). Lecturas y props â†’ node_query / node_props."
+    description = "Nodos: mutaciones estructurales. add|instantiate|remove|duplicate|rename|move|set_owner|reorder. template usa el registry transversal en vez de instance_path. Lecturas → node_query, props → node_props."
 )]
 #[allow(clippy::too_many_arguments)]
 async fn node(
@@ -1188,7 +1220,7 @@ async fn node(
 }
 
 #[tool(
-    description = "Nodos (v4.6): LECTURAS â€” get_info|get_children|get_prop|find. args: node_path, property_name, recursive (get_children/find), query/by (find: texto o tipo). NO muta la escena."
+    description = "Nodos: lecturas sin mutación. get_info|get_children|get_prop|find. find acepta query (texto) o by=tipo."
 )]
 #[allow(clippy::too_many_arguments)]
 async fn node_query(
@@ -1223,7 +1255,7 @@ async fn node_query(
 }
 
 #[tool(
-    description = "Nodos (v4.6): PROPIEDADES â€” set_prop|set_props|array_append|array_remove. args: node_path, property_name, value, properties (dict), index (array_remove). Pasa recursos por PATH (res://...) para ext_resource; dict inline â†’ warning."
+    description = "Nodos: propiedades. set_prop|set_props|array_append|array_remove. Recursos por PATH (res://) para ext_resource; dict inline emite warning."
 )]
 #[allow(clippy::too_many_arguments)]
 async fn node_props(
@@ -1274,7 +1306,7 @@ async fn node_props(
 // ============================================================
 
 #[tool(
-    description = "UI 2D (v4.7): create|layout|canvas_layer|templates|get_info|theme. create: Control desde template (template) o desde cero (node_type obligatorio si no template) + layout preset. layout: presets de anchors (full_rect, bottom_center, top_left, top_right, center, bottom_left, bottom_right, center_left, center_right). canvas_layer: CanvasLayer (layer, follow_viewport) para HUD overlay. templates: lista templates con params. get_info: anchors/offsets/size_flags/min_size de un Control. theme: crea/modifica Theme .tres (theme_path + properties {colors, styleboxes, font_sizes, constants} con claves 'ThemeType/item') y opcionalmente lo aplica a un Control (node_path)."
+    description = "UI 2D: create|layout|canvas_layer|templates|get_info|theme. create: Control desde template o desde cero + layout preset. layout: presets de anchors (full_rect, bottom_center, etc.). canvas_layer: CanvasLayer para HUD. templates: lista con params. theme: crea/modifica Theme .tres con claves ThemeType/item."
 )]
 #[allow(clippy::too_many_arguments)]
 async fn ui(
@@ -1333,7 +1365,7 @@ async fn ui(
 // ============================================================
 
 #[tool(
-    description = "Recursos .tres y scripts .gd (v4.6): create|read|update|delete|list|create_script|read_script|edit_script. args: resource_path, resource_type, properties (dict), directory, extension, recursive, script_path, content, append, template â€” TODOS opcionales salvo action (defaults en el plugin)."
+    description = "Recursos .tres y scripts .gd: create|read|update|delete|list|create_script|read_script|edit_script. Defaults en el plugin para todos los args salvo action."
 )]
 #[allow(clippy::too_many_arguments)]
 async fn resource(
@@ -1372,7 +1404,7 @@ async fn resource(
 // ============================================================
 
 #[tool(
-    description = "Config proyecto (v4): create|setup_plugin|setting(op=get/set/list/delete/set_multi)|autoload|remove_autoload|input_map(type=add/get/list/add_event/set_events/remove_event/set_deadzone/set_event/remove)|shader_global"
+    description = "Config proyecto: create|setup_plugin|setting(op=get/set/list/delete/set_multi)|autoload|remove_autoload|input_map(type=add/get/list/add_event/set_events/remove_event/set_deadzone/set_event/remove)|shader_global"
 )]
 #[allow(clippy::too_many_arguments)]
 async fn project(
@@ -1578,7 +1610,7 @@ fn create_project(
 // ============================================================
 
 #[tool(
-    description = "Shaders y materiales (v4.6): create|edit|get|inspect|validate|material|uniform|apply (one-shot). args: shader_path, shader_type, code, append, node_path, material_name, uniforms, uniform_name, value — TODOS opcionales (defaults por action en el plugin)."
+    description = "Shaders y materiales: create|edit|get|inspect|validate|material|uniform|apply. apply es one-shot. Defaults en el plugin para todos los args."
 )]
 #[allow(clippy::too_many_arguments)]
 async fn shader(
@@ -1637,7 +1669,7 @@ async fn shader(
 // ============================================================
 
 #[tool(
-    description = "Animaciones (v4.6): create_player|create|add_track|add_key|state_machine|play|stop|seek|speed|get_*|remove_*|update_*|one_shot|tween|record|from_path|loop_pose|preview|curve|capture_pose|tree_*|duplicate|delete|rename|reverse|blend_pose|retarget. TODOS los args opcionales â€” el plugin aplica defaults por action (solo `action` es required)."
+    description = "Animaciones: create_player|create|add_track|add_key|state_machine|play|stop|seek|speed|get_tracks|get_keyframes|remove_track|remove_key|update_key|one_shot|tween|record|from_path|loop_pose|preview|curve|capture_pose|tree_activate|tree_travel|tree_set_param|duplicate|delete|rename|reverse|blend_pose|retarget. Defaults en el plugin."
 )]
 #[allow(clippy::too_many_arguments)]
 async fn animation(
@@ -1844,7 +1876,7 @@ async fn animation(
 // ============================================================
 
 #[tool(
-    description = "Esqueletos 2D/3D (v4.6): skeleton_create|skeleton_add_bone|skeleton_set_rest|skeleton_skin|skeleton_attachment|skeleton_get_bones|skeleton_get_pose|skeleton_set_pose|skeleton_ik|skeleton_fabrik|capture_pose. TODOS los args opcionales (defaults por action en el plugin)."
+    description = "Esqueletos 2D/3D: skeleton_create|skeleton_add_bone|skeleton_set_rest|skeleton_skin|skeleton_attachment|skeleton_get_bones|skeleton_get_pose|skeleton_set_pose|skeleton_ik|skeleton_fabrik|capture_pose. Defaults en el plugin."
 )]
 #[allow(clippy::too_many_arguments)]
 async fn skeleton(
@@ -1929,7 +1961,7 @@ async fn skeleton(
 // ============================================================
 
 #[tool(
-    description = "TileMaps/TileSets (v4.6): inspect_set|inspect_map|set_cell|terrain|pattern. TODOS los args opcionales (defaults por action)."
+    description = "TileMaps/TileSets: inspect_set|inspect_map|set_cell|terrain|pattern. Defaults en el plugin."
 )]
 #[allow(clippy::too_many_arguments)]
 async fn tilemap(
@@ -1997,7 +2029,7 @@ async fn tilemap(
 // ============================================================
 
 #[tool(
-    description = "Depuración (v4.5): summary|status|breakpoint|control|stack|vars|profiler|run_scene|stop_scene|is_playing|get_editor_errors|output. summary=snapshot completo (editor+plugin+game+errors+breakpoints+profiler+console); status=estado del depurador; breakpoint(op=set|clear|list|clear_all,path,line); control(op=pause|continue|step_over|step_into); stack=rastreo de pila al pausar; vars(frame)=variables del frame; profiler(op=start|stop|status|get|clear); get_editor_errors=errores runtime (estructurados + output_errors con formato del panel); output(filter=error|all,limit)=salida del juego en ejecución"
+    description = "Depuración: summary|status|breakpoint|control|stack|vars|profiler|run_scene|stop_scene|is_playing|get_editor_errors|output. summary = snapshot completo (editor+plugin+game+errors+breakpoints+profiler+console). output = log del juego (filter=error|all). run_scene limpia buffer debug antes de play."
 )]
 #[allow(clippy::too_many_arguments)]
 async fn debug(
@@ -2045,7 +2077,7 @@ async fn debug(
 // VALIDATE
 // ============================================================
 
-#[tool(description = "ValidaciÃ³n (v4): scene|script|node|resource")]
+#[tool(    description = "Validación: scene|script|node|resource")]
 async fn validate(
     action: String,
     project_path: Option<String>,
@@ -2075,7 +2107,7 @@ async fn validate(
 // SIGNAL
 // ============================================================
 
-#[tool(description = "SeÃ±ales (v4): connect|disconnect|list|set_script")]
+#[tool(    description = "Señales: connect|disconnect|list|set_script")]
 #[allow(clippy::too_many_arguments)]
 async fn signal(
     action: String,
@@ -2118,111 +2150,9 @@ async fn signal(
     }
 }
 
-// ============================================================
-// ORCHESTRATE (batch)
-// ============================================================
-
-#[tool(
-    description = "Orquestar (v4): multiples ops en una llamada. plan: {ops:[{tool,args}]}. tool puede ser node/add (se normaliza a action) o node+args.action. Errores por op en results, no abortan el batch"
-)]
-async fn orchestrate(
-    project_path: Option<String>,
-    plan: Option<GodotDict>,
-    plan_file: Option<String>,
-    on_error: Option<String>,
-    _auto_save: Option<bool>,
-) -> Result<Value, ToolError> {
-    let proj = resolve_project(project_path.as_deref()).await?;
-    let registry = EditorRegistry::global();
-    let on_error = on_error.as_deref().unwrap_or("continue");
-
-    // plan puede venir inline (Value) o por archivo (plan_file) â€” la ruta
-    // plan_file evita el JSON gigante en el tool-call (dicts anidados).
-    let plan_value = if let Some(pf) = plan_file {
-        let content = std::fs::read_to_string(&pf)
-            .map_err(|e| ToolError::invalid_params(format!("plan_file not readable: {e}")))?;
-        serde_json::from_str::<Value>(&content)
-            .map_err(|e| ToolError::invalid_params(format!("plan_file invalid JSON: {e}")))?
-    } else {
-        plan.map_or(Value::Null, Into::into)
-    };
-
-    let ops: Vec<Value> = plan_value
-        .get("ops")
-        .and_then(|o| o.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    if ops.is_empty() {
-        return Err(ToolError::invalid_params(
-            "plan.ops required (lista de {tool, args})",
-        ));
-    }
-
-    let mut results = serde_json::Map::new();
-    for (i, op) in ops.iter().enumerate() {
-        let tool_name_raw = op
-            .get("tool")
-            .and_then(|t| t.as_str())
-            .ok_or_else(|| ToolError::invalid_params(format!("op[{i}] missing 'tool'")))?;
-        // Normalizar "tool/action" (API amigable) â†’ tool + args.action.
-        // Si el plan usa tool="node" + args.action="add", no se toca nada.
-        let mut op_args = op.get("args").cloned().unwrap_or(Value::Null);
-        let tool_name = match tool_name_raw.split_once('/') {
-            Some((t, act)) => {
-                if op_args.is_null() {
-                    op_args = json!({});
-                }
-                if let Some(obj) = op_args.as_object_mut() {
-                    obj.entry("action")
-                        .or_insert_with(|| Value::String(act.to_string()));
-                }
-                t.to_string()
-            }
-            None => tool_name_raw.to_string(),
-        };
-        // Errores por op (nunca ToolError genÃ©rico que mate el batch sin
-        // decir quÃ© op fallÃ³). Se reporta en results y se continÃºa.
-        let raw = match registry.call_tool(&tool_name, op_args, &proj).await {
-            Ok(r) => r,
-            Err(e) => {
-                results.insert(
-                    i.to_string(),
-                    json!({"ok": false, "error": format!("tool_error: {e}")}),
-                );
-                if on_error == "stop" {
-                    break;
-                }
-                continue;
-            }
-        };
-        let result = unwrap_result(&raw);
-        let ok = result
-            .get("ok")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false);
-        results.insert(i.to_string(), result);
-        if on_error == "stop" && !ok {
-            break;
-        }
-    }
-
-    let count = results.len();
-    let errors = results
-        .values()
-        .filter(|r| {
-            !r.get("ok")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false)
-        })
-        .count();
-    Ok(json!({
-        "ok": true,
-        "results": Value::Object(results),
-        "count": count,
-        "errors": errors,
-    }))
-}
+// `orchestrate` (tool plana para batch genérico) se quitó del schema público
+// (AGENTS.md §0.8). Para batch de ops usa el flujo planning: scene/open +
+// scene/plan + scene/orchestrate (steps tipados o GenericStep verbatim).
 
 // ============================================================
 // VISUAL (Sistema de visiÃ³n Â§13.6) â€” UNA tool, mÃºltiples acciones
@@ -2230,7 +2160,7 @@ async fn orchestrate(
 // ============================================================
 
 #[tool(
-    description = "VisiÃ³n TEXTUAL (v4.6, NIVEL 0-1, sin imagen): coords|summary|ascii. args: scene_path, max_depth (opcional, default 10). Barata ~20-150 tok â€” usarla SIEMPRE primero."
+    description = "Visión textual sin imagen: coords|summary|ascii. Barata, usarla primero antes de capturar. args: scene_path, max_depth (default 10)."
 )]
 async fn visual_text(
     action: String,
@@ -2267,7 +2197,7 @@ async fn visual_text(
 }
 
 #[tool(
-    description = "VisiÃ³n IMAGEN (v4.6, NIVEL 2-3): capture|node. args: scene_path, viewport=2d|3d (default 2d), source=scene|viewport (default scene), max_side (opcional, resize), node_path (framing), animation (seek previo). Devuelve image_content base64 + metadatos."
+    description = "Visión con imagen: capture|node. args: scene_path, viewport=2d|3d, source=scene|viewport, max_side, node_path (framing), animation (seek previo). Devuelve image_content MCP. Falla durante play con error claro."
 )]
 #[allow(clippy::too_many_arguments)]
 async fn visual_image(
@@ -2276,7 +2206,9 @@ async fn visual_image(
     scene_path: Option<String>,
     viewport: Option<String>,
     source: Option<String>,
+    quality: Option<String>,
     max_side: Option<i64>,
+    format: Option<String>,
     node_path: Option<String>,
     animation: Option<GodotDict>,
 ) -> Result<Value, ToolError> {
@@ -2303,7 +2235,9 @@ async fn visual_image(
             ),
             ("viewport", viewport.map(Value::String)),
             ("source", source.map(Value::String)),
+            ("quality", quality.map(Value::String)),
             ("max_side", max_side.map(|v| json!(v))),
+            ("format", format.map(Value::String)),
             ("node_path", node_path.map(Value::String)),
             ("animation", animation.map(Into::into)),
         ]),
@@ -2345,12 +2279,26 @@ pub async fn run() -> Result<(), ServerError> {
     let project_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     crate::scene_tool::init_scene_tool(&project_root);
 
+    // Discovery (fix 2026-09-03): escribir `.heren/server_port.json` para que
+    // el editor sepa reconectar al server correcto cuando OpenCode reinicia.
+    let port = ws_port();
+    crate::discovery::write_discovery(&project_root, port);
+    eprintln!("[heren-server] discovery: wrote .heren/server_port.json (port={port}, pid={})", std::process::id());
+
+    // Cleanup al cerrar: borrar discovery file.
+    let pr_cleanup = project_root.clone();
+    tokio::spawn(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        crate::discovery::remove_discovery(&pr_cleanup);
+        std::process::exit(0);
+    });
+
     // WS plugin server: el EditorPlugin Godot conecta aquÃ­ (patrÃ³n gopeak).
     // Multi-sesiÃ³n (fix 2026-08-06): CADA heren-server de cada sesiÃ³n OpenCode
     // bindea su PROPIO puerto libre (ws_port cachea el mismo para session/open).
     // NO matamos otros heren-server â€” eso asesinaba servers de sesiones
     // hermanas a mitad de operaciÃ³n (MCP connection closed + AbortError).
-    let ws_addr = format!("127.0.0.1:{}", ws_port());
+    let ws_addr = format!("127.0.0.1:{port}");
     let ws_addr_clone = ws_addr.clone();
     tokio::spawn(async move {
         if let Err(e) = crate::ws_plugin_server::run_ws_plugin_server(&ws_addr_clone).await {
@@ -2363,8 +2311,9 @@ pub async fn run() -> Result<(), ServerError> {
     });
 
     // MCP server por stdio (OpenCode). Este bloquea hasta que termine.
-    // Framing: NDJSON (JSON por lÃ­nea terminado en \n) â€” verificado con stdin-spy:
-    // OpenCode 1.18 envÃ­a `{"method":"initialize",...}\n`, NO Content-Length.
-    // (`flojo_run_stdio_cl` queda disponible en FlojoMCP para clientes LSP-style.)
-    flojo_run_stdio(Heren::new()).await
+    let result = flojo_run_stdio(Heren::new()).await;
+
+    // Cleanup post-ejecución (si ctrlc no se disparó).
+    crate::discovery::remove_discovery(&project_root);
+    result
 }

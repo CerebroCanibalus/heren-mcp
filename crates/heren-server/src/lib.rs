@@ -35,6 +35,7 @@
 #![recursion_limit = "256"]
 
 pub mod constants;
+pub mod discovery;
 pub mod editor;
 pub mod launcher;
 pub mod pure;

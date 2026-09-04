@@ -21,8 +21,8 @@ const FORBIDDEN_TOOLS: &[&str] = &["help", "scene_plan"];
 const MIN_TOOLS: usize = 15;
 
 /// Tools legítimas sin parámetro `action` (no siguen el patrón "1 tool N acciones"):
-/// orchestrate usa plan/plan_file; health solo project_path.
-const TOOLS_WITHOUT_ACTION: &[&str] = &["orchestrate", "health"];
+/// health solo project_path.
+const TOOLS_WITHOUT_ACTION: &[&str] = &["health"];
 
 async fn list_tools() -> Vec<flojo_mcp::rmcp::model::Tool> {
     let tester = FlojoTester::with_context(Heren::new(), Context::default());

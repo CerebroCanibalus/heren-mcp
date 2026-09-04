@@ -113,7 +113,9 @@ func _walk(node: Node, root: Node, out: Dictionary, depth: int, max_depth: int) 
 # ---------------------------------------------------------------- NIVEL 0: coords
 
 func handle_scene_coords(args: Dictionary) -> Dictionary:
-	var root := _root_node()
+	# P0.2 (2026-09-03): usar _scene_root(args) para honrar scene_path del args
+	# (antes _root_node ignoraba scene_path → retornaba pestaña activa incorrecta).
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var max_depth: int = int(args.get("max_depth", -1))
@@ -125,7 +127,8 @@ func handle_scene_coords(args: Dictionary) -> Dictionary:
 # ---------------------------------------------------------------- NIVEL 1: summary + ascii
 
 func handle_scene_summary(args: Dictionary) -> Dictionary:
-	var root := _root_node()
+	# P0.2 (2026-09-03): _scene_root(args) — soportar scene_path explícito.
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var by_type := {}
@@ -141,7 +144,8 @@ func handle_scene_summary(args: Dictionary) -> Dictionary:
 
 
 func handle_scene_ascii(args: Dictionary) -> Dictionary:
-	var root := _root_node()
+	# P0.2 (2026-09-03): _scene_root(args) — soportar scene_path explícito.
+	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var max_depth: int = int(args.get("max_depth", -1))
@@ -169,8 +173,22 @@ func _ascii_build(node: Node, prefix: String, is_last: bool, depth: int, lines: 
 # Fix 2026-08-07: el viewport del EDITOR devuelve 2x2 (placeholder) con
 # get_texture().get_image() → captura inservible. Render off-screen de la
 # ESCENA en un SubViewport dedicado = fiable. `source: scene|viewport`.
+# Fix 2026-09-03: resolución Full HD por defecto + presets de calidad.
 
-const OFFSCREEN_SIZE := Vector2i(1280, 720)
+const OFFSCREEN_SIZE := Vector2i(1920, 1080)  # Full HD (antes 1280×720)
+
+# Presets de calidad: el agente pasa `quality` y se resuelve a max_side.
+const QUALITY_PRESETS := {
+	"low": 640,
+	"medium": 1280,
+	"high": 1920,
+	"ultra": 2560,
+}
+
+# Pool de SubViewports reusables (2D y 3D separados).
+# Evita crear+destruir en cada captura (~50-200ms de overhead).
+var _svp_2d: SubViewport = null
+var _svp_3d: SubViewport = null
 
 
 func _is_tiny_image(img: Image) -> bool:
@@ -178,19 +196,37 @@ func _is_tiny_image(img: Image) -> bool:
 	return img == null or (img.get_width() <= 2 and img.get_height() <= 2)
 
 
-func _encode_image(img: Image, max_side: int) -> Dictionary:
+func _resolve_max_side(args: Dictionary) -> int:
+	# Prioridad: quality preset > max_side explícito > default 1920.
+	var quality: String = str(args.get("quality", ""))
+	if quality != "" and QUALITY_PRESETS.has(quality):
+		return QUALITY_PRESETS[quality]
+	var max_side: int = int(args.get("max_side", 0))
+	if max_side > 0:
+		return max_side
+	return 1920  # Full HD default (antes 2048)
+
+
+func _encode_image(img: Image, max_side: int, format: String = "png") -> Dictionary:
 	if _is_tiny_image(img):
 		return {}
 	if max_side > 0:
 		img = _resize_image(img, max_side)
 	# Flip: la textura del viewport es Y-invertida en Godot 4.
 	img.flip_y()
-	var png := img.save_png_to_buffer()
-	if png.is_empty():
+	var buf: PackedByteArray
+	var mime: String
+	if format == "jpeg" or format == "jpg":
+		buf = img.save_jpg_to_buffer(0.92)  # quality 92%
+		mime = "image/jpeg"
+	else:
+		buf = img.save_png_to_buffer()
+		mime = "image/png"
+	if buf.is_empty():
 		return {}
 	return {
-		"__image_base64": Marshalls.raw_to_base64(png),
-		"__image_format": "png",
+		"__image_base64": Marshalls.raw_to_base64(buf),
+		"__image_format": mime,
 		"__image_w": img.get_width(),
 		"__image_h": img.get_height(),
 	}
@@ -199,7 +235,7 @@ func _encode_image(img: Image, max_side: int) -> Dictionary:
 # Captura el viewport REAL del editor (lo que el usuario ve: gizmos, grid,
 # selección). Puede devolver {} (2x2) si el editor no expone su render target
 # → el caller hace fallback a scene.
-func _capture_editor_viewport(ei: EditorInterface, mode: String, max_side: int, anim_info: Dictionary, root: Node) -> Dictionary:
+func _capture_editor_viewport(ei: EditorInterface, mode: String, max_side: int, anim_info: Dictionary, root: Node, format: String = "png") -> Dictionary:
 	var viewport: Viewport = null
 	if mode == "3d":
 		viewport = ei.get_editor_viewport_3d()
@@ -220,33 +256,51 @@ func _capture_editor_viewport(ei: EditorInterface, mode: String, max_side: int, 
 				player.pause()
 	RenderingServer.force_draw(true)
 	var img: Image = viewport.get_texture().get_image()
-	return _encode_image(img, max_side)
+	return _encode_image(img, max_side, format)
 
 
 # Render OFF-SCREEN de la ESCENA real (no el viewport del editor): SubViewport
 # dedicado, clon del root sin scripts, framing replicado de la cámara del
 # editor (2D/3D). Fiable siempre; no depende del estado del editor.
-func _render_scene_offscreen(ei: EditorInterface, root: Node, mode: String, max_side: int, anim_info: Dictionary) -> Dictionary:
+# Reutiliza SubViewports del pool para evitar overhead de creación/destrucción.
+func _render_scene_offscreen(ei: EditorInterface, root: Node, mode: String, max_side: int, anim_info: Dictionary, format: String = "png") -> Dictionary:
 	if root == null:
 		return {}
 	var is_3d := mode == "3d"
 	var size := OFFSCREEN_SIZE
-	var max_side_opt := max_side if max_side > 0 else 2048
-	if max(size.x, size.y) > max_side_opt:
-		var scale := float(max_side_opt) / float(max(size.x, size.y))
+	if max(size.x, size.y) > max_side:
+		var scale := float(max_side) / float(max(size.x, size.y))
 		size = Vector2i(max(64, int(size.x * scale)), max(64, int(size.y * scale)))
-	var svp := SubViewport.new()
-	svp.size = size
-	svp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+
+	# Reusar SubViewport del pool (o crear uno nuevo la primera vez)
+	var svp: SubViewport
 	if is_3d:
-		svp.own_world_3d = true
-		svp.world_3d = World3D.new()
-		var env := Environment.new()
-		env.background_mode = Environment.BG_COLOR
-		env.background_color = Color(0.11, 0.12, 0.14)
-		svp.world_3d.environment = env
+		if _svp_3d == null:
+			_svp_3d = SubViewport.new()
+			_svp_3d.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+			_svp_3d.own_world_3d = true
+			_svp_3d.world_3d = World3D.new()
+			var env := Environment.new()
+			env.background_mode = Environment.BG_COLOR
+			env.background_color = Color(0.11, 0.12, 0.14)
+			_svp_3d.world_3d.environment = env
+			get_tree().root.add_child(_svp_3d)
+		svp = _svp_3d
 	else:
-		svp.transparent_bg = true
+		if _svp_2d == null:
+			_svp_2d = SubViewport.new()
+			_svp_2d.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+			_svp_2d.transparent_bg = true
+			get_tree().root.add_child(_svp_2d)
+		svp = _svp_2d
+
+	svp.size = size
+
+	# Limpiar contenido anterior (clon + cámara previa)
+	for child in svp.get_children():
+		child.queue_free()
+	# Esperar un frame para que queue_free se procese
+	await get_tree().process_frame
 
 	var clone := root.duplicate(Node.DUPLICATE_GROUPS)
 	if clone == null:
@@ -255,7 +309,6 @@ func _render_scene_offscreen(ei: EditorInterface, root: Node, mode: String, max_
 	_fit_camera(ei, clone, is_3d)
 	# P1: animación → seek al player del CLON (la escena real intacta).
 	_apply_anim_to_clone(root, clone, anim_info)
-	get_tree().root.add_child(svp)
 	svp.add_child(clone)
 
 	# Esperar a que el renderer dibuje al menos 2 frames del SubViewport.
@@ -264,8 +317,8 @@ func _render_scene_offscreen(ei: EditorInterface, root: Node, mode: String, max_
 	await RenderingServer.frame_post_draw
 
 	var img: Image = svp.get_texture().get_image()
-	var out := _encode_image(img, max_side)
-	svp.queue_free()
+	var out := _encode_image(img, max_side, format)
+	# NO destruir el SubViewport — se reutiliza en la próxima captura.
 	return out
 
 
@@ -324,9 +377,18 @@ func handle_capture(args: Dictionary) -> Dictionary:
 	var ei := _editor_interface()
 	if ei == null:
 		return {"ok": false, "error": "no editor interface"}
+	# P0.3 (2026-09-03): capturar durante play COMPITE por GPU → frame_post_draw
+	# no resuelve → timeout >30s. Rechazar con error claro para que el agente
+	# pare el juego primero con debug/stop_scene.
+	if ei.is_playing_scene():
+		return {
+			"ok": false,
+			"error": "capture_blocked_during_play: el renderer está ocupado con el juego; usa debug/stop_scene primero (o captura la pestaña con source='viewport' solo si esperas 2-3s de latencia)",
+		}
 	var mode: String = str(args.get("viewport", "2d"))
-	var max_side: int = int(args.get("max_side", 0))
+	var max_side: int = _resolve_max_side(args)
 	var source: String = str(args.get("source", "scene"))
+	var format: String = str(args.get("format", "png"))
 	if source != "scene" and source != "viewport":
 		source = "scene"
 	var anim_info: Dictionary = _args_dict(args, "animation")
@@ -335,13 +397,13 @@ func handle_capture(args: Dictionary) -> Dictionary:
 	var img_result: Dictionary = {}
 	var used_source := source
 	if source == "viewport":
-		img_result = await _capture_editor_viewport(ei, mode, max_side, anim_info, root)
+		img_result = await _capture_editor_viewport(ei, mode, max_side, anim_info, root, format)
 		if img_result.is_empty():
 			# El viewport del editor no expone render target (2x2) → escena.
 			used_source = "scene"
-			img_result = await _render_scene_offscreen(ei, root, mode, max_side, anim_info)
+			img_result = await _render_scene_offscreen(ei, root, mode, max_side, anim_info, format)
 	else:
-		img_result = await _render_scene_offscreen(ei, root, mode, max_side, anim_info)
+		img_result = await _render_scene_offscreen(ei, root, mode, max_side, anim_info, format)
 	if img_result.is_empty():
 		return {"ok": false, "error": "capture failed: no image (source: " + used_source + ")"}
 	var out := {
@@ -350,6 +412,8 @@ func handle_capture(args: Dictionary) -> Dictionary:
 		"source": used_source,
 		"scene": root.name if root else "",
 		"node_count": root.get_child_count() + 1 if root else 0,
+		"max_side": max_side,
+		"format": format,
 	}
 	out.merge(img_result)
 	if not anim_info.is_empty():
@@ -397,19 +461,20 @@ func handle_capture_node(args: Dictionary) -> Dictionary:
 	# Captura de la escena (off-screen) o del viewport del editor; el framing
 	# del nodo es metadato de bbox/pos.
 	var mode: String = str(args.get("viewport", "2d"))
-	var max_side: int = int(args.get("max_side", 0))
+	var max_side: int = _resolve_max_side(args)
 	var source: String = str(args.get("source", "scene"))
+	var format: String = str(args.get("format", "png"))
 	if source != "scene" and source != "viewport":
 		source = "scene"
 	var img_result: Dictionary = {}
 	var used_source := source
 	if source == "viewport":
-		img_result = await _capture_editor_viewport(ei, mode, max_side, {}, root)
+		img_result = await _capture_editor_viewport(ei, mode, max_side, {}, root, format)
 		if img_result.is_empty():
 			used_source = "scene"
-			img_result = await _render_scene_offscreen(ei, root, mode, max_side, {})
+			img_result = await _render_scene_offscreen(ei, root, mode, max_side, {}, format)
 	else:
-		img_result = await _render_scene_offscreen(ei, root, mode, max_side, {})
+		img_result = await _render_scene_offscreen(ei, root, mode, max_side, {}, format)
 	if img_result.is_empty():
 		return {"ok": false, "error": "capture failed"}
 	var out := {
@@ -417,6 +482,8 @@ func handle_capture_node(args: Dictionary) -> Dictionary:
 		"node_path": node_path,
 		"viewport": mode,
 		"source": used_source,
+		"max_side": max_side,
+		"format": format,
 		"bbox": _node_bbox(node),
 		"pos": _node_pos(node),
 	}
