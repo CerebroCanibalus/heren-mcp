@@ -13,12 +13,11 @@ extends EditorDebuggerPlugin
 #   3. CONTROL: session.send_message("break"/"continue"/"next"/"step").
 #   4. PROFILER CPU: session.toggle_profiler("servers", ...) → el juego
 #      devuelve `servers:profile_frame` + `servers:function_signature`.
-#   5. CAPTURA CRUDA: localiza el ScriptEditorDebugger default (tab 0 del
-#      dock "Debugger") por árbol y conecta su signal `debug_data`, que
-#      emite TODOS los mensajes del protocolo: stack_dump, stack_frame_var(s),
-#      error (con stack trace), output, servers:profile_frame...
-#      (Los plugins NO reciben estos mensajes via `_capture`: el debugger
-#      integrado los consume primero — sed.cpp _parse_message, 2026-08-07.)
+#   5. CAPTURA CRUDA: override de `_capture(message, data, session)` —
+#      API oficial de EditorDebuggerPlugin. Recibe TODOS los mensajes del
+#      protocolo: stack_dump, stack_frame_var(s), error (con stack trace),
+#      output, servers:profile_frame... Return false = no consumir.
+#      Backup: signal `debug_data` en ScriptEditorDebugger (multi-sesión).
 
 var _editor_plugin: EditorPlugin
 var _session_ids: Array[int] = []
@@ -62,6 +61,33 @@ func first_session() -> EditorDebuggerSession:
 	if arr.is_empty():
 		return null
 	return arr[0]
+
+
+# ---------------------------------------------------- _capture (API oficial)
+
+func _capture(message: String, data: Array, session_id: int) -> bool:
+	# API oficial de EditorDebuggerPlugin — se llama para CADA mensaje del
+	# protocolo de depuración. Más confiable que debug_data signal porque
+	# no depende de encontrar el ScriptEditorDebugger por árbol.
+	match message:
+		"error":
+			_store_error(data)
+		"output":
+			_store_output(data)
+		"stack_dump":
+			_store_stack_dump(data)
+		"stack_frame_vars":
+			vars_pending = true
+			last_vars.clear()
+		"stack_frame_var":
+			_append_frame_var(data)
+		"servers:profile_frame":
+			_store_profile_frame(data)
+		"servers:function_signature":
+			_store_signature(data)
+	# Return false: no consumir — dejar que el handler interno del editor
+	# también procese (breakpoints UI, output panel, etc.)
+	return false
 
 
 func ensure_hooked() -> void:

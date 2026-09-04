@@ -352,53 +352,33 @@ func handle_get_editor_errors(args: Dictionary) -> Dictionary:
 	var errors: Array = _dbg_plugin.last_errors
 	if errors.size() > limit:
 		errors = errors.slice(errors.size() - limit)
-	# NEW: Lectura EditorLog para errores del editor en reposo.
-	# El panel Output del editor contiene mensajes `output` con level=2 (error).
-	# Accedemos al dock "Output" y leemos su contenido estructurado.
+	# Lectura del panel Output del editor para errores en reposo.
+	# En Godot 4.x el Output dock es un RichTextLabel (no existe
+	# "EditorOutputDock" ni "_output_messages"). Leemos el texto
+	# parseado y filtramos líneas que empiezan con "E " (error).
 	var output_errors: Array = []
 	var root := _editor_interface().get_base_control()
-	# Intentar encontrar el dock "Output" por nombre de clase.
-	# Godot 4.7: el dock de Output tiene class_name "Output" o similar.
-	var docks := root.get_children()
-	var editor_log_dock: Node = null
-	for dock in docks:
-		if dock.is_class("EditorOutputDock") or dock.name == "Output":
-			editor_log_dock = dock
-			break
-	if editor_log_dock == null:
-		# Fallback: buscar por nombre de clase conocido
-		var all_docks := root.find_child("Output", true, false)
-		if all_docks != null:
-			editor_log_dock = all_docks
-	if editor_log_dock != null:
-		# Leer mensajes del panel Output.
-		# El dock Output emite señales o tiene un array "_output_messages".
-		var output_messages = editor_log_dock.get("_output_messages")
-		if output_messages == null:
-			output_messages = []
-		if output_messages is Array:
-			# Copiar y filtrar errors (level=2)
-			var filtered := []
-			for msg in output_messages:
-				if msg is Dictionary and msg.has("level") and msg.get("level") == 2:
-					filtered.append(msg)
-			output_errors = filtered
+	if root:
+		var rtl := _find_output_rich_text_label(root)
+		if rtl:
+			var raw_text: String = rtl.get_parsed_text()
+			for line in raw_text.split("\n"):
+				if line.begins_with("E "):
+					output_errors.append({"text": line, "level": 2})
 	# Limitar output_errors
-	var output_errors_limited := output_errors
-	if output_errors_limited.size() > limit:
-		output_errors_limited = output_errors_limited.slice(output_errors_limited.size() - limit)
+	if output_errors.size() > limit:
+		output_errors = output_errors.slice(output_errors.size() - limit)
 	# output_errors: texto formateado `E hh:mm:ss:mmm file:line @ func(): msg`
 	# + stack — EXACTAMENTE lo que muestra el panel Output del editor.
 	return {
 		"ok": true,
 		"errors": errors,
 		"count": _dbg_plugin.last_errors.size(),
-		"output_errors": output_errors_limited,
-		"output_count": output_errors_limited.size(),
+		"output_errors": output_errors,
+		"output_count": output_errors.size(),
 		"hook_ok": _dbg_plugin._hooked,
-		"note": "errores de runtime del depurador: errors = estructurados (mensaje error), output_errors = texto del panel Output (mensaje output, level=2). " +
-				"Adicional: EditorLog read para errores del editor en reposo. " +
-				"Los del editor en reposo no son accesibles por API pública sin EditorLog.",
+		"note": "errors = runtime estructurados del debugger (con stack). " +
+				"output_errors = líneas 'E ' del panel Output del editor.",
 	}
 
 
@@ -424,3 +404,23 @@ func handle_output(args: Dictionary) -> Dictionary:
 		"count": lines.size(),
 		"hook_ok": _dbg_plugin._hooked,
 	}
+
+
+# ---------------------------------------------------- helpers internos
+
+func _find_output_rich_text_label(root: Node) -> RichTextLabel:
+	# Busca el RichTextLabel del panel Output del editor.
+	# En Godot 4.x el dock "Output" contiene un RichTextLabel hijo.
+	# Estrategia: encontrar nodo "Output" → RichTextLabel hijo.
+	var output_node := root.find_child("Output", true, false)
+	if output_node:
+		var rtl := output_node.find_child("RichTextLabel", true, false)
+		if rtl is RichTextLabel:
+			return rtl
+	# Fallback: buscar RichTextLabels que contengan "Error" o "error" en su texto
+	for child in root.get_children():
+		if child is RichTextLabel and child.visible:
+			var txt: String = child.get_parsed_text()
+			if txt.contains("error") or txt.contains("Error"):
+				return child
+	return null
