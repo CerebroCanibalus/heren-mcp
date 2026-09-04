@@ -101,6 +101,11 @@ func _enter_tree() -> void:
 	_dbg_plugin.setup(self)
 	_debug_handlers.set_debugger_plugin(_dbg_plugin)
 	add_debugger_plugin(_dbg_plugin)
+	# 🚨 Hookear TEMPRANO (2026-09-04): si el hook se establece cuando el
+	# agente llama debug (después del crash), los errores ya pasaron y
+	# last_errors queda vacío. ensure_hooked() con retries 10×1s maneja
+	# el caso de que el dock aún no esté montado.
+	_dbg_plugin.ensure_hooked()
 
 	# Shader handlers.
 	_shader_handlers = ShaderHandlersScript.new()

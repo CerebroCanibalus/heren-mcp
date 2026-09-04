@@ -102,6 +102,7 @@ func handle_summary(args: Dictionary) -> Dictionary:
 			game["breakpoint_hit"] = null
 		
 		game["fps"] = Engine.get_frames_per_second() if ei.is_playing_scene() else 0
+		game["received_msgs"] = _dbg_plugin.received_msgs
 	else:
 		game["is_breaked"] = false
 		game["breakpoint_hit"] = null
@@ -111,11 +112,13 @@ func handle_summary(args: Dictionary) -> Dictionary:
 	# --- Errors ---
 	var errors := {}
 	if _dbg_plugin:
+		_dbg_plugin.refresh_errors_tree()
 		errors["runtime"] = _dbg_plugin.last_errors
 		errors["output_errors"] = _dbg_plugin.last_output_errors
-		errors["count"] = _dbg_plugin.last_errors.size() + _dbg_plugin.last_output_errors.size()
+		errors["tree"] = _dbg_plugin.last_errors_tree
+		errors["count"] = _dbg_plugin.last_errors.size() + _dbg_plugin.last_output_errors.size() + _dbg_plugin.last_errors_tree.size()
 	else:
-		errors = {"runtime": [], "output_errors": [], "count": 0}
+		errors = {"runtime": [], "output_errors": [], "tree": [], "count": 0}
 	result["errors"] = errors
 	
 	# --- Breakpoints ---
@@ -278,6 +281,15 @@ func handle_run_scene(args: Dictionary) -> Dictionary:
 				"requested": scene_path,
 				"hint": "revisa debug/output filter=error",
 			}
+		# 🚨 CRASH CHECK (2026-09-04): la escena puede arrancar y crashear
+		# en _ready (error de runtime). El agente debe saberlo, no ver
+		# "verified: true" con el juego muerto. Esperar 2 frames más y
+		# verificar si el debugger está breaked con errores capturados.
+		await get_tree().process_frame
+		await get_tree().process_frame
+		var crash := _check_crash()
+		if not crash.is_empty():
+			return crash
 		return {"ok": true, "running": scene_path, "custom": true, "verified": true}
 
 	ei.play_main_scene()
@@ -289,7 +301,34 @@ func handle_run_scene(args: Dictionary) -> Dictionary:
 			"error": "play_failed: main_scene didn't start",
 			"hint": "revisa application/run/main_scene en project.godot",
 		}
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var crash_main := _check_crash()
+	if not crash_main.is_empty():
+		return crash_main
 	return {"ok": true, "running": "main_scene", "custom": false, "verified": true}
+
+
+func _check_crash() -> Dictionary:
+	# Verifica si el juego crasheó al arrancar (breakpoint hit por error).
+	# Devuelve {} si no hay crash, o un Dictionary con el error si lo hay.
+	if _dbg_plugin == null:
+		return {}
+	if not _dbg_plugin.stack_breaked:
+		return {}
+	if _dbg_plugin.last_errors.is_empty():
+		return {}
+	var top: Dictionary = _dbg_plugin.last_errors[0]
+	return {
+		"ok": false,
+		"error": "scene_crashed_on_start",
+		"file": top.get("file", ""),
+		"line": top.get("line", 0),
+		"function": top.get("function", ""),
+		"message": str(top.get("error", "")) + ": " + str(top.get("descr", "")),
+		"stack": top.get("stack", []),
+		"hint": "usa debug/output filter=error para ver el error completo",
+	}
 
 
 func handle_output(args: Dictionary) -> Dictionary:
@@ -316,6 +355,18 @@ func handle_output(args: Dictionary) -> Dictionary:
 				for line in raw_text.split("\n"):
 					if line.begins_with("E "):
 						lines.append({"text": line, "level": 2})
+		# Añadir errores del tab Errors del Debugger (Tree widget) — fuente
+		# robusta: Godot puebla ese Tree siempre, sin depender del hook timing.
+		_dbg_plugin.refresh_errors_tree()
+		for err in _dbg_plugin.last_errors_tree:
+			var text := "%s %s" % [err.get("time", ""), err.get("title", "")]
+			if err.get("file", "") != "":
+				text += " @ %s:%s" % [err.get("file", ""), err.get("line", 0)]
+			if err.get("error", "") != "":
+				text += " | %s" % err.get("error", "")
+			for frame in err.get("stack", []):
+				text += "\n    " + str(frame)
+			lines.append({"text": text, "level": 2})
 	if lines.size() > limit:
 		lines = lines.slice(lines.size() - limit)
 	return {

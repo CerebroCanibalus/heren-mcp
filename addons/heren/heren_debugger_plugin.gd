@@ -13,11 +13,13 @@ extends EditorDebuggerPlugin
 #   3. CONTROL: session.send_message("break"/"continue"/"next"/"step").
 #   4. PROFILER CPU: session.toggle_profiler("servers", ...) → el juego
 #      devuelve `servers:profile_frame` + `servers:function_signature`.
-#   5. CAPTURA CRUDA: override de `_capture(message, data, session)` —
-#      API oficial de EditorDebuggerPlugin. Recibe TODOS los mensajes del
-#      protocolo: stack_dump, stack_frame_var(s), error (con stack trace),
-#      output, servers:profile_frame... Return false = no consumir.
-#      Backup: signal `debug_data` en ScriptEditorDebugger (multi-sesión).
+#   5. CAPTURA CRUDA: conecta el signal `debug_data` del ScriptEditorDebugger
+#      (tab 0 del dock "Debugger"), que emite TODOS los mensajes del protocolo
+#      ANTES de que el handler interno los procese: stack_dump, stack_frame_var(s),
+#      error (con stack trace), output, servers:profile_frame...
+#      (El override `_capture` de EditorDebuggerPlugin NO sirve para mensajes
+#      estándar: solo recibe mensajes con prefijo custom via `_has_capture` —
+#      docs oficiales 4.x.)
 
 var _editor_plugin: EditorPlugin
 var _session_ids: Array[int] = []
@@ -38,9 +40,17 @@ var vars_pending: bool = false
 var last_errors: Array = []
 var last_output: Array = []
 var last_output_errors: Array = []  # SOLO líneas de error (level==2) del output
+var received_msgs: Array = []  # DIAGNÓSTICO: últimos mensajes crudos del protocolo
 var profiler_running: bool = false
 var profiler_frames: Array = []
 var _sig_map: Dictionary = {}  # sig_id -> "path::function"
+
+# --- Errores del tab "Errors" del Debugger (Tree widget) ------------------
+# Godot puebla este Tree en _msg_error (script_editor_debugger.cpp L630+):
+# cada item top-level = un error/warning, hijos = <Lang Error>, <Lang Source>,
+# <Stack Trace> + frames. Es la fuente ROBUSTA de errores: siempre tiene los
+# errores aunque el hook debug_data los haya perdido por timing.
+var last_errors_tree: Array = []  # errores parseados del Tree (JSON-friendly)
 
 const MAX_BUFFER = 200
 const HOOK_MAX_RETRIES = 10  # 10s a 1s/retry: el dock se monta rápido; retries reducidos por D3
@@ -61,33 +71,6 @@ func first_session() -> EditorDebuggerSession:
 	if arr.is_empty():
 		return null
 	return arr[0]
-
-
-# ---------------------------------------------------- _capture (API oficial)
-
-func _capture(message: String, data: Array, session_id: int) -> bool:
-	# API oficial de EditorDebuggerPlugin — se llama para CADA mensaje del
-	# protocolo de depuración. Más confiable que debug_data signal porque
-	# no depende de encontrar el ScriptEditorDebugger por árbol.
-	match message:
-		"error":
-			_store_error(data)
-		"output":
-			_store_output(data)
-		"stack_dump":
-			_store_stack_dump(data)
-		"stack_frame_vars":
-			vars_pending = true
-			last_vars.clear()
-		"stack_frame_var":
-			_append_frame_var(data)
-		"servers:profile_frame":
-			_store_profile_frame(data)
-		"servers:function_signature":
-			_store_signature(data)
-	# Return false: no consumir — dejar que el handler interno del editor
-	# también procese (breakpoints UI, output panel, etc.)
-	return false
 
 
 func ensure_hooked() -> void:
@@ -191,6 +174,107 @@ func request_frame_vars(frame: int) -> void:
 	session.send_message("get_stack_frame_vars", [frame])
 
 
+# ------------------------------------------------- tab Errors (Tree widget)
+
+# Lee el tab "Errors" del Debugger (Tree widget) y lo vuelca a
+# last_errors_tree. Es la fuente robusta de errores: Godot puebla ese Tree en
+# _msg_error SIEMPRE, sin depender del timing del hook debug_data.
+func refresh_errors_tree() -> void:
+	last_errors_tree.clear()
+	var root := _editor_plugin.get_editor_interface().get_base_control() if _editor_plugin != null else null
+	if root == null:
+		return
+	var dock := _find_class(root, "EditorDebuggerNode")
+	if dock == null:
+		return
+	# Cada ScriptEditorDebugger (sesión) tiene su propio tab Errors. Recorrer
+	# todos los que estén montados; el Tree cacheado se re-valida cada vez.
+	var found_any := false
+	for child in dock.get_children():
+		if child.is_class("TabContainer"):
+			for tab in child.get_children():
+				if tab.is_class("ScriptEditorDebugger"):
+					var tree := _find_error_tree(tab)
+					if tree != null:
+						found_any = true
+						last_errors_tree.append_array(_read_error_tree(tree))
+	if last_errors_tree.size() > MAX_BUFFER:
+		last_errors_tree = last_errors_tree.slice(last_errors_tree.size() - MAX_BUFFER)
+
+
+func _find_error_tree(dbg: Node) -> Tree:
+	# Busca el VBoxContainer "Errors"/"エラー" dentro del ScriptEditorDebugger
+	# y devuelve su Tree hijo (patrón del plugin de referencia
+	# godot-debugger-error-logger).
+	for child in dbg.get_children():
+		var found := _find_error_tree_recursive(child)
+		if found != null:
+			return found
+	return null
+
+
+func _find_error_tree_recursive(node: Node) -> Tree:
+	var node_name := str(node.name)
+	# El tab se llama "Errors" vacío y "Errors (N)" con errores (update_tabs,
+	# script_editor_debugger.cpp L162-176) → begins_with, no igualdad.
+	if (node_name.begins_with("Errors") or node_name.begins_with("エラー")) and node is VBoxContainer:
+		for child in node.get_children():
+			if child is Tree:
+				return child
+	for child in node.get_children():
+		var found := _find_error_tree_recursive(child)
+		if found != null:
+			return found
+	return null
+
+
+func _read_error_tree(tree: Tree) -> Array:
+	# Parsea el Tree de errores. Estructura (script_editor_debugger.cpp L630+):
+	#   top-level: col0=time, col1=title, meta "_is_error"/"_is_warning",
+	#              metadata(0)=[file,line]
+	#   hijos:     col0="<Lang Error>"/"<Lang Source>"/"<Stack Trace>" o "",
+	#              col1=detalle/frame
+	var out: Array = []
+	var root := tree.get_root()
+	if root == null:
+		return out
+	var item := root.get_first_child()
+	while item != null:
+		var entry := {
+			"time": str(item.get_text(0)),
+			"title": str(item.get_text(1)),
+			"warning": item.has_meta("_is_warning"),
+			"file": "",
+			"line": 0,
+			"error": "",
+			"source": "",
+			"stack": [],
+		}
+		var meta = item.get_metadata(0)
+		if meta is Array and meta.size() >= 2:
+			entry["file"] = str(meta[0])
+			entry["line"] = int(meta[1])
+		var child := item.get_first_child()
+		while child != null:
+			var tag := str(child.get_text(0))
+			var detail := str(child.get_text(1))
+			if tag.begins_with("<") and tag.ends_with(">"):
+				var tag_lower := tag.to_lower()
+				if tag_lower.contains("error"):
+					entry["error"] = detail
+				elif tag_lower.contains("source"):
+					entry["source"] = detail
+				elif tag_lower.contains("stack"):
+					entry["stack"].append(detail)
+			else:
+				if detail.length() > 0:
+					entry["stack"].append(detail)
+			child = child.get_next()
+		out.append(entry)
+		item = item.get_next()
+	return out
+
+
 # ----------------------------------------------------------- señal de sesión
 
 func _setup_session(session_id: int) -> void:
@@ -241,6 +325,12 @@ func _hook_default_debugger() -> void:
 	# "Debugger" (multi-sesión, no solo tab 0). Si el dock aún no está
 	# montado, programa reintentos (HOOK_MAX_RETRIES × 1s) — el dock se
 	# monta al primer play o al abrir el panel inferior.
+	# 🚨 TIMING (2026-09-04): el hook debe establecerse ANTES de que el
+	# juego arranque. Si se establece después del crash, los errores ya
+	# pasaron y last_errors queda vacío. Por eso:
+	#   1. _find_default_debugger retorna el TabContainer aunque esté vacío
+	#   2. child_added conecta sesiones NUEVAS automáticamente
+	#   3. ensure_hooked() se llama en _enter_tree del editor_plugin
 	var dbg := _find_default_debugger()
 	if dbg == null:
 		if _hook_retries < HOOK_MAX_RETRIES:
@@ -250,9 +340,19 @@ func _hook_default_debugger() -> void:
 				_hook_timer.timeout.connect(_on_hook_retry)
 		return
 	_hooked = true
+	# Conectar child_entered_tree: cuando el juego arranca, se crea un nuevo
+	# ScriptEditorDebugger en el TabContainer → hookearlo automáticamente.
+	# (Godot 4: Node.child_entered_tree, NO child_added que no existe.)
+	if not dbg.is_connected("child_entered_tree", _on_debugger_child_added):
+		dbg.connect("child_entered_tree", _on_debugger_child_added)
 	for child in dbg.get_children():
 		if child.is_class("ScriptEditorDebugger"):
 			_hook_one(child)
+
+
+func _on_debugger_child_added(child: Node) -> void:
+	if child.is_class("ScriptEditorDebugger"):
+		_hook_one(child)
 
 
 func _on_hook_retry() -> void:
@@ -272,6 +372,8 @@ func _find_default_debugger() -> Node:
 	# El run local usa la primera sesión inactiva del dock "Debugger"
 	# (EditorDebuggerNode, tab 0 = get_default_debugger()). Localizarla por
 	# árbol: dock class EditorDebuggerNode → TabContainer → hijo.
+	# 🚨 Retorna el TabContainer AUNQUE esté vacío (get_child_count()==0):
+	# el child_added signal conecta sesiones futuras automáticamente.
 	if _editor_plugin == null:
 		return null
 	var root := _editor_plugin.get_editor_interface().get_base_control()
@@ -285,7 +387,7 @@ func _find_default_debugger() -> Node:
 		if child.is_class("TabContainer"):
 			tabs = child
 			break
-	if tabs == null or tabs.get_child_count() == 0:
+	if tabs == null:
 		return null
 	return tabs
 
@@ -321,6 +423,14 @@ func _find_editor_log_dock(root: Node) -> Node:
 # ----------------------------------------------------------- mensajes crudos
 
 func _on_debug_data(msg: String, data: Array) -> void:
+	received_msgs.append({
+		"msg": msg,
+		"size": data.size(),
+		"t0": typeof(data[0]) if data.size() > 0 else -1,
+		"t1": typeof(data[1]) if data.size() > 1 else -1,
+	})
+	if received_msgs.size() > 50:
+		received_msgs.pop_front()
 	match msg:
 		"stack_dump":
 			_store_stack_dump(data)
