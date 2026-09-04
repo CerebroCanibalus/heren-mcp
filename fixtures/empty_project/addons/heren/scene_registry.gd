@@ -255,11 +255,6 @@ static func has_pending_ops(path: String) -> bool:
 	return _pending_ops.has(p) and (_pending_ops[p] as Array).size() > 0
 
 
-static func is_dirty(path: String) -> bool:
-	var p := _norm(path)
-	return _dirty.get(p, false)
-
-
 ## Devuelve la escena dirty más reciente (por mtime), o "" si no hay ninguna.
 ## Útil para commit inteligente: si el agente no pasa scene_path, usar la
 ## última escena que fue editada por el MCP.

@@ -560,6 +560,7 @@ func handle_one_shot(args: Dictionary) -> Dictionary:
 	var tracks: Array = args.get("tracks", [])
 	var track_count := 0
 	var key_count := 0
+	var key_failures: Array = []
 	for t in tracks:
 		var td: Dictionary = t if t is Dictionary else {}
 		var node_path: String = str(td.get("node", ""))
@@ -594,14 +595,21 @@ func handle_one_shot(args: Dictionary) -> Dictionary:
 			var kd: Dictionary = k if k is Dictionary else {}
 			var time: float = float(kd.get("time", 0.0))
 			var transition: float = float(kd.get("transition", 1.0))
+			var inserted: int
 			if track_type == "method":
 				var method_name: String = str(kd.get("method", ""))
 				var method_args: Array = kd.get("args", [])
 				var m := {"method": method_name, "args": method_args}
-				anim.track_insert_key(track_idx, time, m, transition)
+				inserted = anim.track_insert_key(track_idx, time, m, transition)
 			else:
 				var value: Variant = HerenCoordsScript.deserialize_value(kd.get("value"))
-				anim.track_insert_key(track_idx, time, value, transition)
+				inserted = anim.track_insert_key(track_idx, time, value, transition)
+			# FAIL-FAST (2026-09-03): track_insert_key retorna -1 si el tipo de
+			# valor es incompatible con el track (ej: Vector3 en rotation_3d).
+			# Antes se incrementaba key_count incondicionalmente → falseaba.
+			if inserted < 0:
+				key_failures.append({"track": node_path, "time": time, "type": track_type})
+				continue
 			key_count += 1
 
 	var anim_lib := player.get_animation_library("")
@@ -610,6 +618,15 @@ func handle_one_shot(args: Dictionary) -> Dictionary:
 		player.add_animation_library("", anim_lib)
 	anim_lib.add_animation(anim_name, anim)
 
+	if key_failures.size() > 0:
+		return {
+			"ok": false,
+			"error": "one_shot_partial_failure: %d keys rechazados por tipo incompatible" % key_failures.size(),
+			"anim_name": anim_name,
+			"tracks": track_count,
+			"keys": key_count,
+			"key_failures": key_failures,
+		}
 	return {
 		"ok": true,
 		"anim_name": anim_name,

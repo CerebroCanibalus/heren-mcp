@@ -302,14 +302,14 @@ func handle_input_map(args: Dictionary) -> Dictionary:
 				var pname: String = str(prop.name)
 				if not pname.begins_with("input/"):
 					continue
-				var action_name: String = pname.substr("input/".length())
-				if action_name == "":
+				var inp_action: String = pname.substr("input/".length())
+				if inp_action == "":
 					continue
-				if not include_ui and action_name.begins_with("ui_"):
+				if not include_ui and inp_action.begins_with("ui_"):
 					continue
-				if prefix != "" and not action_name.begins_with(prefix):
+				if prefix != "" and not inp_action.begins_with(prefix):
 					continue
-				out.append(_describe_input_action(action_name))
+				out.append(_describe_input_action(inp_action))
 			return {"ok": true, "actions": out, "count": out.size()}
 
 		"get":

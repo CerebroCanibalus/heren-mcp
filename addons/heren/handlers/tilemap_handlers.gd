@@ -171,7 +171,19 @@ func handle_set_cell(args: Dictionary) -> Dictionary:
 		return {"ok": false, "error": "layer_out_of_range: " + str(layer)}
 
 	tilemap.set_cell(layer, coords, source_id, atlas_coords, alternative_tile)
-	return {"ok": true, "position": {"x": coords.x, "y": coords.y}, "atlas": {"x": atlas_coords.x, "y": atlas_coords.y}}
+	# FAIL-FAST (2026-09-03): set_cell falla silenciosamente si source_id no
+	# existe en el TileSet. Verificar leyendo get_cell_source_id.
+	var actual_source: int = tilemap.get_cell_source_id(layer, coords)
+	if source_id != 0 and actual_source != source_id:
+		var valid_ids := []
+		for s in tilemap.tile_set.get_source_count():
+			valid_ids.append(tilemap.tile_set.get_source_id(s))
+		return {
+			"ok": false,
+			"error": "set_cell_failed: source_id=%d no existe en TileSet" % source_id,
+			"hint": "source_ids disponibles: %s" % str(valid_ids),
+		}
+	return {"ok": true, "position": {"x": coords.x, "y": coords.y}, "atlas": {"x": atlas_coords.x, "y": atlas_coords.y}, "verified": true}
 
 
 func handle_terrain(args: Dictionary) -> Dictionary:
@@ -197,7 +209,22 @@ func handle_terrain(args: Dictionary) -> Dictionary:
 		return {"ok": false, "error": "cells required"}
 
 	tilemap.set_cells_terrain_connect(layer, positions, terrain_set, terrain, true)
-	return {"ok": true, "applied": positions.size(), "terrain_set": terrain_set, "terrain": terrain}
+	# FAIL-FAST (2026-09-03): contar cuántas celdas quedaron realmente con el
+	# terrain solicitado. Antes reportaba `applied: positions.size()` (input,
+	# no output). get_cell_tile_data(layer, pos).terrain_set/terrain.
+	var actually_applied := 0
+	for pos in positions:
+		var td := tilemap.get_cell_tile_data(layer, pos)
+		if td != null and td.terrain_set == terrain_set and td.terrain == terrain:
+			actually_applied += 1
+	if actually_applied != positions.size():
+		return {
+			"ok": false,
+			"error": "terrain_partial: %d/%d celdas aplicadas" % [actually_applied, positions.size()],
+			"applied": actually_applied,
+			"requested": positions.size(),
+		}
+	return {"ok": true, "applied": actually_applied, "terrain_set": terrain_set, "terrain": terrain, "verified": true}
 
 
 func handle_pattern(args: Dictionary) -> Dictionary:

@@ -290,10 +290,31 @@ func handle_run_scene(args: Dictionary) -> Dictionary:
 		if not ResourceLoader.exists(scene_path):
 			return {"ok": false, "error": "scene_not_found: " + scene_path}
 		ei.play_custom_scene(scene_path)
-		return {"ok": true, "running": scene_path, "custom": true}
+		# FAIL-FAST (2026-09-03): play_custom_scene es ASÍNCRONO. Si el agente
+		# lee debug/summary inmediatamente, ve is_playing=false (el play
+		# aún no arrancó). Esperar 1 frame y verificar. Si falla, retornar
+		# error accionable.
+		await get_tree().process_frame
+		var playing := ei.is_playing_scene()
+		if not playing:
+			return {
+				"ok": false,
+				"error": "play_failed: scene didn't start (1 frame after play_custom_scene)",
+				"requested": scene_path,
+				"hint": "revisa output del editor o debug/get_editor_errors",
+			}
+		return {"ok": true, "running": scene_path, "custom": true, "verified": true}
 
 	ei.play_main_scene()
-	return {"ok": true, "running": "main_scene", "custom": false}
+	await get_tree().process_frame
+	var playing_main := ei.is_playing_scene()
+	if not playing_main:
+		return {
+			"ok": false,
+			"error": "play_failed: main_scene didn't start",
+			"hint": "revisa application/run/main_scene en project.godot",
+		}
+	return {"ok": true, "running": "main_scene", "custom": false, "verified": true}
 
 
 func handle_stop_scene(args: Dictionary) -> Dictionary:

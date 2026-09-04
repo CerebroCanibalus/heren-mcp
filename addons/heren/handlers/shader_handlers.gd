@@ -403,8 +403,45 @@ func handle_uniform(args: Dictionary) -> Dictionary:
 	if material == null:
 		return {"ok": false, "error": "no_shader_material", "message": "no ShaderMaterial found on node"}
 
-	material.set_shader_parameter(uniform_name, HerenCoordsScript.deserialize_value(args.get("value")))
-	return {"ok": true, "uniform": uniform_name, "node_path": _node_path_relative(node, root)}
+	# FAIL-FAST (2026-09-03): set_shader_parameter SILENCIOSAMENTE descarta
+	# el valor si el shader no declara ese uniform. Verificar leyendo de
+	# vuelta Y listando los uniforms reales del shader para hint diagnóstico.
+	var value: Variant = HerenCoordsScript.deserialize_value(args.get("value"))
+	material.set_shader_parameter(uniform_name, value)
+	var readback: Variant = material.get_shader_parameter(uniform_name)
+	var shader := material.shader
+	var declared: Array = []
+	if shader != null:
+		for u in shader.get_shader_uniform_list():
+			declared.append(u.get("name", ""))
+	if not _shader_value_match(readback, value):
+		return {
+			"ok": false,
+			"error": "uniform_not_set: el shader no acepta '%s'" % uniform_name,
+			"hint": "uniforms declarados en el shader: %s" % str(declared),
+		}
+	return {
+		"ok": true,
+		"uniform": uniform_name,
+		"node_path": _node_path_relative(node, root),
+		"verified": true,
+	}
+
+
+## Comparador laxo para set/get_shader_parameter (tolera float→int, etc).
+func _shader_value_match(a: Variant, b: Variant) -> bool:
+	if typeof(a) != typeof(b):
+		# Tolerar float↔int si numéricamente iguales.
+		if (a is float or a is int) and (b is float or b is int):
+			return float(a) == float(b)
+		return false
+	if a is Vector2 and b is Vector2:
+		return a.is_equal_approx(b)
+	if a is Vector3 and b is Vector3:
+		return a.is_equal_approx(b)
+	if a is Color and b is Color:
+		return a.is_equal_approx(b)
+	return a == b
 
 
 ## Busca el primer ShaderMaterial en el nodo (material / override / overlay /

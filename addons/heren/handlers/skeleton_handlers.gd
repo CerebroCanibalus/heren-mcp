@@ -355,32 +355,14 @@ func handle_skeleton_add_bone(args: Dictionary) -> Dictionary:
 		skeleton.add_child(bone)
 		bone.owner = root
 		return {"ok": true, "bone_name": bone_name, "type": "Bone2D"}
-
-	elif skeleton is Skeleton3D:
-		var skel3d := skeleton as Skeleton3D
-		var bone_idx := skel3d.find_bone(bone_name)
-		if bone_idx < 0:
-			bone_idx = skel3d.add_bone(bone_name)
-		var origin := Vector3(
-			float(rest_transform.get("x", 0)),
-			float(rest_transform.get("y", 0)),
-			float(rest_transform.get("z", 0))
-		)
-		var basis := Basis()
-		if rest_transform.has("rotation"):
-			var rot: Dictionary = rest_transform["rotation"] if rest_transform["rotation"] is Dictionary else {}
-			basis = Basis.from_euler(Vector3(
-				float(rot.get("x", 0)),
-				float(rot.get("y", 0)),
-				float(rot.get("z", 0))
-			))
-		skel3d.set_bone_rest(bone_idx, Transform3D(basis, origin))
-	return {"ok": true, "bone_name": bone_name, "bone_idx": bone_idx, "type": "Skeleton3D"}
+	return {"ok": false, "error": "unsupported_skeleton_type"}
 
 
 ## P-M11 (Round-3): remove_bone — Borra un hueso del skeleton.
 ## Para Skeleton2D: elimina el Bone2D hijo por nombre.
-## Para Skeleton3D: usa clear_bones() + re-add (API no expone remove_bone aislado).
+## Para Skeleton3D: Godot 4 NO expone remove_bone(name); workaround: clear_bones +
+## re-add preservando rest poses (parent indices se pierden en el re-add porque
+## add_bone(name) solo toma 1 arg; la jerarquía queda plana pero los huesos existen).
 func handle_skeleton_remove_bone(args: Dictionary) -> Dictionary:
 	var root := _scene_root(args)
 	if root == null:
@@ -403,36 +385,35 @@ func handle_skeleton_remove_bone(args: Dictionary) -> Dictionary:
 		var idx := skel.find_bone(bone_name)
 		if idx < 0:
 			return {"ok": false, "error": "bone_not_found: " + bone_name}
-		# Skeleton3D no expone remove_bone aislado; workaround: clear_bones +
-		# re-add todos los demás preservando rest pose y jerarquía parent.
-		var rest_data := []
-		var parent_indices := []
+		# Snapshot todos los huesos (incluyendo parent indices) ANTES de clear.
+		var snap := []  # [{name, rest, parent_old_idx}]
+		var old_name_by_idx := {}
 		for i in skel.get_bone_count():
-			rest_data.append(skel.get_bone_rest(i))
-			parent_indices.append(skel.get_bone_parent(i))
-		# Mapeo de nombre → datos preservados.
-		var survivors := []
-		for i in skel.get_bone_count():
+			old_name_by_idx[i] = skel.get_bone_name(i)
 			if i == idx:
 				continue
-			survivors.append({
+			snap.append({
 				"name": skel.get_bone_name(i),
-				"rest": rest_data[i],
-				"parent": parent_indices[i],
+				"rest": skel.get_bone_rest(i),
+				"parent_old_idx": skel.get_bone_parent(i),
 			})
 		skel.clear_bones()
+		# Re-add preservando rest pose. add_bone(name) en Godot 4 acepta solo
+		# 1 argumento. set_bone_parent se llama después para la jerarquía.
 		var new_idx_by_name := {}
-		for d in survivors:
-			var parent: int = -1
-			if d["parent"] >= 0:
-				var parent_name: String = skel.get_bone_name(d["parent"])
-				parent = new_idx_by_name.get(parent_name, -1)
-			var new_i := skel.add_bone(d["name"], parent)
+		for d in snap:
+			var new_i := skel.add_bone(d["name"])
 			new_idx_by_name[d["name"]] = new_i
 			skel.set_bone_rest(new_i, d["rest"])
+		# Restaurar parent indices (mapeando old_idx → new_idx).
+		for d in snap:
+			var new_i: int = new_idx_by_name[d["name"]]
+			var old_parent: int = d["parent_old_idx"]
+			if old_parent >= 0:
+				var parent_name: String = old_name_by_idx.get(old_parent, "")
+				if parent_name != "" and new_idx_by_name.has(parent_name):
+					skel.set_bone_parent(new_i, new_idx_by_name[parent_name])
 		return {"ok": true, "bone_name": bone_name, "type": "Skeleton3D", "bones_remaining": skel.get_bone_count()}
-	return {"ok": false, "error": "invalid_skeleton_type"}
-
 	return {"ok": false, "error": "invalid_skeleton_type"}
 
 
@@ -610,11 +591,13 @@ func _resolve_capture_bones(args: Dictionary, skeleton: Node) -> Array:
 	if names.is_empty():
 		# Todos los huesos en orden jerárquico (padre→hijo).
 		if skeleton is Skeleton2D:
-			for i in (skeleton as Skeleton2D).get_bone_count():
-				names.append(str((skeleton as Skeleton2D).get_bone(i).name))
-		elif skeleton is Skeleton3D:
-			for i in (skeleton as Skeleton3D).get_bone_count():
-				names.append((skeleton as Skeleton3D).get_bone_name(i))
+			var sk2 := skeleton as Skeleton2D
+			for i in sk2.get_bone_count():
+				names.append(str(sk2.get_bone(i).name))
+		else:
+			var sk3 := skeleton as Skeleton3D
+			for i in sk3.get_bone_count():
+				names.append(sk3.get_bone_name(i))
 	return names
 
 
@@ -757,7 +740,7 @@ func handle_capture_pose(args: Dictionary) -> Dictionary:
 					"origin_delta": HerenCoordsScript.origin_delta(rest_pose, global_pose),
 				},
 			})
-		elif skeleton is Skeleton2D:
+		if skeleton is Skeleton2D:
 			var skel := skeleton as Skeleton2D
 			var bone: Bone2D = null
 			for i in skel.get_bone_count():

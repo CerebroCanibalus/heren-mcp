@@ -173,9 +173,18 @@ func handle_read(args: Dictionary) -> Dictionary:
 			efs.update_file(resource_path)
 
 	var res: Resource = load(resource_path)
+	# FAIL-FAST (2026-09-03): null guard. load() puede retornar null si el
+	# archivo fue borrado entre exists check y load (race), o si la clase
+	# registrada en .tres no se encuentra.
+	if res == null:
+		return {
+			"ok": false,
+			"error": "load_returned_null: %s existe pero load() falló (re-scan no ayudó)" % resource_path,
+			"hint": "revisa que el class_name del recurso esté disponible (script compilado)",
+		}
 	# Fallback explícito para PackedScene: si load() devolvió Resource base
 	# (raro pero posible tras crear .tscn sin scan completo), forzar el tipo.
-	if res != null and res.get_class() == "Resource" and resource_path.ends_with(".tscn"):
+	if res.get_class() == "Resource" and resource_path.ends_with(".tscn"):
 		var typed: Resource = ResourceLoader.load(resource_path, "PackedScene", ResourceLoader.CACHE_MODE_REUSE)
 		if typed != null:
 			res = typed

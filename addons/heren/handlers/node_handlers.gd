@@ -197,6 +197,15 @@ func handle_add(args: Dictionary) -> Dictionary:
 	_undo_redo.add_undo_method(parent, &"remove_child", [node])
 	_undo_redo.commit_action()
 
+	# Registrar op para commit inteligente (dirty flag).
+	var scene_path := str(root.scene_file_path)
+	if scene_path != "":
+		HerenSceneRegistryScript.record_op(scene_path, {
+			"kind": "add",
+			"node_path": _node_path_relative(node, root),
+			"node_type": node_type,
+		})
+
 	return {
 		"ok": true,
 		"node_name": node.name,
@@ -365,6 +374,14 @@ func handle_remove(args: Dictionary) -> Dictionary:
 	_undo_redo.add_undo_method(parent, &"move_child", [node, index])
 	_undo_redo.commit_action()
 
+	# Registrar op para commit inteligente (dirty flag).
+	var scene_path := str(root.scene_file_path)
+	if scene_path != "":
+		HerenSceneRegistryScript.record_op(scene_path, {
+			"kind": "remove",
+			"node_path": node_path_str,
+		})
+
 	return {
 		"ok": true,
 		"removed": node_path_str,
@@ -496,8 +513,10 @@ func handle_set_props(args: Dictionary) -> Dictionary:
 		return _not_found_hint(root, node_path)
 
 	var applied: Array = []
+	var requested: Array = []
 	_undo_redo.begin_action("Heren Set Props %s" % node.name)
 	for prop_name in properties.keys():
+		requested.append(prop_name)
 		if prop_name in node:
 			var new_value: Variant = HerenCoordsScript.deserialize_value(properties[prop_name])
 			var old_value: Variant = node.get(prop_name)
@@ -506,10 +525,28 @@ func handle_set_props(args: Dictionary) -> Dictionary:
 			applied.append(prop_name)
 	_undo_redo.commit_action()
 
+	# FAIL-FAST (2026-09-03): verificar que cada prop aplicado tiene el valor
+	# esperado. Si set() falló silenciosamente (tipo incompatible, write-only
+	# via script), el agente aún ve "applied:N" y cree éxito.
+	var mismatches: Array = []
+	for prop_name in applied:
+		var expected: Variant = HerenCoordsScript.deserialize_value(properties[prop_name])
+		var actual: Variant = node.get(prop_name)
+		if not _values_match(actual, expected):
+			mismatches.append(prop_name)
+	if mismatches.size() > 0:
+		return {
+			"ok": false,
+			"error": "set_props_failed: %d/%d props no tomaron el valor esperado" % [mismatches.size(), applied.size()],
+			"applied": applied,
+			"mismatches": mismatches,
+		}
 	return {
 		"ok": true,
 		"node_path": _node_path_relative(node, root),
 		"applied": applied,
+		"requested": requested,
+		"skipped": requested.filter(func(n): return n not in applied),
 		"count": applied.size(),
 	}
 
@@ -790,6 +827,16 @@ func handle_rename(args: Dictionary) -> Dictionary:
 	_undo_redo.add_undo_property(node, &"name", old_name)
 	_undo_redo.commit_action()
 
+	# Registrar op para commit inteligente (dirty flag).
+	var scene_path := str(root.scene_file_path)
+	if scene_path != "":
+		HerenSceneRegistryScript.record_op(scene_path, {
+			"kind": "rename",
+			"node_path": _node_path_relative(node, root),
+			"old_name": old_name,
+			"new_name": new_name,
+		})
+
 	return {
 		"ok": true,
 		"old_name": old_name,
@@ -831,6 +878,16 @@ func handle_move(args: Dictionary) -> Dictionary:
 	_undo_redo.add_undo_method(old_parent, &"add_child", [node])
 	_undo_redo.add_undo_method(old_parent, &"move_child", [node, old_index])
 	_undo_redo.commit_action()
+
+	# Registrar op para commit inteligente (dirty flag).
+	var scene_path := str(root.scene_file_path)
+	if scene_path != "":
+		HerenSceneRegistryScript.record_op(scene_path, {
+			"kind": "move",
+			"node_path": _node_path_relative(node, root),
+			"old_parent": _node_path_relative(old_parent, root),
+			"new_parent": _node_path_relative(new_parent, root),
+		})
 
 	return {
 		"ok": true,
@@ -926,12 +983,24 @@ func handle_array_append(args: Dictionary) -> Dictionary:
 	_undo_redo.add_undo_property(node, property_name, old_value)
 	_undo_redo.commit_action()
 
+	# FAIL-FAST (2026-09-03): leer el array NUEVO post-commit. Antes reportaba
+	# `current.size()` que era el tamaño VIEJO — el agente pensaba que no había
+	# appendeado nada.
+	var new_array: Variant = node.get(property_name)
+	var new_size: int = new_array.size() if new_array != null else -1
+	if new_array == null or new_size != current.size() + 1:
+		return {
+			"ok": false,
+			"error": "array_append_failed",
+			"expected_size": current.size() + 1,
+			"actual_size": new_size,
+		}
 	return {
 		"ok": true,
 		"node_path": _node_path_relative(node, root),
 		"property_name": property_name,
 		"value_added": HerenCoordsScript.serialize_value(value, true),
-		"array_size": current.size(),
+		"array_size": new_size,
 	}
 
 
@@ -973,12 +1042,23 @@ func handle_array_remove(args: Dictionary) -> Dictionary:
 	_undo_redo.add_undo_property(node, property_name, old_value)
 	_undo_redo.commit_action()
 
+	# FAIL-FAST (2026-09-03): leer array nuevo. Antes reportaba `old_value.size()`
+	# (tamaño VIEJO) — el agente pensaba que no había removido nada.
+	var new_array: Variant = node.get(property_name)
+	var new_size: int = new_array.size() if new_array != null else -1
+	if new_array == null or new_size != old_value.size() - 1:
+		return {
+			"ok": false,
+			"error": "array_remove_failed",
+			"expected_size": old_value.size() - 1,
+			"actual_size": new_size,
+		}
 	return {
 		"ok": true,
 		"node_path": _node_path_relative(node, root),
 		"property_name": property_name,
 		"removed_value": HerenCoordsScript.serialize_value(removed_value, true),
-		"array_size": old_value.size(),
+		"array_size": new_size,
 	}
 
 
@@ -1002,3 +1082,30 @@ func _array_without_at(arr: Variant, index: int) -> Variant:
 	var out: Array = (arr as Array).duplicate(true)
 	out.remove_at(index)
 	return out
+
+
+## v4.9: set_script como acción de nodo (alias para signal/set_script).
+## El agente suele llamar node/set_script o resource/set_script — es más
+## intuitivo que signal/set_script para esta operación.
+func handle_set_script(args: Dictionary) -> Dictionary:
+	var root := _scene_root(args)
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+
+	var node_path: Variant = args.get("node_path", "")
+	var script_path: String = str(args.get("script_path", ""))
+	if node_path == "" or script_path == "":
+		return {"ok": false, "error": "node_path and script_path required"}
+	if not ResourceLoader.exists(script_path):
+		return {"ok": false, "error": "script_not_found: " + script_path}
+
+	var node: Node = _resolve_node(root, node_path)
+	if node == null:
+		return _not_found_hint(root, node_path)
+
+	node.set_script(load(script_path))
+	return {
+		"ok": true,
+		"node_path": _node_path_relative(node, root),
+		"script": script_path,
+	}
