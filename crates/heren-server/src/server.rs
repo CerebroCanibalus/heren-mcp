@@ -829,16 +829,16 @@ async fn scene_orchestrate_action(
         // Extraer campos ANTES de forward (call.args se mueve).
         let node_path: Option<String> = call.args.get("node_path")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(String::from);
         let parent_path: Option<String> = call.args.get("parent_path")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(String::from);
         let node_name: Option<String> = call.args.get("node_name")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(String::from);
         let action: Option<String> = call.args.get("action")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(String::from);
         let post_position: Option<Value> = call.args.get("properties")
             .and_then(|p| p.get("position"))
             .cloned();
@@ -872,7 +872,7 @@ async fn scene_orchestrate_action(
         // Para el resto de calls que afectan geometría, leer coords reales.
         let lookup_path = node_path.clone()
             .or_else(|| parent_path.as_ref().zip(node_name.as_ref()).map(|(p, n)| {
-                if p == "." { n.clone() } else { format!("{}/{}", p, n) }
+                if p == "." { n.clone() } else { format!("{p}/{n}") }
             }));
         if let Some(path) = lookup_path {
             // get_info devuelve coords via node_query/get_info.
