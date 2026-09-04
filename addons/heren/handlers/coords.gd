@@ -526,3 +526,51 @@ static func _ensure_owner_child(node: Node, owner: Node) -> void:
 			continue
 		child.owner = owner
 		_ensure_owner_child(child, owner)
+
+
+## Coords estructurados de un Node — un solo punto de verdad para que el
+## agente reciba position/rotation/scale en JSON tras open/save/orchestrate.
+## Acepta Node3D/Node2D/Control; para otros tipos devuelve {}.
+## - Node3D: position (Vector3), rotation_degrees (Vector3 en grados), scale (Vector3).
+## - Node2D: position (Vector2), rotation_degrees (float), scale (Vector2).
+## - Control: anchors_preset (int), anchors (4 floats), offsets (4 floats),
+##             pivot_offset, size, rotation_degrees, scale.
+static func coords_of(node: Node) -> Dictionary:
+	if node == null:
+		return {}
+	if node is Node3D:
+		return {
+			"position": serialize_value(node.position),
+			"rotation_degrees": serialize_value(node.rotation_degrees),
+			"scale": serialize_value(node.scale),
+			"global_position": serialize_value(node.global_position),
+		}
+	if node is Node2D:
+		return {
+			"position": serialize_value(node.position),
+			"rotation_degrees": node.rotation_degrees,
+			"scale": serialize_value(node.scale),
+			"global_position": serialize_value(node.global_position),
+		}
+	if node is Control:
+		var ctl: Control = node
+		return {
+			"position": serialize_value(ctl.position),
+			"size": serialize_value(ctl.size),
+			"rotation_degrees": ctl.rotation_degrees,
+			"scale": serialize_value(ctl.scale),
+			"anchors_preset": ctl.anchors_preset if "anchors_preset" in ctl else -1,
+			"anchors": {
+				"left": ctl.anchor_left,
+				"top": ctl.anchor_top,
+				"right": ctl.anchor_right,
+				"bottom": ctl.anchor_bottom,
+			},
+			"offsets": {
+				"left": ctl.offset_left,
+				"top": ctl.offset_top,
+				"right": ctl.offset_right,
+				"bottom": ctl.offset_bottom,
+			},
+		}
+	return {}

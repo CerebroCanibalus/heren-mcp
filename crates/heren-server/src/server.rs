@@ -818,26 +818,85 @@ async fn scene_orchestrate_action(
         }));
     }
     // 6. Ejecutar calls vía forward al plugin (continue-on-error, P-B9).
+    // Cada call exitosa se sigue de un get_info del node afectado para que
+    // el agente reciba coords POST-APPLY en JSON estructurado.
     let mut warnings: Vec<String> = Vec::new();
     let mut applied = 0usize;
+    let mut per_step_state: Vec<Value> = Vec::with_capacity(calls.len());
     let total = calls.len();
     let _ = agent_id; // (mantenido para signatura)
     for call in calls {
-        match forward(registry, proj, &call.tool, call.args).await {
+        // Extraer campos ANTES de forward (call.args se mueve).
+        let node_path: Option<String> = call.args.get("node_path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let parent_path: Option<String> = call.args.get("parent_path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let node_name: Option<String> = call.args.get("node_name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let action: Option<String> = call.args.get("action")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let post_position: Option<Value> = call.args.get("properties")
+            .and_then(|p| p.get("position"))
+            .cloned();
+
+        let apply_result = forward(registry, proj, &call.tool, call.args).await;
+        match apply_result {
             Ok(_) => applied += 1,
-            Err(e) => warnings.push(format!(
-                "step '{}' falló ({}): {} — los steps previos SÍ se aplicaron",
-                call.step_id, call.description, e
-            )),
+            Err(e) => {
+                warnings.push(format!(
+                    "step '{}' falló ({}): {} — los steps previos SÍ se aplicaron",
+                    call.step_id, call.description, e
+                ));
+                per_step_state.push(json!({
+                    "step_id": call.step_id,
+                    "applied": false,
+                    "error": e.to_string(),
+                }));
+                continue;
+            }
+        }
+        // Para AddNode el nodo todavía no existe — coords post = posición asignada.
+        if call.tool == "node" && action.as_deref() == Some("add") {
+            per_step_state.push(json!({
+                "step_id": call.step_id,
+                "applied": true,
+                "node_path": format!("{}/{}", parent_path.as_deref().unwrap_or("."), node_name.as_deref().unwrap_or("?")),
+                "coords": {"position": post_position.unwrap_or(json!(null))},
+            }));
+            continue;
+        }
+        // Para el resto de calls que afectan geometría, leer coords reales.
+        let lookup_path = node_path.clone()
+            .or_else(|| parent_path.as_ref().zip(node_name.as_ref()).map(|(p, n)| {
+                if p == "." { n.clone() } else { format!("{}/{}", p, n) }
+            }));
+        if let Some(path) = lookup_path {
+            // get_info devuelve coords via node_query/get_info.
+            let info = forward(registry, proj, "node_query/get_info", json!({
+                "scene_path": resolved_scene_path,
+                "node_path": path,
+            })).await;
+            let coords = info.ok()
+                .and_then(|v| v.get("coords").cloned())
+                .unwrap_or(json!(null));
+            per_step_state.push(json!({
+                "step_id": call.step_id,
+                "applied": true,
+                "node_path": path,
+                "coords": coords,
+            }));
+        } else {
+            per_step_state.push(json!({
+                "step_id": call.step_id,
+                "applied": true,
+            }));
         }
     }
     if applied > 0 {
-        // Marcar dirty en plugin-registry (vía set_dirty). El plugin expone esto
-        // mediante un set_dirty interno, pero como no hay tool pública, usamos
-        // el atajo de scene/commit con save=false no — en su lugar, simplemente
-        // dejamos que el plugin-registry use su propia señalización de dirty.
-        // Por ahora: rely on _dirty legacy (EditorRegistry.clean_dirty is the server-side mirror).
-        // Nota Fase 2: reemplazar por un handler `scene/set_dirty` dedicado.
         registry.mark_dirty(proj, &resolved_scene_path).await;
     } else {
         warnings.push(format!(
@@ -850,6 +909,7 @@ async fn scene_orchestrate_action(
         "total": total,
         "executed_steps": executed_steps,
         "coords": coords,
+        "applied_state": per_step_state,
         "warnings": warnings,
     }))
 }
