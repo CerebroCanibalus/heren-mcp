@@ -793,7 +793,7 @@ async fn scene_orchestrate_action(
         "scene_path": resolved_scene_path,
     })).await?;
     let plan_json: serde_json::Value = plan_resp.get("plan").cloned().unwrap_or(json!({}));
-    if plan_json.is_null() || plan_json.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+    if plan_json.is_null() || plan_json.as_object().is_none_or(serde_json::Map::is_empty) {
         return Err(ToolError::invalid_params(format!(
             "no hay plan escrito para '{resolved_scene_path}' — llama scene(action=\"plan\", plan_file=\"...\") primero"
         )));
@@ -869,7 +869,7 @@ async fn scene_validate_action(
         "scene_path": resolved_scene_path,
     })).await?;
     let plan_json: serde_json::Value = plan_resp.get("plan").cloned().unwrap_or(json!({}));
-    if plan_json.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+    if plan_json.as_object().is_none_or(serde_json::Map::is_empty) {
         return Err(ToolError::invalid_params(format!(
             "no hay plan para '{resolved_scene_path}' — llama scene(action=\"plan\", ...) primero"
         )));

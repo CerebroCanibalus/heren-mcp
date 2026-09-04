@@ -743,6 +743,7 @@ impl SceneValidator {
             Ok(value) => {
                 // Si viene nominal numérico, intentar comparar como número;
                 // si no, comparar como string.
+                #[allow(clippy::cast_possible_truncation)]
                 let num = value.get("value")
                     .and_then(serde_json::Value::as_f64)
                     .map(|f| f as f32);

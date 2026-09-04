@@ -67,6 +67,7 @@ impl SceneCoder {
                     if local_rot.x != 0.0 || local_rot.y != 0.0 || local_rot.z != 0.0 {
                         props["rotation_degrees"] = serde_json::to_value(local_rot).unwrap_or(Value::Null);
                     }
+                    #[allow(clippy::float_cmp)]
                     if local_scale.x != 1.0 || local_scale.y != 1.0 || local_scale.z != 1.0 {
                         props["scale"] = serde_json::to_value(local_scale).unwrap_or(Value::Null);
                     }
