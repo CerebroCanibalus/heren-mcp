@@ -11,9 +11,7 @@ use std::sync::{Mutex, OnceLock};
 use crate::editor::normalize_project_path;
 use crate::pure::{args, normalize_scene_path, unwrap_result};
 use crate::registry::EditorRegistry;
-use crate::scene_tool::get_or_create_scene_registry;
-use crate::scene_tool::registry::SceneRegistryClient;
-use crate::scene_tool::schemas::{SceneMode, ScenePlan};
+use crate::scene_tool::schemas::ScenePlan;
 
 /// Contexto de escena por proyecto (fix problema sistemÃ¡tico 2026-08-04):
 /// el "edited scene root" del editor cambia con la pestaÃ±a activa. Este mapa
@@ -587,7 +585,7 @@ fn ws_port() -> u16 {
 // allow: los parámetros los dicta el schema MCP de la tool unificada.
 #[allow(clippy::too_many_arguments)]
 #[tool(
-    description = "Escenas: get_open_scenes|get_edited_scene_root|open|save|create|unload|plan|orchestrate|validate|commit|status|list. Flujo planning: open con mode={isolated,attached,modify} activa lock+contexto en SceneRegistry; plan_file (path JSON) escribe el ScenePlan; orchestrate ejecuta el batch; validate hace QA dual-engine; commit guarda+unlock. Sin mode, open usa la pestaña del editor. mode inválido devuelve error."
+    description = "Escenas: get_open_scenes|get_edited_scene_root|open|save|create|unload|plan|orchestrate|validate|commit|status|list. Flujo planning: el state (plan, qa, lock, mode) vive en el plugin-registry (single source of truth) — el server NO mantiene estado paralelo. plan_file (path JSON) escribe el ScenePlan; orchestrate ejecuta el batch vía coder pure-logic; validate hace QA dual-engine; commit guarda+unlock. open con mode={isolated,attached,modify} opcional adquiere lock."
 )]
 async fn scene(
     action: String,
@@ -598,7 +596,7 @@ async fn scene(
     root_name: Option<String>,
     // Planning/Orchestration args. mode válido: isolated|attached|modify.
     mode: Option<String>,
-    // Mantenido en signatura para compat binaria. Solo usado por planning.
+    // Mantenido en signatura para compat. Solo usado por planning (open acquire_lock).
     #[allow(dead_code)]
     agent_id: Option<String>,
     save: Option<bool>,
@@ -613,41 +611,27 @@ async fn scene(
     plan_file: Option<String>,
     // Orchestrate preview sin ejecutar (devuelve los calls que ejecutaría).
     dry_run: Option<bool>,
-    // S2: engine filter para validate — "a"=solo estructura, "b"=solo visual, "all"=ambos
+    // engine filter para validate — "a"=solo estructura, "b"=solo visual, "all"=ambos
     engine: Option<String>,
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref()).await?;
+    let registry = EditorRegistry::global();
 
-    // Planning/Orchestration (Fase C §0.6): estos sub-comandos viven SOLO
-    // server-side (SceneRegistry). NUNCA forward al plugin — su dispatcher
-    // no tiene handlers para ellos ("tool method not found").
-    //
-    // `open` es DUAL: con mode/agent_id (args exclusivos del planning) abre
-    // con lock+contexto en el SceneRegistry; sin ellos es el open legacy del
-    // plugin. H2 (2026-08-24): open del planning se iba por la vía legacy y
-    // nunca registraba la escena → status/validate/commit decían
-    // "No active scene".
-    let planning_open = action == "open" && (mode.is_some() || agent_id.is_some());
-    if matches!(
-        action.as_str(),
-        "plan" | "orchestrate" | "validate" | "commit" | "status" | "list"
-    ) || planning_open
-    {
-        return scene_planning(
-            &action,
-            &proj,
-            scene_path.as_deref(),
-            mode.as_deref(),
-            agent_id.as_deref(),
-            plan_file.as_deref(),
-            dry_run,
-            engine.as_deref(),
-            save,
-        )
-        .await;
+    // Fase 1 (2026-09-03): SINGLE SOURCE OF TRUTH.
+    // Bifurcación eliminada. Las actions de planning (plan|orchestrate|validate|
+    // commit|status|list) se procesan server-side con state cargado del plugin.
+    // El plugin es source-of-truth para: árbol, plan JSON, qa_report, lock.
+    match action.as_str() {
+        "plan" => return scene_plan_action(&proj, scene_path.as_deref(), plan_file.as_deref(), agent_id.as_deref()).await,
+        "orchestrate" => return scene_orchestrate_action(&proj, scene_path.as_deref(), agent_id.as_deref(), dry_run.unwrap_or(false)).await,
+        "validate" => return scene_validate_action(&proj, scene_path.as_deref(), agent_id.as_deref(), engine.as_deref()).await,
+        "commit" => return scene_commit_action(&proj, scene_path.as_deref(), agent_id.as_deref(), save.unwrap_or(true)).await,
+        "status" => return scene_status_action(&proj, scene_path.as_deref()).await,
+        "list" => return scene_list_action(&proj).await,
+        _ => {}
     }
 
-    let registry = EditorRegistry::global();
+    // Actions legacy: low-level (open, save, create, unload, get_*).
     let explicit_path = scene_path
         .clone()
         .map(|p| normalize_scene_path(&p))
@@ -666,8 +650,7 @@ async fn scene(
         ),
         ("root_type", root_type.map(Value::String)),
         ("root_name", root_name.map(Value::String)),
-        // create instanciado (2026-08-24): nueva escena conteniendo otra como
-        // instancia ExtResource. instance_current usa la pestaña activa.
+        // create instanciado: nueva escena conteniendo otra como instancia ExtResource.
         (
             "instance_scene",
             instance_scene
@@ -676,20 +659,19 @@ async fn scene(
                 .map(Value::String),
         ),
         ("instance_current", instance_current.map(Value::Bool)),
+        // open del planning (Fase 1): mode/agent_id opcionales se forwardean al plugin
+        // para que acquire_lock pueda usarlos. Si no vienen, plugin usa defaults.
+        ("mode", mode.clone().map(Value::String)),
+        ("agent_id", agent_id.clone().map(Value::String)),
     ]);
-    // Contexto de escena: save/open sin scene_path usan el Ãºltimo conocido
-    // (registrado por create o por cualquier node/animation/shader op).
-    // create NO usa contexto: define un path nuevo (nunca sobreescribir el previo).
+    // Contexto de escena: save/open sin scene_path usan el último conocido.
     let a = if action == "save" || action == "open" {
         apply_scene_context(&proj, a)
     } else {
         remember_scene_context(&proj, &explicit_path);
         a
     };
-    // Regla 1 (persistencia 2026-08-07): "Antes de destruir un Ã¡rbol dirty â†’
-    // guardar". scene/open reemplaza la pestaÃ±a (y el Ã¡rbol RAM del registry)
-    // por una recarga desde disco; si la escena tiene cambios sin guardar,
-    // flush ANTES para no perderlos.
+    // Regla 1: Antes de destruir un árbol dirty → guardar.
     if action == "open" {
         if let Some(p) = scene_path.as_deref() {
             let dirty = registry.dirty_scenes(&proj).await;
@@ -709,7 +691,6 @@ async fn scene(
     let result = forward(registry, &proj, &format!("scene/{action}"), a).await?;
     match action.as_str() {
         "save" => {
-            // Persistencia 2026-08-07: guardar limpia el dirty de esa escena.
             if let Some(p) = scene_path.as_deref() {
                 if result
                     .get("ok")
@@ -721,8 +702,6 @@ async fn scene(
             }
         }
         "create" => {
-            // create escribe a disco (nunca queda dirty por sÃ­ mismo), pero
-            // el registro del SceneRegistry en el plugin marca el contexto.
             remember_scene_context(&proj, &explicit_path);
         }
         _ => {}
@@ -731,229 +710,311 @@ async fn scene(
 }
 
 // ============================================================
-// SCENE — sub-comandos Planning/Orchestration (Fase C §0.6)
+// SCENE — sub-comandos Planning (Fase 1 §0.8: single source of truth)
 // ============================================================
-// Helper INTERNO invocado desde la tool `scene`. NO es tool MCP propia:
-// antes era `scene_plan` separada y el flujo quedaba partido en dos tools.
+// Helpers INTERNOS invocados desde la tool `scene`. NO son tools MCP propias.
+// State (plan, qa, lock) vive en HerenSceneRegistry (plugin). El server solo
+// ejecuta la lógica pure (coder, validator) y coordina forward al plugin.
 
-// allow: los params los dicta el flujo planning (§0.6) — 8 es el mínimo natural.
-#[allow(clippy::too_many_arguments)]
-async fn scene_planning(
-    action: &str,
+// scene/plan: lee plan_file, lo envía al plugin (state source-of-truth).
+async fn scene_plan_action(
     proj: &str,
     scene_path: Option<&str>,
-    mode: Option<&str>,
-    agent_id: Option<&str>,
     plan_file: Option<&str>,
-    dry_run: Option<bool>,
-    engine: Option<&str>,
-    save: Option<bool>,
+    _agent_id: Option<&str>,
 ) -> Result<Value, ToolError> {
-    let registry = get_or_create_scene_registry(proj).await;
-    let agent_id = agent_id.unwrap_or("unknown").to_string();
-
-    match action {
-        "open" => {
-            let scene_path = scene_path
-                .ok_or_else(|| ToolError::invalid_params("scene_path required for open"))?;
-            let mode = match mode {
-                Some("isolated") => SceneMode::Isolated,
-                Some("attached") => SceneMode::Attached,
-                Some("modify") => SceneMode::Modify,
-                Some(other) => {
-                    return Err(ToolError::invalid_params(format!(
-                        "mode '{other}' invalido. Validos: isolated|attached|modify."
-                    )));
-                }
-                None => SceneMode::Isolated,
-            };
-
-            let response = registry
-                .open_scene(scene_path, mode, &agent_id, &RegistryClientAdapter {
-                    project_path: proj.to_string(),
-                })
-                .await
-                .map_err(ToolError::internal)?;
-            Ok(serde_json::to_value(response)?)
-        }
-        "plan" => {
-            // Sin plan_file → devolver ejemplo canónico auto-documentado para
-            // que el agente sepa QUÉ escribir (self-discovery, sin leer fuentes).
-            let Some(file) = plan_file else {
-                return Ok(serde_json::json!({
-                    "ok": true,
-                    "hint": "escribe este JSON (ajustándolo) a un archivo y llama scene(action=\"plan\", plan_file=\"<path>)\"",
-                    "example": crate::scene_tool::schemas::example_plan(),
-                    "notes": {
-                        "steps_action": "add_node|set_transform|add_resource|connect_signal|instantiate_template|remove_node|duplicate_node",
-                        "generic_step": "Para animación/esqueleto/shaders/tilemaps: {id, tool, action, args} — el agente conoce las tools de tools/list",
-                        "verification_kind": "node_count|bbox_max|bbox_min|script_attached|resource_exists|signal_connected|node_exists|property_value",
-                        "tolerance": "OBLIGATORIO en cada verification target",
-                        "workplane": "XZ (3D mundo) | XY (UI/pantalla)",
-                        "local_pos": "coords de MUNDO directas + workplane_offset; sin swaps",
-                        "properties": "cualquier prop del inspector: colores {r,g,b,a}, vectores {x,y,z}, arrays, paths res:// (recursos por PATH, nunca inline)",
-                        "precedence": "properties explícitas SOBREESCRIBEN local_pos/local_rot/local_scale/resource_path derivados"
-                    }
-                }));
-            };
-            let path = resolve_plan_file_path(proj, file);
-            let text = std::fs::read_to_string(&path).map_err(|e| {
-                ToolError::invalid_params(format!("no se pudo leer plan_file '{path}': {e}"))
-            })?;
-            let plan: ScenePlan = serde_json::from_str(&text).map_err(|e| {
-                ToolError::invalid_params(format!(
-                    "plan_file '{path}' no es un ScenePlan válido: {e}"
-                ))
-            })?;
-            let scene_path = plan.scene_path.clone();
-            let steps = plan.steps.len();
-            let verifications = plan.verification.len();
-            let response = registry
-                .write_plan(&scene_path, plan)
-                .map_err(ToolError::internal)?;
-            Ok(serde_json::json!({
-                "ok": response.ok,
-                "warnings": response.warnings,
-                "scene_path": scene_path,
-                "steps_count": steps,
-                "verification_count": verifications,
-                "next": "scene(action=\"orchestrate\") ejecuta el batch; luego validate y commit"
-            }))
-        }
-        "orchestrate" => {
-            let scene_path = resolve_planning_scene(&registry, scene_path, "orchestrate")?;
-            let dry_run = dry_run.unwrap_or(false);
-            let (mut response, calls) =
-                registry.orchestrate(&scene_path).map_err(ToolError::internal)?;
-
-            // E2: preview sin mutar — el agente revisa coords antes de ejecutar.
-            if dry_run {
-                response.warnings.push("dry_run: NINGÚN step fue ejecutado".to_string());
-                return Ok(serde_json::to_value(response)?);
+    let registry = EditorRegistry::global();
+    // Sin plan_file → devolver ejemplo canónico auto-documentado.
+    let Some(file) = plan_file else {
+        return Ok(serde_json::json!({
+            "ok": true,
+            "hint": "escribe este JSON (ajustándolo) a un archivo y llama scene(action=\"plan\", plan_file=\"<path>\")",
+            "example": crate::scene_tool::schemas::example_plan(),
+            "notes": {
+                "steps_action": "add_node|set_transform|add_resource|connect_signal|instantiate_template|remove_node|duplicate_node",
+                "generic_step": "Para animación/esqueleto/shaders/tilemaps: {id, tool, action, args} — el agente conoce las tools de tools/list",
+                "verification_kind": "node_count|bbox_max|bbox_min|script_attached|resource_exists|signal_connected|node_exists|property_value",
+                "tolerance": "OBLIGATORIO en cada verification target",
+                "workplane": "XZ (3D mundo) | XY (UI/pantalla)",
+                "local_pos": "coords de MUNDO directas + workplane_offset; sin swaps",
+                "properties": "cualquier prop del inspector: colores {r,g,b,a}, vectores {x,y,z}, arrays, paths res:// (recursos por PATH, nunca inline)",
+                "precedence": "properties explícitas SOBREESCRIBEN local_pos/local_rot/local_scale/resource_path derivados"
             }
-
-            // Ejecutar las calls MCP internas via forward (nombres BARE).
-            // F1 (2026-08-24): continue-on-error — abortar al primer fallo deja
-            // steps previos aplicados sin constancia. Cada fallo va a warnings
-            // con su step; el agente decide reparar y re-orquestrar.
-            // P-B9: contar cuántas calls pasaron — dirty=true solo si al menos 1.
-            let registry_editor = EditorRegistry::global();
-            let mut applied = 0usize;
-            let total = calls.len();
-            for call in calls {
-                match forward(registry_editor, proj, &call.tool, call.args).await {
-                    Ok(_) => applied += 1,
-                    Err(e) => response.warnings.push(format!(
-                        "step '{}' falló ({}): {} — los steps previos SÍ se aplicaron",
-                        call.step_id, call.description, e
-                    )),
-                }
-            }
-
-            if applied > 0 {
-                registry
-                    .with_scene_mut(&scene_path, |state| state.dirty = true)
-                    .map_err(ToolError::internal)?;
-            } else {
-                response.warnings.push(format!(
-                    "P-B9: 0/{total} calls pasaron — escena NO marcada como dirty (commit sería vacío)"
-                ));
-            }
-
-            Ok(serde_json::to_value(response)?)
+        }));
+    };
+    let path = resolve_plan_file_path(proj, file);
+    let text = std::fs::read_to_string(&path).map_err(|e| {
+        ToolError::invalid_params(format!("no se pudo leer plan_file '{path}': {e}"))
+    })?;
+    let plan: ScenePlan = serde_json::from_str(&text).map_err(|e| {
+        ToolError::invalid_params(format!(
+            "plan_file '{path}' no es un ScenePlan válido: {e}"
+        ))
+    })?;
+    let plan_scene_path = plan.scene_path.clone();
+    let steps = plan.steps.len();
+    let verifications = plan.verification.len();
+    // Validar contra scene_path explícito si viene (protección: agente no
+    // puede escribir plan de otra escena).
+    if let Some(req_p) = scene_path {
+        if req_p != plan_scene_path {
+            return Err(ToolError::invalid_params(format!(
+                "scene_path '{req_p}' no coincide con plan.scene_path '{plan_scene_path}'"
+            )));
         }
-        "validate" => {
-            let scene_path = resolve_planning_scene(&registry, scene_path, "validate")?;
-            let engine_filter = engine.unwrap_or("all");
-            // P0b: refrescar contexto del editor vivo
-            let fresh = RegistryClientAdapter {
-                project_path: proj.to_string(),
-            }
-            .load_scene_context(&scene_path)
-            .await
-            .map_err(ToolError::internal)?;
-            registry
-                .update_context(&scene_path, fresh)
-                .map_err(ToolError::internal)?;
-            // P-M7: engine="b" → solo visual; engine="a" → solo estructural.
-            // Para engine="b" pre-construimos el Engine A como skipped antes
-            // de llamar validate (que siempre corre A por dentro).
-            let mut response = registry
-                .validate(&scene_path, &ValidatorClientAdapter {
-                    project_path: proj.to_string(),
-                })
-                .await
-                .map_err(ToolError::internal)?;
-            if engine_filter == "a" {
-                // Saltar Engine B (capture offscreen → timeout en 3D).
-                response.qa_report.engine_b = crate::scene_tool::schemas::EngineReport {
-                    engine_name: "skipped (engine=a)".to_string(),
-                    results: vec![],
-                    summary: "Skipped by engine filter".to_string(),
-                    warnings: vec![],
-                    errors: vec![],
-                };
-            } else if engine_filter == "b" {
-                // Saltar Engine A — pero como validate ya corrió A, lo marcamos
-                // skipped retroactivamente y conservamos solo Engine B.
-                response.qa_report.engine_a = crate::scene_tool::schemas::EngineReport {
-                    engine_name: "skipped (engine=b)".to_string(),
-                    results: vec![],
-                    summary: "Skipped by engine filter".to_string(),
-                    warnings: vec![],
-                    errors: vec![],
-                };
-            }
-            // Fase 5: validar GenericSteps (siempre; schema check no requiere captura)
-            let tool_schemas = fetch_tool_schemas().await;
-            let plan = registry.get_plan(&scene_path).map_err(ToolError::internal)?;
-            if let Some(plan) = plan {
-                let generic_details = crate::scene_tool::validator::SceneValidator
-                    ::validate_generic_steps(&plan, &tool_schemas);
-                if !generic_details.is_empty() {
-                    response.qa_report.engine_a.results.extend(generic_details.iter().cloned());
-                    let any_fail = generic_details.iter().any(|d| !d.passed);
-                    if any_fail {
-                        response.qa_report.error_type = crate::scene_tool::schemas::ErrorType::Topology;
-                        response.qa_report.passed = false;
-                    }
-                }
-            }
-            Ok(serde_json::to_value(response)?)
-        }
-        "commit" => {
-            let scene_path = resolve_planning_scene(&registry, scene_path, "commit")?;
-            let save = save.unwrap_or(true);
-            // F2 (2026-08-24): descartar cambios sin aviso = pérdida silenciosa.
-            if !save {
-                let st = registry.status(&scene_path).map_err(ToolError::internal)?;
-                if st.dirty {
-                    return Err(ToolError::invalid_params(
-                        "la escena tiene cambios SIN guardar (dirty:true) — pasa save=true para persistirlos, o scene(action=\"open\") de nuevo para descartarlos conscientemente",
-                    ));
-                }
-            }
-            let response = registry
-                .commit(&scene_path, save, &RegistryClientAdapter {
-                    project_path: proj.to_string(),
-                })
-                .await
-                .map_err(ToolError::internal)?;
-            Ok(serde_json::to_value(response)?)
-        }
-        "status" => {
-            let scene_path = resolve_planning_scene(&registry, scene_path, "status")?;
-            let response = registry.status(&scene_path).map_err(ToolError::internal)?;
-            Ok(serde_json::to_value(response)?)
-        }
-        "list" => {
-            let scenes = registry.list_scenes();
-            Ok(serde_json::to_value(scenes)?)
-        }
-        other => Err(ToolError::invalid_params(format!(
-            "unknown scene planning action: {other}. Valid: open|plan|orchestrate|validate|commit|status|list"
-        ))),
     }
+    // Forward al plugin: el plugin persiste el plan en su registry + disco.
+    let response = forward(registry, proj, "scene/plan", json!({
+        "scene_path": plan_scene_path,
+        "plan": serde_json::to_value(&plan)?,
+    })).await?;
+    Ok(serde_json::json!({
+        "ok": response.get("ok").and_then(Value::as_bool).unwrap_or(false),
+        "warnings": response.get("warnings").cloned().unwrap_or(json!([])),
+        "scene_path": plan_scene_path,
+        "steps_count": steps,
+        "verification_count": verifications,
+        "next": "scene(action=\"orchestrate\") ejecuta el batch; luego validate y commit"
+    }))
+}
+
+// scene/orchestrate: lee plan del plugin, ejecuta coder pure-logic, forwardea calls.
+async fn scene_orchestrate_action(
+    proj: &str,
+    scene_path: Option<&str>,
+    agent_id: Option<&str>,
+    dry_run: bool,
+) -> Result<Value, ToolError> {
+    let registry = EditorRegistry::global();
+    // 1. Resolver scene_path: usar el explícito, o el del primer lock activo.
+    let resolved_scene_path = resolve_planning_scene_path(proj, scene_path).await?;
+    // 2. Forward: leer plan del plugin.
+    let plan_resp = forward(registry, proj, "scene/get_plan", json!({
+        "scene_path": resolved_scene_path,
+    })).await?;
+    let plan_json: serde_json::Value = plan_resp.get("plan").cloned().unwrap_or(json!({}));
+    if plan_json.is_null() || plan_json.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+        return Err(ToolError::invalid_params(format!(
+            "no hay plan escrito para '{resolved_scene_path}' — llama scene(action=\"plan\", plan_file=\"...\") primero"
+        )));
+    }
+    let plan: ScenePlan = serde_json::from_value(plan_json).map_err(|e| {
+        ToolError::internal(format!("plan del plugin corrupto: {e}"))
+    })?;
+    // 3. Cargar contexto (necesario para el coder).
+    let context = load_scene_context_from_plugin(proj, &resolved_scene_path).await?;
+    // 4. Coder pure-logic: traduce plan → calls.
+    let calls = crate::scene_tool::coder::SceneCoder::plan_to_mcp_calls(&plan, &context);
+    let executed_steps: Vec<String> = calls.iter().map(|c| c.description.clone()).collect();
+    let coords: Vec<Value> = calls.iter().map(|c| serde_json::to_value(&c.args).unwrap_or(Value::Null)).collect();
+    // 5. dry_run: devolver preview sin mutar.
+    if dry_run {
+        return Ok(json!({
+            "ok": true,
+            "dry_run": true,
+            "executed_steps": executed_steps,
+            "coords": coords,
+            "warnings": ["dry_run: NINGÚN step fue ejecutado"],
+        }));
+    }
+    // 6. Ejecutar calls vía forward al plugin (continue-on-error, P-B9).
+    let mut warnings: Vec<String> = Vec::new();
+    let mut applied = 0usize;
+    let total = calls.len();
+    let _ = agent_id; // (mantenido para signatura)
+    for call in calls {
+        match forward(registry, proj, &call.tool, call.args).await {
+            Ok(_) => applied += 1,
+            Err(e) => warnings.push(format!(
+                "step '{}' falló ({}): {} — los steps previos SÍ se aplicaron",
+                call.step_id, call.description, e
+            )),
+        }
+    }
+    if applied > 0 {
+        // Marcar dirty en plugin-registry (vía set_dirty). El plugin expone esto
+        // mediante un set_dirty interno, pero como no hay tool pública, usamos
+        // el atajo de scene/commit con save=false no — en su lugar, simplemente
+        // dejamos que el plugin-registry use su propia señalización de dirty.
+        // Por ahora: rely on _dirty legacy (EditorRegistry.clean_dirty is the server-side mirror).
+        // Nota Fase 2: reemplazar por un handler `scene/set_dirty` dedicado.
+        registry.mark_dirty(proj, &resolved_scene_path).await;
+    } else {
+        warnings.push(format!(
+            "P-B9: 0/{total} calls pasaron — escena NO marcada como dirty"
+        ));
+    }
+    Ok(json!({
+        "ok": true,
+        "applied": applied,
+        "total": total,
+        "executed_steps": executed_steps,
+        "coords": coords,
+        "warnings": warnings,
+    }))
+}
+
+// scene/validate: refresca contexto, ejecuta validator pure-logic, persiste QA report.
+async fn scene_validate_action(
+    proj: &str,
+    scene_path: Option<&str>,
+    _agent_id: Option<&str>,
+    engine: Option<&str>,
+) -> Result<Value, ToolError> {
+    let registry = EditorRegistry::global();
+    let resolved_scene_path = resolve_planning_scene_path(proj, scene_path).await?;
+    let engine_filter = engine.unwrap_or("all");
+    // Cargar plan del plugin.
+    let plan_resp = forward(registry, proj, "scene/get_plan", json!({
+        "scene_path": resolved_scene_path,
+    })).await?;
+    let plan_json: serde_json::Value = plan_resp.get("plan").cloned().unwrap_or(json!({}));
+    if plan_json.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+        return Err(ToolError::invalid_params(format!(
+            "no hay plan para '{resolved_scene_path}' — llama scene(action=\"plan\", ...) primero"
+        )));
+    }
+    let plan: ScenePlan = serde_json::from_value(plan_json).map_err(|e| {
+        ToolError::internal(format!("plan corrupto: {e}"))
+    })?;
+    // Refrescar contexto desde el editor vivo (P0b).
+    let context = load_scene_context_from_plugin(proj, &resolved_scene_path).await?;
+    // Validator pure-logic.
+    let mut qa_report = crate::scene_tool::validator::SceneValidator::validate_scene(
+        &plan, &context, &ValidatorClientAdapter { project_path: proj.to_string() }
+    ).await;
+    // Engine filter (P-M7).
+    if engine_filter == "a" {
+        qa_report.engine_b = crate::scene_tool::schemas::EngineReport {
+            engine_name: "skipped (engine=a)".to_string(),
+            results: vec![],
+            summary: "Skipped by engine filter".to_string(),
+            warnings: vec![],
+            errors: vec![],
+        };
+    } else if engine_filter == "b" {
+        qa_report.engine_a = crate::scene_tool::schemas::EngineReport {
+            engine_name: "skipped (engine=b)".to_string(),
+            results: vec![],
+            summary: "Skipped by engine filter".to_string(),
+            warnings: vec![],
+            errors: vec![],
+        };
+    }
+    // Fase 5: validar GenericSteps contra schema del plugin.
+    let tool_schemas = fetch_tool_schemas().await;
+    let generic_details = crate::scene_tool::validator::SceneValidator
+        ::validate_generic_steps(&plan, &tool_schemas);
+    if !generic_details.is_empty() {
+        qa_report.engine_a.results.extend(generic_details.iter().cloned());
+        let any_fail = generic_details.iter().any(|d| !d.passed);
+        if any_fail {
+            qa_report.error_type = crate::scene_tool::schemas::ErrorType::Topology;
+            qa_report.passed = false;
+        }
+    }
+    // Persistir QA report en plugin (single source of truth).
+    let _ = forward(registry, proj, "scene/set_qa_report", json!({
+        "scene_path": resolved_scene_path,
+        "qa_report": serde_json::to_value(&qa_report)?,
+    })).await;
+    Ok(serde_json::to_value(&crate::scene_tool::schemas::SceneValidateResponse { qa_report })?)
+}
+
+// scene/commit: forward al plugin (que guarda + libera lock en su registry).
+async fn scene_commit_action(
+    proj: &str,
+    scene_path: Option<&str>,
+    _agent_id: Option<&str>,
+    save: bool,
+) -> Result<Value, ToolError> {
+    let registry = EditorRegistry::global();
+    let resolved_scene_path = resolve_planning_scene_path(proj, scene_path).await?;
+    // F2: descartar cambios sin aviso = pérdida silenciosa.
+    if !save {
+        let st_resp = forward(registry, proj, "scene/status", json!({
+            "scene_path": resolved_scene_path,
+        })).await?;
+        let dirty = st_resp.get("status").and_then(|s| s.get("dirty")).and_then(Value::as_bool).unwrap_or(false);
+        if dirty {
+            return Err(ToolError::invalid_params(
+                "la escena tiene cambios SIN guardar (dirty:true) — pasa save=true para persistirlos, o scene(action=\"open\") de nuevo para descartarlos conscientemente",
+            ));
+        }
+    }
+    let response = forward(registry, proj, "scene/commit", json!({
+        "scene_path": resolved_scene_path,
+        "save": save,
+    })).await?;
+    // Limpiar dirty en el registry server-side si save OK.
+    if save && response.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+        registry.clean_dirty(proj, &resolved_scene_path).await;
+    }
+    Ok(response)
+}
+
+// scene/status: forward al plugin (single source of truth).
+async fn scene_status_action(
+    proj: &str,
+    scene_path: Option<&str>,
+) -> Result<Value, ToolError> {
+    let registry = EditorRegistry::global();
+    let Some(p) = scene_path else {
+        // Sin scene_path → forward list (alias).
+        return forward(registry, proj, "scene/list", json!({})).await;
+    };
+    forward(registry, proj, "scene/status", json!({
+        "scene_path": p,
+    })).await
+}
+
+// scene/list: forward al plugin.
+async fn scene_list_action(
+    proj: &str,
+) -> Result<Value, ToolError> {
+    let registry = EditorRegistry::global();
+    forward(registry, proj, "scene/list", json!({})).await
+}
+
+// Resuelve la escena objetivo: explícita si viene, si no la única con lock activo.
+// Pide al plugin vía scene/list y devuelve la primera; si no hay ninguna, error.
+async fn resolve_planning_scene_path(
+    proj: &str,
+    scene_path: Option<&str>,
+) -> Result<String, ToolError> {
+    if let Some(p) = scene_path {
+        return Ok(p.to_string());
+    }
+    let registry = EditorRegistry::global();
+    let list_resp = forward(registry, proj, "scene/list", json!({})).await?;
+    let scenes = list_resp.get("scenes").and_then(Value::as_array).cloned().unwrap_or_default();
+    let first = scenes.first()
+        .and_then(|s| s.get("scene_path").and_then(Value::as_str))
+        .ok_or_else(|| {
+            ToolError::invalid_params(
+                "No active scene in plugin-registry — llama scene(action=\"open\", scene_path=...) antes de planificar"
+            )
+        })?;
+    Ok(first.to_string())
+}
+
+// Carga el SceneContext desde el plugin (forward a scene/get_edited_scene_root + node/get_children).
+async fn load_scene_context_from_plugin(
+    proj: &str,
+    scene_path: &str,
+) -> Result<crate::scene_tool::schemas::SceneContext, ToolError> {
+    let registry = EditorRegistry::global();
+    // Forward scene/open primero (asegura pestaña activa).
+    let _ = forward(registry, proj, "scene/open", json!({
+        "scene_path": scene_path,
+    })).await;
+    let root = forward(registry, proj, "scene/get_edited_scene_root", json!({})).await?;
+    let nodes_result = forward(registry, proj, "node/get_children", json!({
+        "node_path": ".",
+        "recursive": true,
+        "scene_path": scene_path,
+    })).await?;
+    Ok(build_scene_context(scene_path, &root, &nodes_result))
 }
 
 /// Fase 5: obtiene los schemas de todas las tools del plugin vía FlojoTester.
@@ -986,69 +1047,12 @@ fn resolve_plan_file_path(proj: &str, file: &str) -> String {
     }
 }
 
-/// Resuelve la escena objetivo de un sub-comando planning: explícita si viene,
-/// si no la única/primera escena abierta en el SceneRegistry.
-fn resolve_planning_scene(
-    registry: &std::sync::Arc<crate::scene_tool::registry::SceneRegistry>,
-    scene_path: Option<&str>,
-    action: &str,
-) -> Result<String, ToolError> {
-    if let Some(p) = scene_path {
-        return Ok(p.to_string());
-    }
-    registry
-        .list_scenes()
-        .first()
-        .map(|s| s.scene_path.clone())
-        .ok_or_else(|| {
-            ToolError::invalid_params(format!(
-                "No active scene in SceneRegistry — llama scene(action=\"open\", scene_path=...) antes de \"{action}\""
-            ))
-        })
-}
-
-// Adapter to call MCP tools from registry using forward()
-struct RegistryClientAdapter {
-    project_path: String,
-}
-
-#[async_trait::async_trait]
-impl crate::scene_tool::registry::SceneRegistryClient for RegistryClientAdapter {
-    async fn load_scene_context(&self, scene_path: &str) -> Result<crate::scene_tool::schemas::SceneContext, String> {
-        let registry = EditorRegistry::global();
-
-        // 🚨 Los nombres de tool son los INTERNOS del dispatcher del plugin
-        // (prefijo BARE + "/metodo") — NUNCA el nombre MCP "godot_*".
-        // El dispatcher rutea por lo que va antes del "/" (dispatcher.gd).
-        let _ = forward(registry, &self.project_path, "scene/open", serde_json::json!({
-            "scene_path": scene_path,
-        })).await.map_err(|e| e.to_string())?;
-
-        // Get scene root
-        let root = forward(registry, &self.project_path, "scene/get_edited_scene_root", serde_json::json!({}))
-            .await
-            .map_err(|e| e.to_string())?;
-
-        // Get nodes via node handlers (🚨 node_query es nombre SERVER-side;
-        // el plugin solo registra "node" — split v4.6).
-        let nodes_result = forward(registry, &self.project_path, "node/get_children", serde_json::json!({
-            "node_path": ".",
-            "recursive": true,
-            "scene_path": scene_path,
-        })).await.map_err(|e| e.to_string())?;
-
-        // Build SceneContext from results
-        let context = build_scene_context(scene_path, &root, &nodes_result);
-        Ok(context)
-    }
-
-    async fn save_scene(&self, scene_path: &str) -> Result<(), String> {
-        let registry = EditorRegistry::global();
-        forward(registry, &self.project_path, "scene/save", serde_json::json!({
-            "scene_path": scene_path,
-        })).await.map_err(|e| e.to_string())?;
-        Ok(())
-    }
+/// Resuelve la escena objetivo: usa la versión async `resolve_planning_scene_path`
+/// definida en el cuerpo de `scene`. Esta función sync queda como alias
+/// deprecated (no se invoca desde ningún path nuevo).
+#[allow(dead_code)]
+fn _resolve_planning_scene_deprecated(_scene_path: Option<&str>, _action: &str) -> Result<String, ToolError> {
+    Err(ToolError::invalid_params("deprecated — use resolve_planning_scene_path (async)"))
 }
 
 /// Adapter for validator client using forward()
@@ -2275,9 +2279,10 @@ async fn health(project_path: Option<String>) -> Result<Value, ToolError> {
 pub async fn run() -> Result<(), ServerError> {
     EditorRegistry::init_global();
 
-    // Initialize SceneRegistry for scene tool (Fase C)
+    // Fase 1 (2026-09-03): state de planning vive en el plugin-registry
+    // (HerenSceneRegistry en GDScript). El server NO mantiene SceneRegistry
+    // propio — toda la orquestación es forward + pure-logic (coder/validator).
     let project_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    crate::scene_tool::init_scene_tool(&project_root);
 
     // Discovery (fix 2026-09-03): escribir `.heren/server_port.json` para que
     // el editor sepa reconectar al server correcto cuando OpenCode reinicia.

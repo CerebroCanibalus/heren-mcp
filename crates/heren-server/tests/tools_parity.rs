@@ -8,6 +8,7 @@
 //! Checklist real al tocar tools (ver AGENTS.md §6):
 //! - AÑADIR: escribir la fn #[tool] en server.rs. Nada más.
 //! - QUITAR: borrar la fn. Si quieres regresión, añade el nombre a FORBIDDEN_TOOLS.
+//! - NUEVA action de tool existente: añadir (tool, action) a DISPATCH_ROUTES.
 
 use flojo_mcp::prelude::*;
 use heren_server::Heren;
@@ -23,6 +24,31 @@ const MIN_TOOLS: usize = 15;
 /// Tools legítimas sin parámetro `action` (no siguen el patrón "1 tool N acciones"):
 /// health solo project_path.
 const TOOLS_WITHOUT_ACTION: &[&str] = &["health"];
+
+/// Routes que el server usa internamente via forward() al plugin.
+/// Cada (tool, action) debe existir en `addons/heren/_routes.gd::ROUTES`.
+/// Si añades un nuevo forward() a scene/nodepath/etc., agrégalo aquí Y en
+/// _routes.gd (Fase 3 §0.8, 2026-09-03).
+const DISPATCH_ROUTES: &[&str] = &[
+    "scene/open", "scene/save", "scene/get_edited_scene_root",
+    "scene/get_open_scenes", "scene/get_plan", "scene/set_qa_report",
+    "scene/plan", "scene/orchestrate", "scene/validate", "scene/commit",
+    "scene/status", "scene/list",
+    "node/get_children", "node/add", "node/set_props", "node/set_prop",
+    "node/instantiate", "node/remove", "node/duplicate",
+    "resource/create",
+    "signal/connect", "signal/list",
+    "validate/scene",
+    "visual/capture", "visual/scene_summary",
+    "animation/add_track", "animation/add_key", "animation/create_player",
+    "animation/create", "animation/update_props", "animation/duplicate",
+    "animation/delete", "animation/tree_set_param",
+    "animation/tree_add_blend_node", "animation/tree_connect_blend_nodes",
+    "animation/tree_set_anim_player",
+    "skeleton/skeleton_add_bone", "skeleton/skeleton_set_rest",
+    "skeleton/skeleton_skin", "skeleton/skeleton_set_pose",
+    "skeleton/skeleton_ik",
+];
 
 async fn list_tools() -> Vec<flojo_mcp::rmcp::model::Tool> {
     let tester = FlojoTester::with_context(Heren::new(), Context::default());
@@ -129,6 +155,26 @@ async fn internal_forward_names_use_plugin_prefixes() {
         assert!(
             PLUGIN_PREFIXES.contains(&prefix),
             "'{name}' usa prefijo '{prefix}' NO registrado en el plugin — revisa editor_plugin.gd"
+        );
+    }
+}
+
+#[tokio::test]
+async fn dispatch_routes_are_in_plugin_table() {
+    // Fase 3 (2026-09-03): las rutas internas (forward del server) deben estar
+    // declaradas en `addons/heren/_routes.gd::ROUTES`. Esto evita el bug
+    // A4 (dispatcher routing frágil): renames silenciosos rompen producción.
+    let routes_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent().and_then(|p| p.parent())
+        .map(|p| p.join("addons").join("heren").join("_routes.gd"))
+        .expect("workspace root");
+    let content = std::fs::read_to_string(&routes_path)
+        .unwrap_or_else(|e| panic!("no se pudo leer {}: {}", routes_path.display(), e));
+    for route in DISPATCH_ROUTES {
+        assert!(
+            content.contains(&format!("\"{}\"", route)) || content.contains(&format!("\"{}\":", route)),
+            "route '{}' no está declarada en _routes.gd::ROUTES. Añádela (Fase 3 §0.8)",
+            route
         );
     }
 }

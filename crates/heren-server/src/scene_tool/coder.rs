@@ -1,7 +1,7 @@
 //! Scene Coder — Deterministic translator: ScenePlan → MCP calls
 //! Zero-LLM for common operations (like MAC's _plan_to_code)
 
-use crate::scene_tool::schemas::{ScenePlan, SceneContext, SceneStep, Vector3};
+use crate::scene_tool::schemas::{ScenePlan, SceneContext, SceneStep, Vector3, Transform3D};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -225,6 +225,22 @@ impl SceneCoder {
                             "scene_path": plan.scene_path,
                         }),
                         description: format!("Connect {from_node}::{signal_name} -> {to_node}::{method}"),
+                    });
+                }
+                // Round-3: DisconnectSignal (P-M4).
+                SceneStep::DisconnectSignal { id, from_node, signal_name, to_node, method } => {
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "signal".to_string(),
+                        args: serde_json::json!({
+                            "action": "disconnect",
+                            "from_node": from_node,
+                            "signal_name": signal_name,
+                            "to_node": to_node,
+                            "method": method,
+                            "scene_path": plan.scene_path,
+                        }),
+                        description: format!("Disconnect {from_node}::{signal_name} -> {to_node}::{method}"),
                     });
                 }
                 
@@ -506,6 +522,20 @@ impl SceneCoder {
                         description: format!("animation/tree_set_param '{param_name}'"),
                     });
                 }
+                // Round-3: SetTreeActive (P-M12).
+                SceneStep::SetTreeActive { id, tree_path, active } => {
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "animation".to_string(),
+                        args: serde_json::json!({
+                            "action": "tree_activate",
+                            "tree_path": tree_path,
+                            "active": active,
+                            "scene_path": plan.scene_path,
+                        }),
+                        description: format!("animation/tree_activate {tree_path} active={active}"),
+                    });
+                }
                 // Step dedicado para asignar el AnimationPlayer del tree
                 // (alternativa a CreateAnimationTree.player_path).
                 // Si llega como GenericStep, el coder lo trata igual — este
@@ -646,6 +676,46 @@ impl SceneCoder {
                             "scene_path": plan.scene_path,
                         }),
                         description: format!("skeleton/skin mesh='{mesh_path}' → skeleton='{skeleton_path}'"),
+                    });
+                }
+                // Round-3 (2026-09-03): RemoveBone + AttachBone.
+                SceneStep::RemoveBone { id, skeleton_path, bone_name } => {
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "skeleton".to_string(),
+                        args: serde_json::json!({
+                            "action": "skeleton_remove_bone",
+                            "skeleton_path": skeleton_path,
+                            "bone_name": bone_name,
+                            "scene_path": plan.scene_path,
+                        }),
+                        description: format!("skeleton/remove_bone '{bone_name}'"),
+                    });
+                }
+                SceneStep::AttachBone { id, parent_path, bone_name, bone_idx, node_name, mesh_path, offset } => {
+                    let mut args = serde_json::json!({
+                        "action": "skeleton_attachment",
+                        "skeleton_path": parent_path,
+                        "bone_name": bone_name,
+                        "scene_path": plan.scene_path,
+                    });
+                    if !node_name.is_empty() {
+                        args["attachment_name"] = Value::String(node_name.clone());
+                    }
+                    if !mesh_path.is_empty() {
+                        args["mesh_path"] = Value::String(mesh_path.clone());
+                    }
+                    if let Some(idx) = bone_idx {
+                        args["bone_idx"] = Value::Number((*idx).into());
+                    }
+                    if *offset != Transform3D::default() {
+                        args["offset"] = serde_json::to_value(offset).unwrap_or(Value::Null);
+                    }
+                    calls.push(MCPCall {
+                        step_id: id.clone(),
+                        tool: "skeleton".to_string(),
+                        args,
+                        description: format!("skeleton/attach bone='{bone_name}' under '{parent_path}'"),
                     });
                 }
                 // === Fase 4 — Script/Shader typed steps ===

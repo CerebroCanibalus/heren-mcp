@@ -318,11 +318,28 @@ func handle_open(args: Dictionary) -> Dictionary:
 			"current_active": (opened.scene_file_path if opened != null else ""),
 		}
 	HerenSceneRegistryScript.register(scene_path, opened)
-	return {"ok": true, "opened": scene_path, "root_name": opened.name}
+	# Fase 1: open adquiere lock automáticamente (agent_id="default" si no viene).
+	var agent_id: String = str(args.get("agent_id", "default"))
+	var mode: String = str(args.get("mode", "isolated"))
+	var lock_result := HerenSceneRegistryScript.acquire_lock(scene_path, agent_id, mode)
+	if not lock_result.get("ok", false):
+		return {
+			"ok": false,
+			"error": "scene_locked_by_other_agent",
+			"existing_agent_id": lock_result.get("existing_agent_id", ""),
+			"existing_pid": lock_result.get("existing_pid", 0),
+			"existing_since": lock_result.get("existing_since", ""),
+		}
+	return {
+		"ok": true,
+		"opened": scene_path,
+		"root_name": opened.name,
+		"lock_id": lock_result.get("lock_id", ""),
+		"mode": lock_result.get("mode", "isolated"),
+	}
 
 
 ## BUG 4 fix: unload cierra la escena del registry y del editor.
-## Permite forzar recarga del disco tras ediciones manuales.
 func handle_unload(args: Dictionary) -> Dictionary:
 	var ei := _editor_interface()
 	if ei == null:
@@ -332,13 +349,134 @@ func handle_unload(args: Dictionary) -> Dictionary:
 		return {"ok": false, "error": "scene_path required"}
 	# Quitar del registry.
 	HerenSceneRegistryScript.unregister(scene_path)
-	# Cerrar la pestaña del editor si está abierta.
+	HerenSceneRegistryScript.release_lock(scene_path)
+	# Cerrar la pestaña del editor si está abierta. Godot 4 NO expone API
+	# pública para cerrar pestañas — el workaround es recargar la escena
+	# vacía del usuario, pero eso es invasivo. En lugar de mentir con
+	# ok:true ciego, reportamos honestamente: registry limpio, pestaña
+	# sigue abierta (el usuario debe cerrarla manualmente o scene/open en
+	# otra escena).
 	var open_scenes := ei.get_open_scenes()
-	if scene_path in open_scenes:
-		# Godot no tiene API pública para cerrar pestaña directamente.
-		# El usuario puede cerrar manualmente o usar scene/open en otra escena.
-		pass
-	return {"ok": true, "unloaded": scene_path}
+	var tab_still_open := scene_path in open_scenes
+	return {
+		"ok": true,
+		"unloaded": scene_path,
+		"registry_cleared": true,
+		"tab_still_open": tab_still_open,
+		"hint": "tab_still_open=true → Godot 4 no permite cerrar pestañas por API; ciérrala manualmente o abre otra escena" if tab_still_open else "",
+	}
+
+
+# ============================================================
+# Fase 1: handlers de planning (state vive en HerenSceneRegistry)
+# ============================================================
+
+## scene/plan — escribe el ScenePlan JSON al registry del plugin.
+## El agent_id del lock debe coincidir (o no haber lock).
+func handle_plan(args: Dictionary) -> Dictionary:
+	var scene_path: String = str(args.get("scene_path", ""))
+	if scene_path == "":
+		return {"ok": false, "error": "scene_path required"}
+	# Verificar lock (si lo hay) — agent_id debe coincidir.
+	var lock := HerenSceneRegistryScript.get_lock(scene_path)
+	if not lock.is_empty():
+		var caller_agent: String = str(args.get("agent_id", "default"))
+		if lock.get("agent_id", "default") != caller_agent:
+			return {"ok": false, "error": "scene_locked_by_other_agent",
+				"existing_agent_id": lock.get("agent_id", "")}
+	var plan: Dictionary = args.get("plan", {})
+	if typeof(plan) != TYPE_DICTIONARY or plan.is_empty():
+		return {"ok": false, "error": "plan must be a non-empty Dictionary"}
+	return HerenSceneRegistryScript.write_plan(scene_path, plan)
+
+
+## scene/get_plan — devuelve el ScenePlan JSON. Usado por el server para
+## ejecutar el coder/validator pure-logic.
+func handle_get_plan(args: Dictionary) -> Dictionary:
+	var scene_path: String = str(args.get("scene_path", ""))
+	if scene_path == "":
+		return {"ok": false, "error": "scene_path required"}
+	var plan: Dictionary = HerenSceneRegistryScript.get_plan(scene_path)
+	return {"ok": true, "plan": plan, "has_plan": not plan.is_empty()}
+
+
+## scene/set_qa_report — guarda el QAReport de la última validación.
+func handle_set_qa_report(args: Dictionary) -> Dictionary:
+	var scene_path: String = str(args.get("scene_path", ""))
+	if scene_path == "":
+		return {"ok": false, "error": "scene_path required"}
+	var report: Dictionary = args.get("qa_report", {})
+	HerenSceneRegistryScript.write_qa_report(scene_path, report)
+	return {"ok": true}
+
+
+## scene/get_qa_report — devuelve el último QAReport.
+func handle_get_qa_report(args: Dictionary) -> Dictionary:
+	var scene_path: String = str(args.get("scene_path", ""))
+	if scene_path == "":
+		return {"ok": false, "error": "scene_path required"}
+	var qa: Dictionary = HerenSceneRegistryScript.get_qa_report(scene_path)
+	return {"ok": true, "qa_report": qa}
+
+
+## scene/status — devuelve el status completo de una escena (Fase 1: fuente plugin).
+func handle_status(args: Dictionary) -> Dictionary:
+	var scene_path: String = str(args.get("scene_path", ""))
+	if scene_path == "":
+		# Sin scene_path → listar todas las escenas con plan registrado.
+		return {"ok": true, "scenes": HerenSceneRegistryScript.list_scenes()}
+	if scene_path == "":
+		return {"ok": false, "error": "scene_path required"}
+	return {"ok": true, "status": HerenSceneRegistryScript.status_of(scene_path)}
+
+
+## scene/list — alias para status sin scene_path. Mantiene compat con la API vieja.
+func handle_list(args: Dictionary) -> Dictionary:
+	return {"ok": true, "scenes": HerenSceneRegistryScript.list_scenes()}
+
+
+## scene/commit — guarda la escena al disco y libera el lock.
+## Fase 1: el commit es responsabilidad del plugin (atomic save + lock release).
+func handle_commit(args: Dictionary) -> Dictionary:
+	var ei := _editor_interface()
+	if ei == null:
+		return {"ok": false, "error": "editor interface unavailable"}
+	var scene_path: String = str(args.get("scene_path", ""))
+	if scene_path == "":
+		return {"ok": false, "error": "scene_path required"}
+	# Si no debe guardar (save=false) Y hay cambios dirty, error accionable.
+	var save: bool = bool(args.get("save", true))
+	var dirty := HerenSceneRegistryScript.is_dirty(scene_path)
+	if not save and dirty:
+		return {
+			"ok": false,
+			"error": "scene_has_uncommitted_changes",
+			"hint": "pasa save=true para persistir, o scene(action='open') de nuevo para descartar",
+		}
+	if save:
+		# Guardar la escena activa si coincide, o buscar la pestaña.
+		var root := HerenSceneRegistryScript.resolve_root(ei, scene_path)
+		if root == null:
+			return {"ok": false, "error": "scene_not_resolvable: " + scene_path}
+		var packed := PackedScene.new()
+		var err := packed.pack(root)
+		if err != OK:
+			return {"ok": false, "error": "pack_failed: " + str(err)}
+		var save_err := ResourceSaver.save(packed, scene_path, ResourceSaver.FLAG_COMPRESS)
+		if save_err != OK:
+			return {"ok": false, "error": "save_failed: " + str(save_err)}
+		HerenSceneRegistryScript.update_mtime(scene_path)
+	# Liberar lock.
+	var released := HerenSceneRegistryScript.release_lock(scene_path)
+	# Limpiar state de planning (plan + qa) tras commit exitoso.
+	HerenSceneRegistryScript.write_plan(scene_path, {})
+	HerenSceneRegistryScript.write_qa_report(scene_path, {})
+	return {
+		"ok": true,
+		"saved": save,
+		"scene_path": scene_path,
+		"lock_released": released,
+	}
 
 
 func _editor_interface() -> EditorInterface:

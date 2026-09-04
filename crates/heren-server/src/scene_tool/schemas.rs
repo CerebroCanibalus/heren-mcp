@@ -275,6 +275,14 @@ pub enum SceneStep {
         to_node: String,
         method: String,
     },
+    /// Disconnect a signal connection (P-M4 Round-3).
+    DisconnectSignal {
+        id: String,
+        from_node: String,
+        signal_name: String,
+        to_node: String,
+        method: String,
+    },
     /// Instantiate a template from registry
     InstantiateTemplate {
         id: String,
@@ -433,6 +441,12 @@ pub enum SceneStep {
         param_name: String,
         value: serde_json::Value,
     },
+    /// Activate/deactivate an AnimationTree (P-M12 Round-3).
+    SetTreeActive {
+        id: String,
+        tree_path: String,
+        active: bool,
+    },
     // === Fase 3 — Skeleton typed steps ===
     /// Add a bone to a skeleton
     AddBone {
@@ -491,6 +505,28 @@ pub enum SceneStep {
         id: String,
         mesh_path: String,
         skeleton_path: String,
+    },
+    /// Remove a bone from a skeleton (P-M11 Round-3).
+    RemoveBone {
+        id: String,
+        skeleton_path: String,
+        bone_name: String,
+    },
+    /// Attach a BoneAttachment3D (mesh) to a bone of a skeleton (P-M1 Round-3).
+    /// Si la mesh_path está vacía, solo crea el BoneAttachment3D sin mesh.
+    AttachBone {
+        id: String,
+        parent_path: String,
+        bone_name: String,
+        bone_idx: Option<i32>,
+        /// Opcional: nombre del nodo BoneAttachment3D a crear (default: "Attach_<bone_name>")
+        #[serde(default)]
+        node_name: String,
+        /// Opcional: mesh_path para asignar como hijo del attachment (MeshInstance3D).
+        #[serde(default)]
+        mesh_path: String,
+        #[serde(default)]
+        offset: Transform3D,
     },
     // === Fase 4 — Script/Shader typed steps ===
     /// Attach a script to a node

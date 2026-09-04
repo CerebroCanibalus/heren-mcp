@@ -19,12 +19,94 @@ extends RefCounted
 ##   2. Registry (escena creada/editada por MCP en memoria, sin pestaña)
 ##   3. Archivo en disco → open_scene_from_path
 ##   4. null (error claro, nunca escena equivocada)
+##
+## Fase 1 (2026-09-03): SINGLE SOURCE OF TRUTH. El plugin-registry ahora también
+## guarda state de PLANNING (plan, qa_report, lock, mode, dirty). El server NO
+## mantiene estado paralelo — todo consulta/accede vía forward a este registry.
+## Persistencia en `.heren/scenes/<scene>.json` para sobrevivir reinicios del editor.
 
 
 static var _scenes: Dictionary = {}  # scene_path → Node (root)
 static var _mtimes: Dictionary = {}  # scene_path → int (mtime al registrar)
 static var _pending_ops: Dictionary = {}  # scene_path → Array[Dictionary] (ops del agente re-aplicables)
 static var _dirty: Dictionary = {}  # scene_path → bool (hay mutaciones pendientes)
+
+# Cache de mtime para evitar FileAccess.open en cada llamada.
+# TTL 1s: suficiente para detectar cambios reales del disco sin overhead.
+const MTIME_CACHE_TTL := 1.0
+static var _mtime_cache: Dictionary = {}  # abs_path → {mtime: int, time: float}
+
+# ============================================================
+# Fase 1: state de planning (plan JSON, qa_report, lock, mode)
+# ============================================================
+static var _plans: Dictionary = {}        # scene_path → Dictionary (ScenePlan JSON)
+static var _qa_reports: Dictionary = {}   # scene_path → Dictionary (QAReport JSON)
+static var _locks: Dictionary = {}        # scene_path → {agent_id, mode, pid, since, progress, lock_id}
+static var _modes: Dictionary = {}        # scene_path → SceneMode (isolated/attached/modify)
+static var _plan_dirty: Dictionary = {}   # scene_path → bool (override explícito dirty de plan)
+
+
+# Persistencia: .heren/scenes/<scene>.json con state de planning.
+# Solo se persiste state, no el árbol (eso vive en _scenes mientras hay editor).
+const _SCENES_DIR := ".heren/scenes"
+
+
+static func _scenes_state_path(scene_path: String) -> String:
+	var p := _norm(scene_path)
+	var safe := p.replace("res://", "").replace("/", "_").replace(":", "_")
+	return _SCENES_DIR + "/" + safe + ".json"
+
+
+## Persiste state de planning a disco (llamar tras write_plan, acquire_lock, etc).
+static func _persist_state(scene_path: String) -> void:
+	var p := _norm(scene_path)
+	if p == "":
+		return
+	var path := _scenes_state_path(p)
+	var dir := path.get_base_dir()
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir))
+	var state := {
+		"scene_path": p,
+		"plan": _plans.get(p, null),
+		"qa_report": _qa_reports.get(p, null),
+		"lock": _locks.get(p, null),
+		"mode": _modes.get(p, ""),
+		"dirty": _plan_dirty.get(p, false),
+	}
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f == null:
+		return
+	f.store_string(JSON.stringify(state))
+	f.close()
+
+
+## Carga state de planning desde disco (lazy, primera vez que se accede).
+static func _load_state_if_needed(scene_path: String) -> void:
+	var p := _norm(scene_path)
+	if p == "":
+		return
+	var path := _scenes_state_path(p)
+	if not FileAccess.file_exists(path):
+		return
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return
+	var text := f.get_as_text()
+	f.close()
+	var parsed = JSON.parse_string(text)
+	if typeof(parsed) != TYPE_DICTIONARY:
+		return
+	var s := parsed as Dictionary
+	if s.has("plan") and s["plan"] != null:
+		_plans[p] = s["plan"]
+	if s.has("qa_report") and s["qa_report"] != null:
+		_qa_reports[p] = s["qa_report"]
+	if s.has("lock") and s["lock"] != null:
+		_locks[p] = s["lock"]
+	if s.has("mode") and s["mode"] != "":
+		_modes[p] = s["mode"]
+	if s.has("dirty"):
+		_plan_dirty[p] = s["dirty"]
 
 
 ## Normaliza la key a la forma canónica (res://, forward slashes, sin
@@ -42,15 +124,25 @@ static func _norm(path: String) -> String:
 
 
 ## Obtiene el mtime de un archivo en disco (0 si no existe).
+## Usa cache con TTL 1s para evitar FileAccess.open en cada llamada.
 static func _get_file_mtime(path: String) -> int:
 	if not ResourceLoader.exists(path):
 		return 0
 	var abs_path := ProjectSettings.globalize_path(path)
+	var now := Time.get_ticks_msec() / 1000.0
+	# Cache hit: mtime consultado hace < TTL
+	var cached: Variant = _mtime_cache.get(abs_path, null)
+	if cached is Dictionary:
+		var age: float = now - (cached as Dictionary).get("time", 0.0)
+		if age < MTIME_CACHE_TTL:
+			return (cached as Dictionary).get("mtime", 0)
+	# Cache miss: leer del disco
 	var file := FileAccess.open(abs_path, FileAccess.READ)
 	if file == null:
 		return 0
 	var mtime := file.get_modified_time(abs_path)
 	file.close()
+	_mtime_cache[abs_path] = {"mtime": mtime, "time": now}
 	return mtime
 
 
@@ -118,6 +210,7 @@ static func clear() -> void:
 	_mtimes.clear()
 	_pending_ops.clear()
 	_dirty.clear()
+	_mtime_cache.clear()
 
 
 ## Actualiza el mtime registrado para una escena (llamar después de save).
@@ -165,6 +258,22 @@ static func has_pending_ops(path: String) -> bool:
 static func is_dirty(path: String) -> bool:
 	var p := _norm(path)
 	return _dirty.get(p, false)
+
+
+## Devuelve la escena dirty más reciente (por mtime), o "" si no hay ninguna.
+## Útil para commit inteligente: si el agente no pasa scene_path, usar la
+## última escena que fue editada por el MCP.
+static func most_recent_dirty() -> String:
+	var best_path := ""
+	var best_mtime := -1
+	for path in _dirty.keys():
+		if not _dirty[path]:
+			continue
+		var mtime := _get_file_mtime(path)
+		if mtime > best_mtime:
+			best_mtime = mtime
+			best_path = path
+	return best_path
 
 
 ## Re-aplica UNA op sobre un root fresco. Devuelve true si se re-aplicó.
@@ -302,3 +411,155 @@ static func resolve_root(ei: EditorInterface, scene_path: String) -> Node:
 			register(path, opened)
 			return opened
 	return null
+
+
+# ============================================================
+# Fase 1: API de state de planning (plan, qa, lock, mode)
+# ============================================================
+
+## Escribe el ScenePlan JSON de una escena. Valida que sea un dict mínimo.
+## Persiste a disco y marca la escena como plan_owner.
+static func write_plan(scene_path: String, plan: Dictionary) -> Dictionary:
+	var p := _norm(scene_path)
+	if p == "":
+		return {"ok": false, "error": "scene_path required"}
+	if typeof(plan) != TYPE_DICTIONARY:
+		return {"ok": false, "error": "plan must be a Dictionary"}
+	_load_state_if_needed(p)
+	_plans[p] = plan
+	_plan_dirty[p] = true
+	_persist_state(p)
+	return {"ok": true}
+
+
+## Devuelve el ScenePlan JSON de una escena, o {} si no tiene.
+static func get_plan(scene_path: String) -> Dictionary:
+	var p := _norm(scene_path)
+	_load_state_if_needed(p)
+	return _plans.get(p, {})
+
+
+## Devuelve true si la escena tiene un plan registrado.
+static func has_plan(scene_path: String) -> bool:
+	var p := _norm(scene_path)
+	_load_state_if_needed(p)
+	return _plans.has(p)
+
+
+## Escribe el QA report de una escena (resultado del último validate).
+static func write_qa_report(scene_path: String, report: Dictionary) -> void:
+	var p := _norm(scene_path)
+	_load_state_if_needed(p)
+	_qa_reports[p] = report
+	_persist_state(p)
+
+
+## Devuelve el QA report de una escena, o {} si no tiene.
+static func get_qa_report(scene_path: String) -> Dictionary:
+	var p := _norm(scene_path)
+	_load_state_if_needed(p)
+	return _qa_reports.get(p, {})
+
+
+## Adquiere un lock para la escena. agent_id="" → usa "default".
+## Si ya hay lock de otro agent → retorna error con existing_agent_id.
+static func acquire_lock(scene_path: String, agent_id: String, mode: String) -> Dictionary:
+	var p := _norm(scene_path)
+	if p == "":
+		return {"ok": false, "error": "scene_path required"}
+	_load_state_if_needed(p)
+	var aid := agent_id if agent_id != "" else "default"
+	var md := mode if mode != "" else "isolated"
+	if _locks.has(p):
+		var existing: Dictionary = _locks[p]
+		if existing.get("agent_id", "") != aid:
+			return {
+				"ok": false,
+				"error": "scene_locked_by_agent",
+				"existing_agent_id": existing.get("agent_id", ""),
+				"existing_pid": existing.get("pid", 0),
+				"existing_since": existing.get("since", ""),
+			}
+		# Mismo agent re-opening: OK, retorna el mismo lock_id.
+		return {"ok": true, "lock_id": existing.get("lock_id", ""), "mode": md}
+	# Crear nuevo lock.
+	var lock_id := "lock_" + str(Time.get_ticks_msec()) + "_" + str(randi() % 10000)
+	_locks[p] = {
+		"agent_id": aid,
+		"mode": md,
+		"pid": OS.get_process_id(),
+		"since": Time.get_datetime_string_from_system(true),
+		"progress": "Opening scene",
+		"lock_id": lock_id,
+	}
+	_modes[p] = md
+	_persist_state(p)
+	return {"ok": true, "lock_id": lock_id, "mode": md}
+
+
+## Libera el lock de una escena. Retorna true si había lock.
+static func release_lock(scene_path: String) -> bool:
+	var p := _norm(scene_path)
+	_load_state_if_needed(p)
+	var removed := _locks.erase(p)
+	if removed:
+		_persist_state(p)
+	return removed
+
+
+## Devuelve info del lock actual o {} si no hay.
+static func get_lock(scene_path: String) -> Dictionary:
+	var p := _norm(scene_path)
+	_load_state_if_needed(p)
+	return _locks.get(p, {})
+
+
+## Marca la escena dirty (override explícito; el orchestrator setea esto).
+static func set_dirty(scene_path: String, value: bool) -> void:
+	var p := _norm(scene_path)
+	_load_state_if_needed(p)
+	_plan_dirty[p] = value
+	_persist_state(p)
+
+
+## Devuelve el estado de dirty de una escena (considera _plan_dirty Y _dirty legacy).
+static func is_dirty(scene_path: String) -> bool:
+	var p := _norm(scene_path)
+	_load_state_if_needed(p)
+	if _plan_dirty.get(p, false):
+		return true
+	return _dirty.get(p, false)
+
+
+## Devuelve el status completo de una escena (lo que retorna `scene/status`).
+static func status_of(scene_path: String) -> Dictionary:
+	var p := _norm(scene_path)
+	_load_state_if_needed(p)
+	var qa := _qa_reports.get(p, {})
+	return {
+		"lock_id": _locks.get(p, {}).get("lock_id", ""),
+		"scene_path": p,
+		"mode": _modes.get(p, _locks.get(p, {}).get("mode", "isolated")),
+		"dirty": is_dirty(p),
+		"has_plan": _plans.has(p),
+		"qa_status": qa.get("error_type", "none") if not qa.is_empty() else null,
+		"lock_info": _locks.get(p, null),
+	}
+
+
+## Lista el status de todas las escenas con plan registrado.
+static func list_scenes() -> Array:
+	var out := []
+	for path in _plans.keys():
+		out.append(status_of(path))
+	return out
+
+
+## Limpia TODO el state de planning (mantiene _scenes intacto).
+## Usado al cerrar el editor o reiniciar el plugin.
+static func clear_planning_state() -> void:
+	_plans.clear()
+	_qa_reports.clear()
+	_locks.clear()
+	_modes.clear()
+	_plan_dirty.clear()

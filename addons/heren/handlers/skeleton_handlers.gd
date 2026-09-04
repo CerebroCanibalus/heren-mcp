@@ -375,7 +375,63 @@ func handle_skeleton_add_bone(args: Dictionary) -> Dictionary:
 				float(rot.get("z", 0))
 			))
 		skel3d.set_bone_rest(bone_idx, Transform3D(basis, origin))
-		return {"ok": true, "bone_name": bone_name, "bone_idx": bone_idx, "type": "Skeleton3D"}
+	return {"ok": true, "bone_name": bone_name, "bone_idx": bone_idx, "type": "Skeleton3D"}
+
+
+## P-M11 (Round-3): remove_bone — Borra un hueso del skeleton.
+## Para Skeleton2D: elimina el Bone2D hijo por nombre.
+## Para Skeleton3D: usa clear_bones() + re-add (API no expone remove_bone aislado).
+func handle_skeleton_remove_bone(args: Dictionary) -> Dictionary:
+	var root := _scene_root(args)
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	var node := _resolve_node(root, args.get("skeleton_path", ""))
+	if node == null:
+		return {"ok": false, "error": "skeleton_not_found"}
+	var bone_name: String = str(args.get("bone_name", ""))
+	if bone_name == "":
+		return {"ok": false, "error": "bone_name required"}
+	if node is Skeleton2D:
+		for child in node.get_children():
+			if child is Bone2D and child.name == bone_name:
+				node.remove_child(child)
+				child.queue_free()
+				return {"ok": true, "bone_name": bone_name, "type": "Skeleton2D"}
+		return {"ok": false, "error": "bone_not_found: " + bone_name}
+	if node is Skeleton3D:
+		var skel := node as Skeleton3D
+		var idx := skel.find_bone(bone_name)
+		if idx < 0:
+			return {"ok": false, "error": "bone_not_found: " + bone_name}
+		# Skeleton3D no expone remove_bone aislado; workaround: clear_bones +
+		# re-add todos los demás preservando rest pose y jerarquía parent.
+		var rest_data := []
+		var parent_indices := []
+		for i in skel.get_bone_count():
+			rest_data.append(skel.get_bone_rest(i))
+			parent_indices.append(skel.get_bone_parent(i))
+		# Mapeo de nombre → datos preservados.
+		var survivors := []
+		for i in skel.get_bone_count():
+			if i == idx:
+				continue
+			survivors.append({
+				"name": skel.get_bone_name(i),
+				"rest": rest_data[i],
+				"parent": parent_indices[i],
+			})
+		skel.clear_bones()
+		var new_idx_by_name := {}
+		for d in survivors:
+			var parent: int = -1
+			if d["parent"] >= 0:
+				var parent_name: String = skel.get_bone_name(d["parent"])
+				parent = new_idx_by_name.get(parent_name, -1)
+			var new_i := skel.add_bone(d["name"], parent)
+			new_idx_by_name[d["name"]] = new_i
+			skel.set_bone_rest(new_i, d["rest"])
+		return {"ok": true, "bone_name": bone_name, "type": "Skeleton3D", "bones_remaining": skel.get_bone_count()}
+	return {"ok": false, "error": "invalid_skeleton_type"}
 
 	return {"ok": false, "error": "invalid_skeleton_type"}
 
