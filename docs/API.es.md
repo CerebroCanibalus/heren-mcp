@@ -22,7 +22,7 @@ Heren MCP proporciona **18 tools centralizadas** (v4.6) que cubren todas las ope
 | `tilemap` | TileMaps y TileSets | `inspect_set`, `inspect_map`, `set_cell`, `terrain`, `pattern` |
 | `signal` | Señales entre nodos | `connect`, `disconnect`, `list`, `set_script` |
 | `validate` | Validación | `scene`, `script`, `node`, `resource` |
-| `debug` | Depuración con editor real | `status`, `breakpoint`, `control`, `stack`, `vars`, `profiler`, `run_scene`, `stop_scene`, `is_playing`, `get_editor_errors`, `output` |
+| `debug` | Depuración con editor real | `summary`, `breakpoint`, `control`, `stack`, `vars`, `profiler`, `run_scene`, `output` |
 | `orchestrate` | Operaciones batch | (múltiples ops; `plan` inline o `plan_file`) |
 | `visual_text` | Visión textual (NIVEL 0-1) | `coords`, `summary`, `ascii` |
 | `visual_image` | Visión imagen (NIVEL 2-3) | `capture`, `node` |

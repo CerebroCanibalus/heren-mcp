@@ -21,7 +21,7 @@
 
 High-performance MCP server for **Godot Engine 4.x** that lets AI agents control the **real editor** directly: create scenes, manipulate nodes, manage resources, connect signals, animate, rig skeletons, shaders and validate code. **All against the live editor, with real Undo/Redo.**
 
-**📢 v4.6**: Toolset redesigned — **18 tools, only `action` required** (end of the schema maze: no more absurd required params, agents don't guess). `node` split into mutations/reads/props (`node`/`node_query`/`node_props`), `visual` split into textual/image (`visual_text`/`visual_image`). **`debug/output` + `get_editor_errors`** expose runtime errors with the Output panel format (E hh:mm:ss:mmm + stack). **`session/diagnose`** = unified debugger (plugin integrity + headless graph + editor state). Continuous orientation: `node_not_found` returns `parent_children[]`, `rename`/`move` return `previous_path`/`old_parent`. Anti-inline: resources without path → `resource_incrusted_inline` warning. 100% **Rust** on **[FlojoMCP](https://github.com/CerebroCanibalus/flojomcp)**.
+**📢 v4.6**: Toolset redesigned — **18 tools, only `action` required** (end of the schema maze: no more absurd required params, agents don't guess). `node` split into mutations/reads/props (`node`/`node_query`/`node_props`), `visual` split into textual/image (`visual_text`/`visual_image`). **`debug/output`** with `filter=error|all` exposes game + editor errors (Output panel format, with stack). **`session/diagnose`** = unified debugger (plugin integrity + headless graph + editor state). Continuous orientation: `node_not_found` returns `parent_children[]`, `rename`/`move` return `previous_path`/`old_parent`. Anti-inline: resources without path → `resource_incrusted_inline` warning. 100% **Rust** on **[FlojoMCP](https://github.com/CerebroCanibalus/flojomcp)**.
 
 ---
 
@@ -34,7 +34,7 @@ High-performance MCP server for **Godot Engine 4.x** that lets AI agents control
 | 🔄 **Editor auto-launch** | `session/open` launches Godot, installs the plugin, enables `[editor_plugins]` and waits for the WS connection. Reuses an open editor; cleanly relaunches if a zombie one exists |
 | 🛠️ **18 centralized tools** | Scenes, nodes (mutations/reads/props), resources, scripts, signals, animations, skeletons, shaders, tilemaps, validation, debug — **only `action` required**, no-trap schemas |
 | 👀 **Vision system** | `visual_text` (coords/summary/ascii, ~20-150 tok) + `visual_image` (capture/node, off-screen render of the REAL scene) — cost hierarchy without burning context |
-| 🔍 **Real debugging with errors** | `debug/output` + `get_editor_errors` expose runtime errors (Output panel format, with stack) + `session/diagnose` for plugin integrity |
+| 🔍 **Real debugging with errors** | `debug/output` with `filter=error` exposes game + editor errors (Output panel format, with stack) + `session/diagnose` for plugin integrity |
 | ↩️ **Built-in Undo/Redo** | Every mutation goes through `EditorUndoRedoManager` — Ctrl+Z undoes what the AI created |
 | ⚡ **`orchestrate`** | Runs multiple operations in one call, with a plan file for complex plans |
 | 🏗️ **Create projects from scratch** | `project/create` generates project.godot + main scene without needing an editor |

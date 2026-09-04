@@ -23,7 +23,7 @@ per-action defaults in the plugin (no more `-32602 required` errors).
 | `tilemap` | TileMaps & TileSets | `inspect_set`, `inspect_map`, `set_cell`, `terrain`, `pattern` |
 | `signal` | Node signals | `connect`, `disconnect`, `list`, `set_script` |
 | `validate` | Validation | `scene`, `script`, `node`, `resource` |
-| `debug` | Debugging with real editor | `status`, `breakpoint`, `control`, `stack`, `vars`, `profiler`, `run_scene`, `stop_scene`, `is_playing`, `get_editor_errors`, `output` |
+| `debug` | Debugging with real editor | `summary`, `breakpoint`, `control`, `stack`, `vars`, `profiler`, `run_scene`, `output` |
 | `orchestrate` | Batch operations | (multiple ops; `plan` inline or `plan_file`) |
 | `visual_text` | Textual vision (LEVEL 0-1) | `coords`, `summary`, `ascii` |
 | `visual_image` | Image vision (LEVEL 2-3) | `capture`, `node` |

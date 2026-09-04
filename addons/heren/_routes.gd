@@ -149,16 +149,12 @@ const ROUTES := {
 
 	# Debug
 	"debug/summary": "handle_summary",
-	"debug/status": "handle_status",
 	"debug/breakpoint": "handle_breakpoint",
 	"debug/control": "handle_control",
 	"debug/stack": "handle_stack",
 	"debug/vars": "handle_vars",
 	"debug/profiler": "handle_profiler",
 	"debug/run_scene": "handle_run_scene",
-	"debug/stop_scene": "handle_stop_scene",
-	"debug/is_playing": "handle_is_playing",
-	"debug/get_editor_errors": "handle_get_editor_errors",
 	"debug/output": "handle_output",
 
 	# Validate

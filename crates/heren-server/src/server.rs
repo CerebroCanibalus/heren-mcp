@@ -2093,7 +2093,7 @@ async fn tilemap(
 // ============================================================
 
 #[tool(
-    description = "Depuración: summary|status|breakpoint|control|stack|vars|profiler|run_scene|stop_scene|is_playing|get_editor_errors|output. summary = snapshot completo (editor+plugin+game+errors+breakpoints+profiler+console). output = log del juego (filter=error|all). run_scene limpia buffer debug antes de play."
+    description = "Depuración: summary|breakpoint|control|stack|vars|profiler|run_scene|output. summary = snapshot completo (editor+plugin+game+errors+breakpoints+profiler+console). output = log del juego + errores del editor (filter=error|all). run_scene op=play|stop."
 )]
 #[allow(clippy::too_many_arguments)]
 async fn debug(

@@ -148,34 +148,6 @@ func handle_summary(args: Dictionary) -> Dictionary:
 
 # ---------------------------------------------------------------- handlers
 
-func handle_status(args: Dictionary) -> Dictionary:
-	var ei := _editor_interface()
-	var sessions: Array = []
-	if _dbg_plugin:
-		_dbg_plugin.ensure_hooked()
-		# El plugin expone session_ids() y first_session(); NO get_session(i).
-		for i in _dbg_plugin.session_ids():
-			var session = _dbg_plugin.first_session()
-			if session == null:
-				continue
-			sessions.append({
-				"id": i,
-				"active": session.is_active(),
-				"breaked": session.is_breaked(),
-				"debuggable": session.is_debuggable(),
-			})
-	return {
-		"ok": true,
-		"is_playing": ei.is_playing_scene() if ei else false,
-		"sessions": sessions,
-		"breaked": _dbg_plugin.stack_breaked if _dbg_plugin else false,
-		"stack_available": (_dbg_plugin.has_stack and _dbg_plugin.stack_breaked) if _dbg_plugin else false,
-		"breakpoints": _dbg_plugin.list_breakpoints() if _dbg_plugin else [],
-		"profiler_running": _dbg_plugin.profiler_running if _dbg_plugin else false,
-		"profiler_frames": _dbg_plugin.profiler_frames.size() if _dbg_plugin else 0,
-		"last_error_count": _dbg_plugin.last_errors.size() if _dbg_plugin else 0,
-	}
-
 
 func handle_breakpoint(args: Dictionary) -> Dictionary:
 	if _dbg_plugin == null:
@@ -274,13 +246,20 @@ func handle_profiler(args: Dictionary) -> Dictionary:
 
 
 func handle_run_scene(args: Dictionary) -> Dictionary:
+	# op: play (default) | stop. Reemplaza run_scene + stop_scene.
 	var ei := _editor_interface()
 	if ei == null:
 		return {"ok": false, "error": "no editor interface"}
 
-	# P0.4 (2026-09-03): limpiar buffer debug ANTES de play — `last_output` y
-	# `last_output_errors` son append-only globales; sin clear, el output de
-	# la corrida anterior se mezcla con el de la nueva (BUG #9).
+	var op := str(args.get("op", "play"))
+	if op == "stop":
+		if not ei.is_playing_scene():
+			return {"ok": true, "was_playing": false}
+		ei.stop_playing_scene()
+		return {"ok": true, "was_playing": true}
+
+	# --- op=play (comportamiento original) ---
+	# P0.4: limpiar buffer debug ANTES de play.
 	if _dbg_plugin:
 		_dbg_plugin.last_output.clear()
 		_dbg_plugin.last_output_errors.clear()
@@ -290,10 +269,6 @@ func handle_run_scene(args: Dictionary) -> Dictionary:
 		if not ResourceLoader.exists(scene_path):
 			return {"ok": false, "error": "scene_not_found: " + scene_path}
 		ei.play_custom_scene(scene_path)
-		# FAIL-FAST (2026-09-03): play_custom_scene es ASÍNCRONO. Si el agente
-		# lee debug/summary inmediatamente, ve is_playing=false (el play
-		# aún no arrancó). Esperar 1 frame y verificar. Si falla, retornar
-		# error accionable.
 		await get_tree().process_frame
 		var playing := ei.is_playing_scene()
 		if not playing:
@@ -301,7 +276,7 @@ func handle_run_scene(args: Dictionary) -> Dictionary:
 				"ok": false,
 				"error": "play_failed: scene didn't start (1 frame after play_custom_scene)",
 				"requested": scene_path,
-				"hint": "revisa output del editor o debug/get_editor_errors",
+				"hint": "revisa debug/output filter=error",
 			}
 		return {"ok": true, "running": scene_path, "custom": true, "verified": true}
 
@@ -317,74 +292,9 @@ func handle_run_scene(args: Dictionary) -> Dictionary:
 	return {"ok": true, "running": "main_scene", "custom": false, "verified": true}
 
 
-func handle_stop_scene(args: Dictionary) -> Dictionary:
-	var ei := _editor_interface()
-	if ei == null:
-		return {"ok": false, "error": "no editor interface"}
-	if not ei.is_playing_scene():
-		return {"ok": true, "was_playing": false}
-	ei.stop_playing_scene()
-	return {"ok": true, "was_playing": true}
-
-
-func handle_is_playing(args: Dictionary) -> Dictionary:
-	var ei := _editor_interface()
-	if ei == null:
-		return {"ok": false, "error": "no editor interface"}
-	return {"ok": true, "is_playing": ei.is_playing_scene()}
-
-
-func handle_get_editor_errors(args: Dictionary) -> Dictionary:
-	# v4.5: errores de RUNTIME capturados del debugger (mensaje `error` con
-	# stack trace + `output` con el texto formateado del panel Output).
-	# Adicional: lectura EditorLog para errores del editor en reposo (parse errors,
-	# script errors en el panel Output). El EditorLog se accede por el dock class.
-	if _dbg_plugin == null:
-		return {
-			"ok": true,
-			"note": "debugger plugin not registered",
-			"errors": [],
-			"count": 0,
-		}
-	_dbg_plugin.ensure_hooked()
-	var limit := int(args.get("limit", 50))
-	# Errores runtime del depurador (con stack).
-	var errors: Array = _dbg_plugin.last_errors
-	if errors.size() > limit:
-		errors = errors.slice(errors.size() - limit)
-	# Lectura del panel Output del editor para errores en reposo.
-	# En Godot 4.x el Output dock es un RichTextLabel (no existe
-	# "EditorOutputDock" ni "_output_messages"). Leemos el texto
-	# parseado y filtramos líneas que empiezan con "E " (error).
-	var output_errors: Array = []
-	var root := _editor_interface().get_base_control()
-	if root:
-		var rtl := _find_output_rich_text_label(root)
-		if rtl:
-			var raw_text: String = rtl.get_parsed_text()
-			for line in raw_text.split("\n"):
-				if line.begins_with("E "):
-					output_errors.append({"text": line, "level": 2})
-	# Limitar output_errors
-	if output_errors.size() > limit:
-		output_errors = output_errors.slice(output_errors.size() - limit)
-	# output_errors: texto formateado `E hh:mm:ss:mmm file:line @ func(): msg`
-	# + stack — EXACTAMENTE lo que muestra el panel Output del editor.
-	return {
-		"ok": true,
-		"errors": errors,
-		"count": _dbg_plugin.last_errors.size(),
-		"output_errors": output_errors,
-		"output_count": output_errors.size(),
-		"hook_ok": _dbg_plugin._hooked,
-		"note": "errors = runtime estructurados del debugger (con stack). " +
-				"output_errors = líneas 'E ' del panel Output del editor.",
-	}
-
-
 func handle_output(args: Dictionary) -> Dictionary:
-	# v4.5: salida del panel Output del juego en ejecución (print + errores
-	# formateados `E hh:mm:ss:mmm`). filter: all|error (default error).
+	# Output del juego + errores del editor. Reemplaza output + get_editor_errors.
+	# filter: all (todo) | error (runtime + editor errors). Default: error.
 	if _dbg_plugin == null:
 		return {"ok": false, "error": "debugger plugin not registered"}
 	_dbg_plugin.ensure_hooked()
@@ -392,9 +302,20 @@ func handle_output(args: Dictionary) -> Dictionary:
 	var limit := int(args.get("limit", 100))
 	var lines: Array = []
 	if filter == "all":
-		lines = _dbg_plugin.last_output
+		lines = _dbg_plugin.last_output.duplicate()
 	else:
-		lines = _dbg_plugin.last_output_errors
+		lines = _dbg_plugin.last_output_errors.duplicate()
+	# filter=error: añadir errores del panel Output del editor (parse errors,
+	# script errors). Busca el RichTextLabel del dock Output y parsea líneas "E ".
+	if filter == "error":
+		var root := _editor_interface().get_base_control()
+		if root:
+			var rtl := _find_output_rich_text_label(root)
+			if rtl:
+				var raw_text: String = rtl.get_parsed_text()
+				for line in raw_text.split("\n"):
+					if line.begins_with("E "):
+						lines.append({"text": line, "level": 2})
 	if lines.size() > limit:
 		lines = lines.slice(lines.size() - limit)
 	return {

@@ -23,7 +23,7 @@ Servidor MCP de alto rendimiento para **Godot Engine 4.x** que permite a IAs y a
 
 **📢 v4.7 (UI)**: nueva tool **`ui`** + **sistema transversal de templates** — 6 templates 2D prefabricados (`health_bar`, `crosshair`, `dialogue_box`, `score_label`, `boss_bar`, `inventory_slot`) instanciables con 1 llamada vía `node/instantiate {template: "..."}` o `ui/create`, presets de anchors (`ui/layout`), CanvasLayer para HUD overlay (`ui/canvas_layer`), creación de Themes (`ui/theme`) y lecturas enriquecidas con anchors/offsets para Control (adiós a la ceguera de UI).
 
-**📢 v4.6**: Toolset rediseñado — **18 tools, solo `action` required** (fin del laberinto de schemas: ya no hay parámetros required absurdos; el agente no adivina). `node` dividida en mutaciones/lecturas/props (`node`/`node_query`/`node_props`), `visual` en textual/imagen (`visual_text`/`visual_image`). **`debug/output` + `get_editor_errors`** exponen los errores de runtime del juego con formato del panel (E hh:mm:ss:mmm + stack). **`session/diagnose`** = debugger unificado (integridad plugin + grafo headless + estado editor). Orientación continua: `node_not_found` devuelve `parent_children[]`, `rename`/`move` devuelven `previous_path`/`old_parent`. Anti-incrustado: recursos inline sin path → warning `resource_incrusted_inline`. 100% **Rust** sobre **[FlojoMCP](https://github.com/CerebroCanibalus/flojomcp)**.
+**📢 v4.6**: Toolset rediseñado — **18 tools, solo `action` required** (fin del laberinto de schemas: ya no hay parámetros required absurdos; el agente no adivina). `node` dividida en mutaciones/lecturas/props (`node`/`node_query`/`node_props`), `visual` en textual/imagen (`visual_text`/`visual_image`). **`debug/output`** con `filter=error|all` expone errores del juego + del editor (formato panel Output, con stack). **`session/diagnose`** = debugger unificado (integridad plugin + grafo headless + estado editor). Orientación continua: `node_not_found` devuelve `parent_children[]`, `rename`/`move` devuelven `previous_path`/`old_parent`. Anti-incrustado: recursos inline sin path → warning `resource_incrusted_inline`. 100% **Rust** sobre **[FlojoMCP](https://github.com/CerebroCanibalus/flojomcp)**.
 
 ---
 
@@ -37,7 +37,7 @@ Servidor MCP de alto rendimiento para **Godot Engine 4.x** que permite a IAs y a
 | 🛠️ **19 tools centralizadas** | Escenas, nodos (mutaciones/lecturas/props), recursos, scripts, señales, animaciones, esqueletos, shaders, tilemaps, validación, debug y **UI 2D (tool `ui` + templates)** — **solo `action` required**, schemas sin trampas |
 | 👀 **Sistema de visión** | `visual_text` (coords/summary/ascii, ~20-150 tok) + `visual_image` (capture/nodo, render off-screen de la escena real) — jerarquía de costo sin quemar contexto |
 | 🧩 **UI 2D + templates** | Tool `ui` (create/layout/canvas_layer/templates/get_info/theme) + **sistema transversal de templates**: 6 prefabs .tscn instanciables con 1 llamada (`node/instantiate {template}` o `ui/create`), params por nombre de nodo canónico |
-| 🔍 **Debug real con errores** | `debug/output` + `get_editor_errors` exponen los errores de runtime del juego (formato del panel Output, con stack) + `session/diagnose` para integridad del plugin |
+| 🔍 **Debug real con errores** | `debug/output` con `filter=error` expone errores del juego + del editor (formato panel Output, con stack) + `session/diagnose` para integridad del plugin |
 | ↩️ **Undo/Redo integrado** | Cada mutación pasa por `EditorUndoRedoManager` — Ctrl+Z deshace lo que la IA creó |
 | ⚡ **`orchestrate`** | Ejecuta múltiples operaciones en una sola llamada, con plan en archivo para planes complejos |
 | 🏗️ **Crea proyectos desde cero** | `project/create` genera project.godot + escena main sin necesitar editor |
@@ -69,7 +69,7 @@ Comparamos contra los MCPs de Godot más usados, con datos verificados de sus re
 - **Profundidad por dominio**: 19 tools centralizadas con ~80+ acciones frente a decenas de tools de 1 función. Una llamada `animation/one_shot` crea animación completa; en GoPeak sería imposible (no hay animación).
 - **Sistema de visión con costo**: no solo capturas — jerarquía de costo (coords textuales ~20 tok → ASCII → imagen) con `visual_text`/`visual_image` separadas, para no quemar contexto.
 - **Schemas sin trampas**: solo `action` required en todas las tools — el agente nunca recibe `-32602 required` por parámetros que no aplican a su acción.
-- **Debug con errores reales**: `debug/get_editor_errors` y `debug/output` muestran los errores de runtime del juego (formato del panel Output con stack), y `session/diagnose` diagnostica la salud del plugin entero.
+- **Debug con errores reales**: `debug/output` con `filter=error` muestra errores del juego + del editor (formato panel Output con stack), y `session/diagnose` diagnostica la salud del plugin entero.
 - **Sin runtime externo**: Rust nativo. Node.js (ambos competidores) exige npm install + versión de Node.
 
 > ⚠️ La comparativa anterior marcaba ❌/⚡ sin verificar. Esta tabla usa datos reales de los repositorios (`.competitors/`). GoPeak es un proyecto sólido en debug/run/LSP/DAP; Coding-Solo es sólido en ejecución de proyectos y captura de output. Donde no competimos es donde ellos destacan; donde competimos, aportamos editor real + undo + dominios profundos.
@@ -158,7 +158,7 @@ scene(action="save", project_path="D:/MiJuego")
 
 # Correr y ver errores de runtime (formato del panel Output)
 debug(action="run_scene", project_path="D:/MiJuego")
-debug(action="get_editor_errors", project_path="D:/MiJuego")
+debug(action="output", filter="error", project_path="D:/MiJuego")
 # → output_errors: ["E 0:00:06:695 global.gd:7 @ get_playstate(): Node not found..."]
 ```
 
@@ -226,7 +226,7 @@ node_query(action="get_info", project_path="D:/MiJuego", node_path="CanvasLayer/
 | **tilemap** | inspect_set, inspect_map, set_cell, terrain, pattern | TileMaps/TileSets |
 | **signal** | connect, disconnect, list, set_script | Señales (CONNECT_PERSIST, defensivo) |
 | **validate** | scene, script, node, resource | Validación contra la escena viva |
-| **debug** | run_scene, stop_scene, is_playing, get_editor_errors, **output**, status, breakpoint, control, stack, vars, profiler | Depuración con el editor real. `get_editor_errors` → errores estructurados + `output_errors` (formato del panel Output); `output` con filter=error\|all |
+| **debug** | run_scene, output, breakpoint, control, stack, vars, profiler, summary | Depuración con el editor real. `output` con filter=error\|all → errores del juego + del editor (formato panel Output con stack); `run_scene` op=play\|stop |
 | **orchestrate** | (múltiples ops) | Batch operations, plan en archivo, errores por op sin abortar |
 | **visual_text** | coords, summary, ascii | Visión textual NIVEL 0-1 (sin imagen, ~20-150 tok) — usarla SIEMPRE primero |
 | **visual_image** | capture, node | Visión imagen NIVEL 2-3 — render off-screen de la ESCENA real (nunca 2×2), image_content base64 |
