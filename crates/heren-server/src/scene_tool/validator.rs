@@ -423,7 +423,10 @@ impl SceneValidator {
         }
     }
     
-    /// Engine B: Heuristic/Visual checks via visual_* tools
+    /// Engine B: Heuristic checks via visual_text/spatial + summary (JSON puro).
+    /// Fase D (§0.11): ya NO usa `capture_scene` (imagen). El summary recursivo
+    /// (visual_text action="summary") trae node_count + bounds + tree_depth +
+    /// warnings (z_fighting_risk, missing_material, missing_texture, etc.).
     async fn run_engine_b<C: SceneValidatorClient>(
         plan: &ScenePlan,
         context: &SceneContext,
@@ -432,48 +435,78 @@ impl SceneValidator {
         let mut results = Vec::new();
         let mut warnings = Vec::new();
         let errors = Vec::new();
-        
-        // Capture off-screen render for visual verification
-        if let Ok(capture) = client.capture_scene(&plan.scene_path, "3d").await {
-            let node_count = usize::try_from(capture.get("node_count").and_then(|v: &Value| v.as_u64()).unwrap_or(0)).unwrap_or(0);
+
+        // Snapshot JSON puro (sin imagen) — visual_text(action="summary").
+        if let Ok(summary) = client.visual_summary(&plan.scene_path).await {
+            let node_count = usize::try_from(
+                summary.get("node_count").and_then(|v| v.as_u64()).unwrap_or(0),
+            )
+            .unwrap_or(0);
             let expected_count = context.nodes.len();
-            
+
             if node_count == 0 && expected_count > 0 {
-                warnings.push("Visual capture returned 0 nodes - possible render issue".to_string());
+                warnings.push("Visual summary returned 0 nodes - possible structural issue".to_string());
             } else if node_count != expected_count {
-                warnings.push(format!("Node count mismatch: visual={node_count} vs context={expected_count}"));
+                warnings.push(format!(
+                    "Node count mismatch: visual={node_count} vs context={expected_count}"
+                ));
             }
-            
+
             results.push(QADetail {
                 target_id: "visual_node_count".to_string(),
                 passed: node_count > 0,
                 measured: Some(node_count as f32),
                 expected: Some(expected_count as f32),
                 deviation: Some((node_count as f32 - expected_count as f32).abs()),
-                message: format!("Visual capture node count: {node_count}"),
+                message: format!("Visual summary node count: {node_count}"),
                 severity: if node_count > 0 { "info" } else { "warning" }.to_string(),
             });
-        }
-        
-        // Get visual summary for bbox verification
-        if let Ok(summary) = client.visual_summary(&plan.scene_path).await {
-            if let Some(bbox) = summary.get("bbox") {
+
+            // Tree depth: si el plan excede 5 niveles sin razón, advertencia.
+            if let Some(depth) = summary.get("tree_depth").and_then(|v| v.as_u64()) {
                 results.push(QADetail {
-                    target_id: "visual_bbox".to_string(),
-                    passed: true,
-                    measured: None,
+                    target_id: "visual_tree_depth".to_string(),
+                    passed: depth > 0,
+                    measured: Some(depth as f32),
                     expected: None,
                     deviation: None,
-                    message: format!("Visual bbox: {bbox:?}"),
+                    message: format!("Visual tree depth: {depth}"),
                     severity: "info".to_string(),
                 });
             }
+
+            // Bounds — si bounds_2d/3d existen, son info (sin comparación).
+            for key in ["bounds_2d", "bounds_3d"] {
+                if let Some(b) = summary.get(key) {
+                    results.push(QADetail {
+                        target_id: format!("visual_{key}"),
+                        passed: true,
+                        measured: None,
+                        expected: None,
+                        deviation: None,
+                        message: format!("Visual {key}: {b}"),
+                        severity: "info".to_string(),
+                    });
+                }
+            }
+
+            // Warnings heurísticos del summary (z_fighting, missing_material,
+            // missing_texture, missing_shape) → propagan al QAReport.
+            if let Some(w_arr) = summary.get("warnings").and_then(|v| v.as_array()) {
+                for w in w_arr {
+                    let kind = w.get("kind").and_then(|v| v.as_str()).unwrap_or("info");
+                    let msg = w.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                    if !msg.is_empty() {
+                        warnings.push(format!("[{kind}] {msg}"));
+                    }
+                }
+            }
         }
-        
+
         EngineReport {
             engine_name: "check_mesh".to_string(), // heuristic
             results,
-            summary: "Visual/heuristic validation completed".to_string(),
+            summary: "Visual/heuristic validation completed (JSON-only, no image)".to_string(),
             warnings,
             errors,
         }
@@ -803,7 +836,15 @@ mod tests {
             Ok(serde_json::json!({"node_count": 5}))
         }
         async fn visual_summary(&self, _scene_path: &str) -> Result<Value, String> {
-            Ok(serde_json::json!({"bbox": {"size": {"x": 10.0, "y": 5.0, "z": 10.0}}}))
+            // Fase D (§0.11): summary recursivo devuelve node_count + tree_depth
+            // + bounds_2d/3d + warnings (no "bbox" legacy).
+            Ok(serde_json::json!({
+                "node_count": 5,
+                "tree_depth": 3,
+                "bounds_2d": null,
+                "bounds_3d": {"min": {"x": -1.0, "y": -1.0, "z": -1.0}, "max": {"x": 1.0, "y": 1.0, "z": 1.0}, "size": {"x": 2.0, "y": 2.0, "z": 2.0}},
+                "warnings": []
+            }))
         }
         async fn list_signals(&self, _scene_path: &str) -> Result<Value, String> {
             Ok(serde_json::json!({"signals": []}))

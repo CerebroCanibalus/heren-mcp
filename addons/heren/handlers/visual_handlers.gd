@@ -101,19 +101,11 @@ func handle_scene_coords(args: Dictionary) -> Dictionary:
 
 func handle_scene_summary(args: Dictionary) -> Dictionary:
 	# P0.2 (2026-09-03): _scene_root(args) — soportar scene_path explícito.
+	# Fase D (§0.11): delega a spatial_tool.summary (recursivo + bounds + warnings).
 	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
-	var by_type := {}
-	var total := 0
-	var count := func(node: Node) -> void:
-		var t: String = node.get_class()
-		by_type[t] = int(by_type.get(t, 0)) + 1
-		total += 1
-	count.call(root)
-	for child in root.get_children():
-		count.call(child)
-	return {"ok": true, "root": root.name, "node_count": total, "by_type": by_type}
+	return HerenSpatialToolScript.summary(root)
 
 
 func handle_scene_ascii(args: Dictionary) -> Dictionary:

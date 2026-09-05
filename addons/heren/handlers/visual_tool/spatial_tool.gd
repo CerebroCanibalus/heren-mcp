@@ -217,6 +217,66 @@ static func bounds(root: Node, of_path: String) -> Dictionary:
 	return out
 
 
+## summary: snapshot recursivo completo de la escena (Fase D §0.11).
+## Reemplaza el `handle_scene_summary` inline (2 niveles) por recursividad +
+## bounds + tree_depth + warnings. Es el sustituto de `visual_image/capture`
+## para validación Engine B (validator.rs) — JSON puro, sin imagen.
+##
+## Output:
+##   node_count       — total recursivo (no solo hijos directos)
+##   by_type          — mapa {class_name: count}
+##   tree_depth       — profundidad máxima (root = 1)
+##   bounds_2d        — AABB escena 2D (si hay CanvasItems)
+##   bounds_3d        — AABB escena 3D (si hay GeometryInstance3D)
+##   warnings         — Array de {level, kind, node, message, ...}
+static func summary(root: Node) -> Dictionary:
+	if root == null:
+		return {"ok": false, "error": "no_scene_open"}
+
+	var acc: Dictionary = {
+		"by_type": {},
+		"node_count": 0,
+		"tree_depth": 0,
+		"warnings": [],
+		"bounds_2d": Rect2(),
+		"has_2d": false,
+		"bounds_3d": AABB(),
+		"has_3d": false,
+		"positions_3d": {},  # String pos_key → Array[Node3D] para z_fighting
+	}
+	_walk_summary(root, 1, acc)
+
+	# Post-process: warnings de z_fighting (2+ GeometryInstance3D misma posición).
+	var z_warnings := _detect_z_fighting(acc.get("positions_3d", {}), root)
+	for w in z_warnings:
+		acc["warnings"].append(w)
+
+	var warnings: Array = acc.get("warnings", [])
+	var out := {
+		"ok": true,
+		"mode": "summary",
+		"root": root.name,
+		"node_count": int(acc.get("node_count", 0)),
+		"by_type": acc.get("by_type", {}),
+		"tree_depth": int(acc.get("tree_depth", 0)),
+		"warnings": warnings,
+		"warning_count": warnings.size(),
+	}
+	if bool(acc.get("has_2d", false)):
+		var b2: Rect2 = acc["bounds_2d"]
+		out["bounds_2d"] = {"x": b2.position.x, "y": b2.position.y, "w": b2.size.x, "h": b2.size.y}
+	if bool(acc.get("has_3d", false)):
+		var b3: AABB = acc["bounds_3d"]
+		out["bounds_3d"] = {
+			"min": {"x": b3.position.x, "y": b3.position.y, "z": b3.position.z},
+			"max": {"x": b3.end.x, "y": b3.end.y, "z": b3.end.z},
+			"size": {"x": b3.size.x, "y": b3.size.y, "z": b3.size.z},
+		}
+	if not bool(acc.get("has_2d", false)) and not bool(acc.get("has_3d", false)):
+		out["hint"] = "no spatial nodes with bbox/aabb in this scope"
+	return out
+
+
 # ============================================================== private walkers
 
 static func _walk3d_overlaps(root: Node, exclude: Node, padding: float, aabb_a: Dictionary, out: Array) -> void:
@@ -336,6 +396,126 @@ static func _walk_bounds(n: Node, acc: Dictionary) -> Dictionary:
 	for c in n.get_children():
 		acc = _walk_bounds(c, acc)
 	return acc
+
+
+static func _walk_summary(n: Node, depth: int, acc: Dictionary) -> void:
+	var node_class: String = n.get_class()
+	var by_type: Dictionary = acc.get("by_type", {})
+	by_type[node_class] = int(by_type.get(node_class, 0)) + 1
+	acc["by_type"] = by_type
+	acc["node_count"] = int(acc.get("node_count", 0)) + 1
+	if depth > int(acc.get("tree_depth", 0)):
+		acc["tree_depth"] = depth
+
+	# Bbox/AABB via coords_of_node (Fase A — fuente única).
+	var coords: Dictionary = HerenCoordsScript.coords_of_node(n, "", 1)
+	var bbox: Dictionary = coords.get("bbox", {})
+	if float(bbox.get("w", 0)) > 0.0 and float(bbox.get("h", 0)) > 0.0:
+		var r: Rect2 = Rect2(float(bbox.get("x", 0)), float(bbox.get("y", 0)), float(bbox.get("w", 0)), float(bbox.get("h", 0)))
+		if not bool(acc.get("has_2d", false)):
+			acc["bounds_2d"] = r
+			acc["has_2d"] = true
+		else:
+			acc["bounds_2d"] = (acc["bounds_2d"] as Rect2).merge(r)
+	var aabb: Dictionary = coords.get("aabb", {})
+	var aabb_size: Dictionary = aabb.get("size", {})
+	if float(aabb_size.get("x", 0)) > 0.0:
+		var pos: Vector3 = Vector3(
+			float(aabb.get("position", {}).get("x", 0)),
+			float(aabb.get("position", {}).get("y", 0)),
+			float(aabb.get("position", {}).get("z", 0))
+		)
+		var size: Vector3 = Vector3(
+			float(aabb_size.get("x", 0)),
+			float(aabb_size.get("y", 0)),
+			float(aabb_size.get("z", 0))
+		)
+		var bb: AABB = AABB(pos, size)
+		if not bool(acc.get("has_3d", false)):
+			acc["bounds_3d"] = bb
+			acc["has_3d"] = true
+		else:
+			acc["bounds_3d"] = (acc["bounds_3d"] as AABB).merge(bb)
+
+	# Positions 3D para z_fighting detection (solo GeometryInstance3D, no Node3D puro).
+	if n is GeometryInstance3D:
+		var gi: GeometryInstance3D = n
+		var p: Vector3 = gi.global_position if gi.is_inside_tree() else (gi as Node3D).position
+		var key: String = "%.3f,%.3f,%.3f" % [p.x, p.y, p.z]
+		var positions: Dictionary = acc.get("positions_3d", {})
+		var existing: Array = positions.get(key, [])
+		existing.append(n)
+		positions[key] = existing
+		acc["positions_3d"] = positions
+
+	# Warnings — detección heurística (no rompe si la propiedad no existe).
+	var warnings: Array = acc.get("warnings", [])
+	if n is MeshInstance3D:
+		var mi: MeshInstance3D = n
+		if mi.mesh != null and mi.get_active_material(0) == null:
+			warnings.append({
+				"level": "info",
+				"kind": "missing_material",
+				"node": str(n.name),
+				"node_path": _relpath(n, acc.get("_root", n)),
+				"message": "MeshInstance3D sin material_override ni material en mesh",
+			})
+	if n is Sprite2D and (n as Sprite2D).texture == null:
+		warnings.append({
+			"level": "warning",
+			"kind": "missing_texture",
+			"node": str(n.name),
+			"node_path": _relpath(n, acc.get("_root", n)),
+			"message": "Sprite2D sin texture (se renderiza vacío)",
+		})
+	if n is Sprite3D and (n as Sprite3D).texture == null:
+		warnings.append({
+			"level": "warning",
+			"kind": "missing_texture",
+			"node": str(n.name),
+			"node_path": _relpath(n, acc.get("_root", n)),
+			"message": "Sprite3D sin texture",
+		})
+	if n is CollisionShape2D and (n as CollisionShape2D).shape == null:
+		warnings.append({
+			"level": "warning",
+			"kind": "missing_shape",
+			"node": str(n.name),
+			"node_path": _relpath(n, acc.get("_root", n)),
+			"message": "CollisionShape2D sin shape (no detecta colisiones)",
+		})
+	if n is CollisionShape3D and (n as CollisionShape3D).shape == null:
+		warnings.append({
+			"level": "warning",
+			"kind": "missing_shape",
+			"node": str(n.name),
+			"node_path": _relpath(n, acc.get("_root", n)),
+			"message": "CollisionShape3D sin shape",
+		})
+	acc["warnings"] = warnings
+
+	for c in n.get_children():
+		_walk_summary(c, depth + 1, acc)
+
+
+static func _detect_z_fighting(positions: Dictionary, root: Node) -> Array:
+	var warnings: Array = []
+	for key in positions.keys():
+		var nodes: Array = positions[key]
+		if nodes.size() < 2:
+			continue
+		var paths: Array = []
+		for n in nodes:
+			paths.append(_relpath(n, root))
+		warnings.append({
+			"level": "warning",
+			"kind": "z_fighting_risk",
+			"position": key,
+			"nodes": paths,
+			"count": nodes.size(),
+			"message": "%d GeometryInstance3D en posición %s (riesgo de z-fighting)" % [nodes.size(), key],
+		})
+	return warnings
 
 
 # ============================================================== utils

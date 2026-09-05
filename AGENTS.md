@@ -768,11 +768,36 @@ visual_text(action="spatial", mode="bounds")
 #### Fase C — Tier 3 (animation/light/audio state)
 Añadir a `coords_of_node` con `tier=3`: `current_animation`, `animation_position`, `light_energy`, `light_color`, `volume_db`, `pitch_scale`. **Solo si el agente lo pide** — no proactivo.
 
-#### Fase D — `summary` recursivo (cierra §0.1 P6)
-`visual_text/summary` con `by_type` + `bounds_2d` + `bounds_3d` + `tree_depth` + `warnings` (z_fighting_risk, etc.). Permite que el `validator.rs::run_engine_b` (§0.8 bug #4) elimine `capture_scene` y use JSON puro.
+#### Fase D — `summary` recursivo (cierra §0.1 P6) ✅ COMPLETADA (2026-09-04)
+
+`visual_text/summary` reemplazado por snapshot **recursivo** completo (antes solo 2 niveles):
+
+| Campo | Tipo | Notas |
+|-------|------|-------|
+| `node_count` | int | recursivo real (todos los descendientes) |
+| `by_type` | dict | `{class_name: count}` agregado |
+| `tree_depth` | int | profundidad máxima (root=1) |
+| `bounds_2d` | dict | AABB escena 2D (si hay CanvasItems) |
+| `bounds_3d` | dict | AABB escena 3D (si hay GeometryInstance3D) |
+| `warnings` | array | heurísticas: `z_fighting_risk`, `missing_material`, `missing_texture`, `missing_shape` |
+| `warning_count` | int | total warnings |
+
+**Cambios**:
+- `spatial_tool.summary(root)` — función pura + testeable.
+- `visual_handlers.handle_scene_summary` ahora delega al módulo (era inline 2-niveles).
+- **`validator.rs::run_engine_b` sin imagen**: ya no llama `capture_scene`. Lee TODO de `visual_summary` JSON: node_count, tree_depth, bounds_2d/3d, warnings. Sustituye el `capture_scene` que fallaba en play (§0.8 #8) y consumía 800 tok.
+- `MockClient` actualizado al formato nuevo (`node_count`/`tree_depth`/`bounds_2d`/`bounds_3d`/`warnings`).
+
+**Warnings que detecta** (heurísticas):
+- `z_fighting_risk`: 2+ `GeometryInstance3D` misma posición (3D).
+- `missing_material`: `MeshInstance3D` con mesh sin material_override ni material en mesh.
+- `missing_texture`: `Sprite2D`/`Sprite3D` sin texture.
+- `missing_shape`: `CollisionShape2D`/`CollisionShape3D` sin shape.
+
+**Cierre**: §0.1 P6 (summary recursivo) cerrado. §0.8 bug #4 (validator sin imagen) cerrado.
 
 #### Fase E — Deprecar `visual_image`
-Solo cuando Fases C+D estén verdes y validadas durante 1 sprint con el agente real.
+Solo cuando Fase C esté verde y validada durante 1 sprint con el agente real.
 
 ### Notas operativas
 
@@ -1098,7 +1123,8 @@ Playback+inspección · edición+one_shot · avanzado (blend spaces 1D/2D, tween
 - [x] BUG shape pierde radius (2026-08-15): resource_local_to_scene roto (Godot #44008) → quitar de handle_set_prop + deserialize_resource; radius=10 era default correcto
 - [ ] P10 animation/get_animation: pending implementar acción get_animation específica
 - [x] **§0.11 Spatial Proactivity — Fase A (2026-09-04)**: `coords_of_node` fuente única en `coords.gd` + 13/13 handlers devuelven `coords` + `scene_node_count` proactivos + purity 2D↔3D verificada por 9 tests GDScript.
-- [x] **§0.11 Spatial Proactivity — Fase B (2026-09-04)**: `visual_text/spatial` con 5 modes (overlaps/distance/neighbors/layout/bounds) en `visual_tool/spatial_tool.gd` (funciones puras). 8 tests GDScript nuevos + AABB global en `_fill_3d` (bug colateral false-positive arreglado). Pendientes Fase C (tier 3), D (summary recursivo), E (deprecar visual_image) — ver §0.11.
+- [x] **§0.11 Spatial Proactivity — Fase B (2026-09-04)**: `visual_text/spatial` con 5 modes (overlaps/distance/neighbors/layout/bounds) en `visual_tool/spatial_tool.gd` (funciones puras). 8 tests GDScript nuevos + AABB global en `_fill_3d` (bug colateral false-positive arreglado).
+- [x] **§0.11 Spatial Proactivity — Fase D (2026-09-04)**: `visual_text/summary` recursivo (node_count + by_type + tree_depth + bounds_2d/3d + warnings z_fighting/material/texture/shape) + validator Engine B sin imagen (lee visual_summary JSON en vez de capture_scene). 7 tests GDScript nuevos. Pendientes Fase C (tier 3), E (deprecar visual_image) — ver §0.11.
 
 ---
 

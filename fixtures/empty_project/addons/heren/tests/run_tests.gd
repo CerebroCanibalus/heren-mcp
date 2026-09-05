@@ -56,6 +56,14 @@ func _init() -> void:
 	_run("spatial layout Control effective_rect", _test_spatial_layout_control)
 	_run("spatial bounds scene total bbox", _test_spatial_bounds_scene)
 	_run("spatial unknown mode returns error", _test_spatial_unknown_mode)
+	# Fase D: summary recursivo (snapshot completo: node_count, by_type, depth, bounds, warnings).
+	_run("summary recursive counts all nodes", _test_summary_recursive_count)
+	_run("summary tree_depth correct", _test_summary_tree_depth)
+	_run("summary by_type aggregated", _test_summary_by_type)
+	_run("summary bounds 2D and 3D", _test_summary_bounds)
+	_run("summary z_fighting warning", _test_summary_z_fighting_warning)
+	_run("summary missing_material warning", _test_summary_missing_material)
+	_run("summary missing_texture warning", _test_summary_missing_texture)
 
 	print("RESULT: %d passed, %d failed" % [_passed, _failed])
 	quit(0 if _failed == 0 else 1)
@@ -685,6 +693,170 @@ func _test_spatial_unknown_mode() -> bool:
 		return false
 	if not String(out.get("error", "")).begins_with("unknown spatial mode"):
 		push_error("error incorrecto: %s" % out.get("error", ""))
+		scene_root.queue_free()
+		return false
+	scene_root.queue_free()
+	return true
+
+
+# ============================================================== Fase D
+# summary — snapshot recursivo de la escena (reemplaza el inline 2-niveles).
+
+func _test_summary_recursive_count() -> bool:
+	var scene_root := Node2D.new()
+	root.add_child(scene_root)
+	var child := Node2D.new()
+	child.name = "Child"
+	scene_root.add_child(child)
+	var grandchild := Sprite2D.new()
+	grandchild.name = "Grand"
+	child.add_child(grandchild)
+	# Árbol: scene_root + Child + Grand = 3 nodos.
+	var out := SpatialToolScript.summary(scene_root)
+	if not out.get("ok", false):
+		push_error("summary no ok: %s" % out)
+		scene_root.queue_free()
+		return false
+	if int(out.get("node_count", 0)) != 3:
+		push_error("node_count=%d esperaba 3" % out.get("node_count", 0))
+		scene_root.queue_free()
+		return false
+	scene_root.queue_free()
+	return true
+
+
+func _test_summary_tree_depth() -> bool:
+	var scene_root := Node2D.new()
+	root.add_child(scene_root)
+	var child := Node2D.new()
+	child.name = "Child"
+	scene_root.add_child(child)
+	var grandchild := Node2D.new()
+	grandchild.name = "Grand"
+	child.add_child(grandchild)
+	var great := Node2D.new()
+	great.name = "Great"
+	grandchild.add_child(great)
+	# Profundidad: root=1, Child=2, Grand=3, Great=4 → tree_depth=4
+	var out := SpatialToolScript.summary(scene_root)
+	if int(out.get("tree_depth", 0)) != 4:
+		push_error("tree_depth=%d esperaba 4" % out.get("tree_depth", 0))
+		scene_root.queue_free()
+		return false
+	scene_root.queue_free()
+	return true
+
+
+func _test_summary_by_type() -> bool:
+	var scene_root := Node.new()
+	root.add_child(scene_root)
+	var s1 := Sprite2D.new()
+	s1.texture = _make_2d_tex(8, 8)
+	scene_root.add_child(s1)
+	var s2 := Sprite2D.new()
+	s2.texture = _make_2d_tex(8, 8)
+	scene_root.add_child(s2)
+	var l := Label.new()
+	l.text = "hi"
+	scene_root.add_child(l)
+	var out := SpatialToolScript.summary(scene_root)
+	var by_type: Dictionary = out.get("by_type", {})
+	if int(by_type.get("Sprite2D", 0)) != 2:
+		push_error("by_type.Sprite2D=%d esperaba 2 (by_type=%s)" % [by_type.get("Sprite2D", 0), by_type])
+		scene_root.queue_free()
+		return false
+	if int(by_type.get("Label", 0)) != 1:
+		push_error("by_type.Label=%d esperaba 1" % by_type.get("Label", 0))
+		scene_root.queue_free()
+		return false
+	scene_root.queue_free()
+	return true
+
+
+func _test_summary_bounds() -> bool:
+	var scene_root := Node2D.new()
+	root.add_child(scene_root)
+	_add_sprite2d(scene_root, "A", 0, 0, 32, 32)
+	_add_sprite2d(scene_root, "B", 100, 50, 32, 32)
+	var out := SpatialToolScript.summary(scene_root)
+	if not out.has("bounds_2d"):
+		push_error("summary sin bounds_2d: %s" % out)
+		scene_root.queue_free()
+		return false
+	var b2: Dictionary = out.get("bounds_2d", {})
+	# A:[-16,-16,32,32] + B:[84,34,32,32] → merge ≈ 132x82
+	var w: float = float(b2.get("w", 0))
+	if w < 130.0 or w > 135.0:
+		push_error("bounds_2d.w=%f esperaba ~132" % w)
+		scene_root.queue_free()
+		return false
+	scene_root.queue_free()
+	return true
+
+
+func _test_summary_z_fighting_warning() -> bool:
+	var scene_root := Node3D.new()
+	root.add_child(scene_root)
+	_add_mesh3d(scene_root, "A", 0, 0, 0)
+	_add_mesh3d(scene_root, "B", 0, 0, 0)  # misma posición → z_fighting
+	_add_mesh3d(scene_root, "C", 100, 100, 100)  # otra
+	var out := SpatialToolScript.summary(scene_root)
+	var warnings: Array = out.get("warnings", [])
+	var has_z := false
+	for w in warnings:
+		if w.get("kind", "") == "z_fighting_risk":
+			has_z = true
+			if int(w.get("count", 0)) != 2:
+				push_error("z_fighting count=%d esperaba 2" % w.get("count", 0))
+				scene_root.queue_free()
+				return false
+			break
+	if not has_z:
+		push_error("summary sin warning z_fighting_risk: %s" % warnings)
+		scene_root.queue_free()
+		return false
+	scene_root.queue_free()
+	return true
+
+
+func _test_summary_missing_material() -> bool:
+	var scene_root := Node3D.new()
+	root.add_child(scene_root)
+	var mi := MeshInstance3D.new()
+	mi.mesh = BoxMesh.new()
+	# Sin material_override, BoxMesh no tiene material default → warning.
+	scene_root.add_child(mi)
+	var out := SpatialToolScript.summary(scene_root)
+	var warnings: Array = out.get("warnings", [])
+	var has := false
+	for w in warnings:
+		if w.get("kind", "") == "missing_material":
+			has = true
+			break
+	if not has:
+		push_error("summary sin warning missing_material: %s" % warnings)
+		scene_root.queue_free()
+		return false
+	scene_root.queue_free()
+	return true
+
+
+func _test_summary_missing_texture() -> bool:
+	var scene_root := Node2D.new()
+	root.add_child(scene_root)
+	var s := Sprite2D.new()
+	s.name = "NoTex"
+	# Sin texture → warning.
+	scene_root.add_child(s)
+	var out := SpatialToolScript.summary(scene_root)
+	var warnings: Array = out.get("warnings", [])
+	var has := false
+	for w in warnings:
+		if w.get("kind", "") == "missing_texture" and w.get("node", "") == "NoTex":
+			has = true
+			break
+	if not has:
+		push_error("summary sin warning missing_texture para NoTex: %s" % warnings)
 		scene_root.queue_free()
 		return false
 	scene_root.queue_free()

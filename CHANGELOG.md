@@ -1,5 +1,34 @@
 # Changelog — Heren MCP
 
+## [Unreleased] - 2026-09-04 - Spatial Proactivity Fase D (summary recursivo + validator sin imagen)
+
+### 🧭 summary — snapshot recursivo + validator Engine B sin imagen
+
+**Problema**: `visual_text/summary` solo contaba 2 niveles (root + 1) — info
+incompleta. `validator.rs::run_engine_b` dependía de `capture_scene` (imagen
+base64) que falla durante play (§0.8 #8) y consume 800 tok.
+
+**Solución** (Fase D de §0.11):
+- `spatial_tool.summary(root)` — función pura + testeable que devuelve:
+  - `node_count` (recursivo), `by_type` (agregado por class_name),
+    `tree_depth`, `bounds_2d`, `bounds_3d`, `warnings`.
+- Warnings heurísticas: `z_fighting_risk`, `missing_material`,
+  `missing_texture`, `missing_shape`.
+- `visual_handlers.handle_scene_summary` delega al módulo (reemplaza inline).
+- **`validator.rs::run_engine_b` sin imagen**: lee TODO de `visual_summary`
+  JSON (node_count vs context, tree_depth, bounds, warnings). Sustituye
+  `capture_scene`. El validator ya no requiere render GPU off-screen.
+- `MockClient` (tests) actualizado al formato nuevo.
+
+**Cierra**:
+- §0.1 P6 (`visual/summary` recursivo).
+- §0.8 bug #4 (validator sin imagen).
+
+**Tests**: 7 nuevos en `run_tests.gd` (recursive count, tree_depth, by_type,
+bounds 2D/3D, z_fighting warning, missing_material, missing_texture).
+34/34 GDScript verdes, 113 Rust verdes, clippy verde, grafo headless sin
+parse errors.
+
 ## [Unreleased] - 2026-09-04 - Spatial Proactivity Fase B (visual_text/spatial)
 
 ### 🧭 spatial_tool — 5 modes para validación geométrica sin imagen
