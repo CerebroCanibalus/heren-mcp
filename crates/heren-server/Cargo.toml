@@ -27,6 +27,7 @@ thiserror = { workspace = true }
 async-trait = "0.1"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+clap = { workspace = true }
 
 [[bin]]
 name = "heren-server"

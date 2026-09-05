@@ -38,6 +38,7 @@ pub mod constants;
 pub mod discovery;
 pub mod editor;
 pub mod launcher;
+pub mod lsp_bridge;
 pub mod pure;
 pub mod registry;
 pub mod scene_tool;

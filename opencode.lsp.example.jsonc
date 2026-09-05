@@ -1,0 +1,31 @@
+{
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LSP SERVERS CONFIGURATION
+  // Configuración del GDScript Language Server para OpenCode.
+  // El bridge (heren-server lsp-bridge) habla stdio ↔ TCP al LSP nativo de
+  // Godot (puerto 6005). Reusa el editor abierto o auto-lanza uno headless.
+  // Docs completos: docs/lsp-setup.md
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  "lsp": {
+    // GDScript LSP para Godot Engine.
+    // El bridge auto-detecta el puerto del LSP escaneando 6005-6010 (default).
+    // No necesitas hardcodear `--lsp-port` ni `--project-path` en la mayoría
+    // de los casos:
+    //   - Si tienes un Godot editor abierto → el bridge conecta a su LSP.
+    //   - Si no → auto-launch (con `--project-path`) lanza un Godot headless.
+    //   - Si pasan los dos → respeta el editor y no auto-lanza.
+    "gdscript": {
+      "command": [
+        "D:/path/to/heren-server.exe",
+        "lsp-bridge"
+        // Opcional: "--project-path", "D:/path/to/tu/proyecto/godot"
+        //           (necesario SOLO si quieres auto-launch con proyecto específico)
+      ],
+      "extensions": [".gd", ".gdshader"],
+      "env": {
+        "HEREN_LSP_LOG_FILE": "D:/logs/heren-lsp.log"
+      }
+    }
+  }
+}
