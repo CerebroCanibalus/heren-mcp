@@ -1,5 +1,66 @@
 # Changelog — Heren MCP
 
+## [Unreleased] - 2026-09-04 - Fase C (tier 3 dynamic state: animation/skeleton/light/audio/camera)
+
+### 🆕 Tier 3 dynamic state (Fase C, §0.11)
+
+**Decisión del General**: tier 3 = resumen proactivo (lo devuelven TODAS
+las mutaciones); tier 4 = completo opt-in vía `tier=4` en `visual/coords`.
+**AnimationTree entra en sinergia con AnimationPlayer** — siempre van
+juntos, el tree lleva coords del player del que se nutre (snapshot).
+
+**7 secciones opt-in por nodo** (cada una SOLO si aplica al nodo):
+1. `animation` (AnimationPlayer) — current/position/playing/speed/autoplay/length
+2. `animation_tree` (AnimationTree) — active, anim_player_path, tree_root_type,
+   current_state (si StateMachine), **anim_player_state snapshot del player**
+3. `skeleton_3d` (Skeleton3D) — bone_count + bone_names + 3 primeras poses (tier 3)
+   o TODAS (tier 4) + motion_scale + show_rest_only
+4. `skeleton_2d` (Skeleton2D) — bone_count + lista resumida (iterando
+   recursivamente Bone2D children — robusto en headless)
+5. `light_3d` (Omni/Spot/DirectionalLight3D) — type + color + energy +
+   indirect_energy + range (omni) o spot_range+spot_angle
+6. `audio` (AudioStreamPlayer/2D/3D) — type + playing + volume_db +
+   pitch_scale + bus + stream + max_distance (3D)
+7. `camera` (Camera2D/3D) — type + fov/zoom + near/far + current (3D only)
+
+**API expuesta**:
+- Tool `visual` con `tier`: `visual(coords, tier=3)` (resumen) / `tier=4`
+  (completo) / `tier=1` (default = mapa visual barato, comportamiento actual).
+- **Mutaciones proactivas** devuelven tier 3 desde `_node_coords()`.
+- Tier 4 SOLO opt-in vía `visual(coords, tier=4)`.
+
+**Pureza verificada** (9 tests GDScript nuevos): AnimationPlayer NUNCA
+emite animation_tree/skeleton_*/light_3d/audio/camera. Cada categoría es
+opt-in por nodo.
+
+**Bugs colaterales arreglados**:
+- `AnimationTree.anim_player_state`: antes usaba `get_edited_scene_root()`
+  (null en runtime). Ahora `tree.get_node_or_null(tree.anim_player)` con
+  NodePath RELATIVO — resuelve correctamente.
+- `Skeleton2D.get_bone_count()` async en headless. Reemplazado por
+  iteración recursiva `Bone2D` children — funciona antes del primer frame.
+- `Light3D` NO tiene `light_enabled` property (verificado con
+  `get_property_list()`). Se omitió del summary.
+
+**Verificación**:
+- 43/43 GDScript verdes (34 viejos + 9 nuevos Fase C).
+- 84 Rust unit tests + 28 integration = 112 verdes (race LSP pre-existente).
+- `cargo clippy -- -D warnings` verde.
+- Grafo headless sin SCRIPT/Parse Error.
+
+**Decisiones técnicas**:
+- `flags.has_dynamic_state` global = true si alguna sección se emitió.
+- Cada sección NO se emite si no aplica (no null, no {}).
+- Si TODAS las secciones están vacías, NO se emite el bloque `dynamic`
+  (ahorra ~30 tok por nodo no-dinámico).
+- Sinergia AnimationTree↔AnimationPlayer: el tree resuelve el NodePath del
+  player y lo snapshottea — el agente ve TODO lo que se está animando desde
+  un solo call.
+
+**Resultado neto**: +260 LOC en `coords.gd` (7 helpers + dynamic block) +
++25 LOC en `server.rs` (param tier) + 9 tests = sistema de coordenadas
+proactivo completo (tiers 1/2/3 + tier 4 opt-in).
+
 ## [Unreleased] - 2026-09-04 - Limpieza Fase E (visual_image ELIMINADO, visual_text → visual)
 
 ### 🧹 Eliminación total de `visual_image` + unificación `visual`

@@ -2227,6 +2227,12 @@ async fn visual(
     of: Option<String>,
     radius: Option<f64>,
     padding: Option<f64>,
+    // Fase C (2026-09-04): tier de coords. Default 1 (mapa visual barato).
+    // tier=3 → añade bloque `dynamic` por nodo (resumen: animation, animation_tree
+    // con anim_player snapshot, skeleton_3d count+3 primeros, skeleton_2d, light_3d,
+    // audio, camera). tier=4 → completo (todas las poses skeleton_3d, AnimationTree
+    // params completos, skeleton_2d con weights). SÓLO aplica a action=coords.
+    tier: Option<i64>,
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
@@ -2259,6 +2265,7 @@ async fn visual(
             ("of", of.map(Value::String)),
             ("radius", radius.map(|v| json!(v))),
             ("padding", padding.map(|v| json!(v))),
+            ("tier", tier.map(|v| json!(v))),
         ]),
     );
     forward(registry, &proj, handler, a).await

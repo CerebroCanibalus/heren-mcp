@@ -233,8 +233,12 @@ func _parent_path(node: Node, root: Node) -> String:
 	return _node_path_relative(node.get_parent(), root)
 
 ## Coord snapshot del nodo post-mutación. Reemplaza el antiguo `_node_coords`.
+## Tier 3 (proactivo, Fase C): incluye resumen dynamic state (animation,
+## animation_tree con anim_player snapshot, skeleton, light, audio, camera).
+## Tier 4 (opt-in): SOLO vía `visual/coords` con tier=4 — emite las poses
+## completas y params de AnimationTree.
 func _node_coords(node: Node, root: Node) -> Dictionary:
-	return HerenCoordsScript.coords_of_node(node, _parent_path(node, root), 2)
+	return HerenCoordsScript.coords_of_node(node, _parent_path(node, root), 3)
 
 
 func _count_scene_nodes(node: Node) -> int:

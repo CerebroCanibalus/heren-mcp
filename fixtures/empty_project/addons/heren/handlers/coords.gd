@@ -547,7 +547,18 @@ static func _ensure_owner_child(node: Node, owner: Node) -> void:
 ##   1 → + pos / scale / rotation (kind-specific) + bbox / aabb  (~80-150 tok)
 ##   2 → + modulate / material / collision / render layers /
 ##       Control: anchors, offsets, size, effective_rect         (~150-250 tok)
-##   3 → + animation / light / audio (Fase C — no usado aún)     (~250-400 tok)
+##   3 → + dynamic state (RESUMEN, proactivo en mutaciones):
+##       animation, animation_tree (con anim_player snapshot),
+##       skeleton_3d (count + 3 primeros huesos),
+##       skeleton_2d (count + lista resumida),
+##       light_3d, audio, camera                                (~150-300 tok)
+##   4 → + dynamic state (COMPLETO, opt-in via tier=4):
+##       skeleton_3d todas las poses, animation_tree params,
+##       skeleton_2d con weights                                 (~500-2000 tok)
+##
+## Cada sección de `dynamic` es OPT-IN por nodo: si no aplica, NO se emite
+## (no null, no {}). Si TODAS están vacías, no se emite el bloque dynamic.
+## flag global `flags.has_dynamic_state = true` si alguna sección existe.
 ##
 ## `parent_path` es del PADRE inmediato ("" si el nodo es root). Quien llama
 ## lo precalcula con `_node_path_relative(node.get_parent(), root)` —
@@ -581,6 +592,14 @@ static func coords_of_node(node: Node, parent_path: String = "", tier: int = 1) 
 	if tier >= 2:
 		_fill_tier2(node, out, flags)
 
+	# === TIER 3+: dynamic state (animation/light/audio/camera/skeleton) ===
+	# tier=3 → summary (proactivo); tier=4 → full (opt-in).
+	# El modo concreto (summary/full) lo decide cada helper por su cuenta
+	# comparando tier contra 4 — pero pasamos tier para que sepa.
+	if tier >= 3:
+		var mode: String = "summary" if tier == 3 else "full"
+		_fill_dynamic(node, out, flags, mode)
+
 	return out
 
 
@@ -591,7 +610,7 @@ static func coords_of(node: Node) -> Dictionary:
 
 
 static func _empty_flags() -> Dictionary:
-	return {"is_2d": false, "is_3d": false, "is_control": false, "has_bbox": false, "has_aabb": false}
+	return {"is_2d": false, "is_3d": false, "is_control": false, "has_bbox": false, "has_aabb": false, "has_dynamic_state": false}
 
 
 static func _detect_flags(node: Node) -> Dictionary:
@@ -601,6 +620,7 @@ static func _detect_flags(node: Node) -> Dictionary:
 		"is_control": node is Control,
 		"has_bbox": false,
 		"has_aabb": false,
+		"has_dynamic_state": false,
 	}
 
 
@@ -827,3 +847,281 @@ static func _visibility_mode_str(mode: int) -> String:
 			return "invisible"
 		_:
 			return "inherit"
+
+
+# ============================================================
+# TIER 3+ — dynamic state (Fase C, 2026-09-04)
+# Bloque opt-in: cada sección se emite SOLO si aplica al nodo.
+# Si TODAS las secciones están vacías, no se emite `dynamic` ni la flag.
+# ============================================================
+
+
+## Coordina todas las secciones dinámicas aplicables al nodo.
+## mode = "summary" (tier=3) → resumen; "full" (tier=4) → completo.
+static func _fill_dynamic(node: Node, out: Dictionary, flags: Dictionary, mode: String) -> void:
+	var dyn: Dictionary = {}
+
+	# 1. Animation (AnimationPlayer) — solo si el nodo ES AnimationPlayer.
+	if node is AnimationPlayer:
+		var sec: Dictionary = _fill_animation(node as AnimationPlayer)
+		if not sec.is_empty():
+			dyn["animation"] = sec
+
+	# 2. AnimationTree — solo si el nodo ES AnimationTree. Lleva coords del
+	# AnimationPlayer asociado (resolución del node_path + snapshot).
+	if node is AnimationTree:
+		var sec: Dictionary = _fill_animation_tree(node as AnimationTree, mode)
+		if not sec.is_empty():
+			dyn["animation_tree"] = sec
+
+	# 3. Skeleton 3D — solo si el nodo ES Skeleton3D.
+	if node is Skeleton3D:
+		var sec: Dictionary = _fill_skeleton_3d(node as Skeleton3D, mode)
+		if not sec.is_empty():
+			dyn["skeleton_3d"] = sec
+
+	# 4. Skeleton 2D — solo si el nodo ES Skeleton2D.
+	if node is Skeleton2D:
+		var sec: Dictionary = _fill_skeleton_2d(node as Skeleton2D, mode)
+		if not sec.is_empty():
+			dyn["skeleton_2d"] = sec
+
+	# 5. Light 3D — OmniLight3D / SpotLight3D / DirectionalLight3D (todos heredan de Light3D).
+	if node is Light3D:
+		var sec: Dictionary = _fill_light_3d(node as Light3D)
+		if not sec.is_empty():
+			dyn["light_3d"] = sec
+
+	# 6. Audio — AudioStreamPlayer / 2D / 3D (todos heredan de Node; check por nombre de clase).
+	if node.get_class() in ["AudioStreamPlayer", "AudioStreamPlayer2D", "AudioStreamPlayer3D"]:
+		var sec: Dictionary = _fill_audio(node)
+		if not sec.is_empty():
+			dyn["audio"] = sec
+
+	# 7. Camera — Camera2D / Camera3D.
+	if node is Camera2D or node is Camera3D:
+		var sec: Dictionary = _fill_camera(node)
+		if not sec.is_empty():
+			dyn["camera"] = sec
+
+	# Si al menos una sección se emitió, añade `dynamic` + flag global.
+	if not dyn.is_empty():
+		out["dynamic"] = dyn
+		flags["has_dynamic_state"] = true
+	else:
+		flags["has_dynamic_state"] = false
+
+
+## AnimationPlayer: current animation + position + playing + speed + autoplay.
+## Sin pose de huesos (eso es Skeleton3D/Skeleton2D).
+static func _fill_animation(player: AnimationPlayer) -> Dictionary:
+	if player == null:
+		return {}
+	var sec := {
+		"current": player.current_animation,
+		"position": round(player.current_animation_position * 1000.0) / 1000.0,
+		"playing": player.is_playing(),
+		"speed_scale": round(player.speed_scale * 1000.0) / 1000.0,
+		"autoplay": player.autoplay,
+	}
+	# length del clip actual (si hay uno activo).
+	if player.current_animation != "" and player.has_animation(player.current_animation):
+		var length: float = player.current_animation_length
+		sec["length"] = round(length * 1000.0) / 1000.0
+	return sec
+
+
+## AnimationTree: anim_player + active + tree_root_type + current_state (si StateMachine).
+## SINERGIA con AnimationPlayer: incluye snapshot del AnimPlayer del que se nutre
+## (resolución del NodePath, current/position/playing). Así, el agente ve TODO
+## lo que se está animando desde un solo call. mode="full" también incluye
+## state_machine_path actual y blend_amount si es BlendTree.
+static func _fill_animation_tree(tree: AnimationTree, mode: String) -> Dictionary:
+	if tree == null:
+		return {}
+	var sec: Dictionary = {
+		"active": tree.active,
+		"anim_player_path": str(tree.anim_player) if tree.anim_player != NodePath() else "",
+		"tree_root_type": tree.tree_root.get_class() if tree.tree_root != null else "",
+	}
+
+	# Snapshot del AnimationPlayer asociado (sinergia).
+	# El NodePath `tree.anim_player` es RELATIVO al tree — resolver desde
+	# el tree mismo (no desde scene_root, que no es válido en runtime).
+	if tree.anim_player != NodePath():
+		var ap := tree.get_node_or_null(tree.anim_player)
+		if ap is AnimationPlayer:
+			sec["anim_player_state"] = _fill_animation(ap as AnimationPlayer)
+
+	# current_state si es AnimationNodeStateMachine (path canónico "parameters/playback").
+	if tree.tree_root is AnimationNodeStateMachine:
+		var playback = tree.get("parameters/playback")
+		if playback != null and "current_node" in playback:
+			sec["current_state"] = str(playback.current_node)
+
+	# En modo full, blend_amount si es BlendSpace1D/2D, transition_request del StateMachine.
+	if mode == "full":
+		if tree.tree_root is AnimationNodeBlendSpace1D:
+			var amt = tree.get("parameters/blend_position")
+			if amt != null:
+				sec["blend_position"] = round(float(amt) * 1000.0) / 1000.0
+		elif tree.tree_root is AnimationNodeBlendSpace2D:
+			var blend = tree.get("parameters/blend_position")
+			if blend is Vector2:
+				sec["blend_position"] = {"x": blend.x, "y": blend.y}
+
+	return sec
+
+
+## Skeleton3D: bone_count + motion_scale + show_rest_only + first 3 poses (summary)
+## o TODAS las poses (full). Los nombres de hueso se incluyen SIEMPRE en summary
+## para que el agente sepa cuáles son, sin pagar el coste de las poses completas.
+static func _fill_skeleton_3d(skel: Skeleton3D, mode: String) -> Dictionary:
+	if skel == null:
+		return {}
+	var count: int = skel.get_bone_count()
+	var sec: Dictionary = {
+		"bone_count": count,
+		"motion_scale": round(skel.motion_scale * 1000.0) / 1000.0,
+		"show_rest_only": skel.show_rest_only,
+		"bone_names": [],
+	}
+
+	# Lista de nombres (cabe en summary — son strings cortos).
+	for i in count:
+		sec["bone_names"].append(str(skel.get_bone_name(i)))
+
+	# Summary: solo las 3 primeras poses para inspección rápida.
+	var limit: int = count if mode == "full" else mini(count, 3)
+	if limit > 0:
+		var poses: Array = []
+		for i in limit:
+			var pose: Transform3D = skel.get_bone_pose(i)
+			poses.append({
+				"index": i,
+				"name": str(skel.get_bone_name(i)),
+				"position": {"x": round(pose.origin.x * 1000.0) / 1000.0,
+							 "y": round(pose.origin.y * 1000.0) / 1000.0,
+							 "z": round(pose.origin.z * 1000.0) / 1000.0},
+				"rotation": serialize_value(pose.basis.get_rotation_quaternion(), true),
+			})
+		sec["poses"] = poses
+		if mode == "summary" and count > 3:
+			sec["poses_truncated"] = count - 3
+	return sec
+
+
+## Skeleton2D: bone_count + lista de huesos (Bone2D children). Suelen ser
+## pocos (4-10), así que la lista resumida = la lista completa (mode es
+## no-op aquí en la práctica; se mantiene por uniformidad API).
+## Cada hueso: name + position + rotation + rest + length.
+## NOTA: Skeleton2D.get_bone_count() en Godot 4 requiere que Bone2D haya
+## recibido NOTIFICATION_PARENTED (lo cual puede ser async en headless tests).
+## Por robustez, contamos hijos Bone2D directos recursivamente — funciona
+## incluso antes del primer frame.
+static func _fill_skeleton_2d(skel: Skeleton2D, mode: String) -> Dictionary:
+	if skel == null:
+		return {}
+	var bones: Array = []
+	_collect_bones_2d(skel, bones, 0)
+	return {
+		"bone_count": bones.size(),
+		"bones": bones,
+	}
+
+
+## Recorre recursivamente los Bone2D del Skeleton2D (modo depth-first).
+static func _collect_bones_2d(node: Node, out: Array, depth: int) -> void:
+	for child in node.get_children():
+		if child is Bone2D:
+			var bone: Bone2D = child as Bone2D
+			out.append({
+				"index": out.size(),
+				"name": str(bone.name),
+				"depth": depth,
+				"position": {"x": round(bone.position.x * 1000.0) / 1000.0,
+							 "y": round(bone.position.y * 1000.0) / 1000.0},
+				"rotation": round(rad_to_deg(bone.rotation) * 100.0) / 100.0,
+				"length": round(bone.length * 1000.0) / 1000.0,
+				"rest": serialize_value(bone.rest, true),
+			})
+			_collect_bones_2d(bone, out, depth + 1)
+		else:
+			_collect_bones_2d(child, out, depth)
+
+
+## Light3D: type (Omni/Spot/Directional) + color + energy + indirect_energy +
+## omni_range (Omni) o spot_range+spot_angle (Spot). DirectionalLight3D no
+## tiene range/angle (luz direccional infinita). Sin `light_enabled` (no
+## existe como property pública en 4.5 — luz activa es siempre visible).
+static func _fill_light_3d(light: Light3D) -> Dictionary:
+	if light == null:
+		return {}
+	var sec: Dictionary = {
+		"type": light.get_class(),
+		"color": serialize_value(light.light_color, true),
+		"energy": round(light.light_energy * 1000.0) / 1000.0,
+		"indirect_energy": round(light.light_indirect_energy * 1000.0) / 1000.0,
+	}
+	# Omni/Spot tienen `omni_range`. Spot añade `spot_angle`.
+	if light is OmniLight3D or light is SpotLight3D:
+		sec["range"] = round((light as OmniLight3D).omni_range * 1000.0) / 1000.0
+	if light is SpotLight3D:
+		var sl := light as SpotLight3D
+		sec["spot_range"] = round(sl.spot_range * 1000.0) / 1000.0
+		sec["spot_angle"] = round(rad_to_deg(sl.spot_angle) * 100.0) / 100.0
+	return sec
+
+
+## AudioStreamPlayer / 2D / 3D: stream path + is_playing + volume_db +
+## pitch_scale + bus. La diferencia entre Player/2D/3D es el posicionamiento;
+## el resto de props de "playing state" es uniforme.
+static func _fill_audio(node: Node) -> Dictionary:
+	if node == null:
+		return {}
+	var sec: Dictionary = {
+		"type": node.get_class(),
+		"playing": node.is_playing() if node.has_method("is_playing") else false,
+	}
+	# Props comunes (todos los AudioStreamPlayer* las tienen).
+	if "volume_db" in node:
+		sec["volume_db"] = round(float(node.volume_db) * 100.0) / 100.0
+	if "pitch_scale" in node:
+		sec["pitch_scale"] = round(float(node.pitch_scale) * 1000.0) / 1000.0
+	if "bus" in node:
+		sec["bus"] = str(node.bus)
+	# Stream: AudioStreamPlayer expone `stream` (Resource).
+	if "stream" in node and node.stream is Resource:
+		var stream: Resource = node.stream
+		sec["stream"] = stream.resource_path if stream.resource_path != "" else "(inline)"
+	elif "stream" in node and node.stream == null:
+		sec["stream"] = ""
+	# AudioStreamPlayer3D añade max_distance + attenuation_model.
+	if node is AudioStreamPlayer3D:
+		var ap3: AudioStreamPlayer3D = node
+		sec["max_distance"] = round(ap3.max_distance * 1000.0) / 1000.0
+		sec["attenuation_model"] = ap3.attenuation_model
+	return sec
+
+
+## Camera3D / Camera2D: type + fov/zoom + near/far + current.
+## Camera2D no tiene `current` (Godot 4) — se omite.
+static func _fill_camera(node: Node) -> Dictionary:
+	if node == null:
+		return {}
+	if node is Camera3D:
+		var c: Camera3D = node
+		return {
+			"type": "Camera3D",
+			"fov": round(c.fov * 100.0) / 100.0,
+			"near": round(c.near * 1000.0) / 1000.0,
+			"far": round(c.far * 1000.0) / 1000.0,
+			"current": c.current,
+		}
+	if node is Camera2D:
+		var c2: Camera2D = node
+		return {
+			"type": "Camera2D",
+			"zoom": {"x": c2.zoom.x, "y": c2.zoom.y},
+		}
+	return {}

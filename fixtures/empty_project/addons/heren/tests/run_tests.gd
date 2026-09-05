@@ -64,6 +64,16 @@ func _init() -> void:
 	_run("summary z_fighting warning", _test_summary_z_fighting_warning)
 	_run("summary missing_material warning", _test_summary_missing_material)
 	_run("summary missing_texture warning", _test_summary_missing_texture)
+	# Fase C: dynamic state tier 3 (resumen) + tier 4 (completo) opt-in via tier.
+	_run("coords tier3 AnimationPlayer emite animation", _test_coords_animation_player_tier3)
+	_run("coords tier3 AnimationTree emite tree+anim_player snapshot", _test_coords_animation_tree_tier3)
+	_run("coords tier3 Skeleton3D resumen count+3 primeros", _test_coords_skeleton_3d_tier3)
+	_run("coords tier4 Skeleton3D completo todas las poses", _test_coords_skeleton_3d_tier4)
+	_run("coords tier3 Skeleton2D resumen bones", _test_coords_skeleton_2d_tier3)
+	_run("coords tier3 Light3D type+color+energy", _test_coords_light_3d_tier3)
+	_run("coords tier3 AudioStreamPlayer3D playing+volume+pitch", _test_coords_audio_tier3)
+	_run("coords tier3 Camera3D fov+current", _test_coords_camera_tier3)
+	_run("coords tier3 Node3D sin dynamic (pureza)", _test_coords_node3d_tier3_empty_dynamic)
 
 	print("RESULT: %d passed, %d failed" % [_passed, _failed])
 	quit(0 if _failed == 0 else 1)
@@ -860,4 +870,386 @@ func _test_summary_missing_texture() -> bool:
 		scene_root.queue_free()
 		return false
 	scene_root.queue_free()
+	return true
+
+
+# ============================================================
+# FASE C (2026-09-04) — tier 3 dynamic state
+# ============================================================
+
+func _test_coords_animation_player_tier3() -> bool:
+	# tier=3 → bloque `dynamic.animation` con current/position/playing/speed/autoplay.
+	var parent := Node3D.new()
+	root.add_child(parent)
+	var player := AnimationPlayer.new()
+	player.name = "Anim"
+	parent.add_child(player)
+	# AnimationPlayer 4.5: animaciones viven en AnimationLibrary, NO add_animation() directo.
+	var lib := AnimationLibrary.new()
+	var anim := Animation.new()
+	anim.length = 1.5
+	anim.loop_mode = Animation.LOOP_LINEAR
+	lib.add_animation("walk", anim)
+	player.add_animation_library("", lib)
+	player.current_animation = "walk"
+	player.speed_scale = 1.5
+	player.autoplay = "idle"
+	var out := CoordsScript.coords_of_node(player, "Parent", 3)
+	if not out.has("dynamic"):
+		push_error("AnimationPlayer tier=3 sin bloque dynamic: %s" % out)
+		parent.queue_free()
+		return false
+	var dyn: Dictionary = out["dynamic"]
+	var anim_sec: Dictionary = dyn.get("animation", {})
+	if anim_sec.get("current", "") != "walk":
+		push_error("animation.current != walk: %s" % anim_sec)
+		parent.queue_free()
+		return false
+	if float(anim_sec.get("length", 0.0)) != 1.5:
+		push_error("animation.length != 1.5: %s" % anim_sec)
+		parent.queue_free()
+		return false
+	if float(anim_sec.get("speed_scale", 0.0)) != 1.5:
+		push_error("animation.speed_scale != 1.5: %s" % anim_sec)
+		parent.queue_free()
+		return false
+	if anim_sec.get("autoplay", "") != "idle":
+		push_error("animation.autoplay != idle: %s" % anim_sec)
+		parent.queue_free()
+		return false
+	# Purity: NO debe emitir animation_tree ni skeleton_* ni light_3d ni audio ni camera.
+	for forbidden in ["animation_tree", "skeleton_3d", "skeleton_2d", "light_3d", "audio", "camera"]:
+		if dyn.has(forbidden):
+			push_error("AnimationPlayer NO debería tener dynamic.%s: %s" % [forbidden, dyn])
+			parent.queue_free()
+			return false
+	parent.queue_free()
+	return true
+
+
+func _test_coords_animation_tree_tier3() -> bool:
+	# AnimationTree: anim_player_path + tree_root_type + anim_player_state snapshot.
+	var parent := Node3D.new()
+	root.add_child(parent)
+	var player := AnimationPlayer.new()
+	player.name = "Anim"
+	parent.add_child(player)
+	var lib := AnimationLibrary.new()
+	var anim := Animation.new()
+	anim.length = 1.0
+	lib.add_animation("idle", anim)
+	player.add_animation_library("", lib)
+	player.current_animation = "idle"
+	var tree := AnimationTree.new()
+	tree.name = "Tree"
+	parent.add_child(tree)
+	tree.anim_player = NodePath("../Anim")
+	tree.tree_root = AnimationNodeStateMachine.new()
+	tree.active = true
+	var out := CoordsScript.coords_of_node(tree, "Parent", 3)
+	if not out.has("dynamic"):
+		push_error("AnimationTree tier=3 sin dynamic: %s" % out)
+		parent.queue_free()
+		return false
+	var dyn: Dictionary = out["dynamic"]
+	var tree_sec: Dictionary = dyn.get("animation_tree", {})
+	if not bool(tree_sec.get("active", false)):
+		push_error("tree.active != true: %s" % tree_sec)
+		parent.queue_free()
+		return false
+	if tree_sec.get("anim_player_path", "") != "../Anim":
+		push_error("tree.anim_player_path != ../Anim: %s" % tree_sec)
+		parent.queue_free()
+		return false
+	if tree_sec.get("tree_root_type", "") != "AnimationNodeStateMachine":
+		push_error("tree.tree_root_type != StateMachine: %s" % tree_sec)
+		parent.queue_free()
+		return false
+	# Sinergia: anim_player_state con current del AnimPlayer.
+	var ap_state: Dictionary = tree_sec.get("anim_player_state", {})
+	if ap_state.get("current", "") != "idle":
+		push_error("tree.anim_player_state.current != idle: %s" % ap_state)
+		parent.queue_free()
+		return false
+	# Purity.
+	for forbidden in ["animation", "skeleton_3d", "skeleton_2d", "light_3d", "audio", "camera"]:
+		if dyn.has(forbidden):
+			push_error("AnimationTree NO debería tener dynamic.%s: %s" % [forbidden, dyn])
+			parent.queue_free()
+			return false
+	parent.queue_free()
+	return true
+
+
+func _test_coords_skeleton_3d_tier3() -> bool:
+	# tier=3 → resumen: bone_count + motion_scale + show_rest_only + bone_names + 3 primeras poses.
+	var parent := Node3D.new()
+	root.add_child(parent)
+	var skel := Skeleton3D.new()
+	skel.name = "Skel"
+	parent.add_child(skel)
+	for i in 10:
+		skel.add_bone(str(i))
+	var out := CoordsScript.coords_of_node(skel, "Parent", 3)
+	if not out.has("dynamic"):
+		push_error("Skeleton3D tier=3 sin dynamic: %s" % out)
+		parent.queue_free()
+		return false
+	var sec: Dictionary = out["dynamic"].get("skeleton_3d", {})
+	if int(sec.get("bone_count", 0)) != 10:
+		push_error("skeleton_3d.bone_count != 10: %s" % sec)
+		parent.queue_free()
+		return false
+	if (sec.get("bone_names", []) as Array).size() != 10:
+		push_error("bone_names size != 10: %s" % sec.get("bone_names", []))
+		parent.queue_free()
+		return false
+	var poses: Array = sec.get("poses", [])
+	if poses.size() != 3:
+		push_error("tier=3 summary debe traer 3 poses (no %d): %s" % [poses.size(), poses])
+		parent.queue_free()
+		return false
+	if int(sec.get("poses_truncated", -1)) != 7:
+		push_error("poses_truncated != 7: %s" % sec)
+		parent.queue_free()
+		return false
+	# Purity: NO animation_tree, NO skeleton_2d, NO light_3d, NO audio, NO camera.
+	for forbidden in ["animation", "animation_tree", "skeleton_2d", "light_3d", "audio", "camera"]:
+		if out["dynamic"].has(forbidden):
+			push_error("Skeleton3D NO debería tener dynamic.%s: %s" % [forbidden, out["dynamic"]])
+			parent.queue_free()
+			return false
+	parent.queue_free()
+	return true
+
+
+func _test_coords_skeleton_3d_tier4() -> bool:
+	# tier=4 → completo: todas las poses (sin truncation).
+	var parent := Node3D.new()
+	root.add_child(parent)
+	var skel := Skeleton3D.new()
+	skel.name = "Skel"
+	parent.add_child(skel)
+	for i in 10:
+		skel.add_bone(str(i))
+	var out := CoordsScript.coords_of_node(skel, "Parent", 4)
+	var sec: Dictionary = out["dynamic"].get("skeleton_3d", {})
+	var poses: Array = sec.get("poses", [])
+	if poses.size() != 10:
+		push_error("tier=4 completo debe traer 10 poses (no %d), no poses_truncated: %s" % [poses.size(), sec])
+		parent.queue_free()
+		return false
+	if sec.has("poses_truncated"):
+		push_error("tier=4 NO debe tener poses_truncated: %s" % sec)
+		parent.queue_free()
+		return false
+	parent.queue_free()
+	return true
+
+
+func _test_coords_skeleton_2d_tier3() -> bool:
+	# Skeleton2D: bone_count + bones[] (lista completa, son pocos).
+	# En Skeleton2D los huesos son hijos Bone2D directos (NO add_bone — no existe).
+	var parent := Node2D.new()
+	root.add_child(parent)
+	var skel := Skeleton2D.new()
+	skel.name = "Skel2D"
+	parent.add_child(skel)
+	# Añadir 3 Bone2D hijos directos.
+	for i in 3:
+		var bone := Bone2D.new()
+		bone.name = "Bone_%d" % i
+		bone.position = Vector2(float(i), 0.0)
+		bone.length = 50.0
+		skel.add_child(bone)
+	var out := CoordsScript.coords_of_node(skel, "Parent", 3)
+	if not out.has("dynamic"):
+		push_error("Skeleton2D tier=3 sin dynamic: %s" % out)
+		parent.queue_free()
+		return false
+	var sec: Dictionary = out["dynamic"].get("skeleton_2d", {})
+	if int(sec.get("bone_count", 0)) != 3:
+		push_error("skeleton_2d.bone_count != 3 (skeleton_bone_count no es children): %s" % sec)
+		parent.queue_free()
+		return false
+	var bones: Array = sec.get("bones", [])
+	if bones.size() != 3:
+		push_error("bones size != 3: %s" % bones)
+		parent.queue_free()
+		return false
+	if not bones[0].has("name") or not bones[0].has("position") or not bones[0].has("length"):
+		push_error("Bone2D entry sin name/position/length: %s" % bones[0])
+		parent.queue_free()
+		return false
+	# Purity.
+	for forbidden in ["animation", "animation_tree", "skeleton_3d", "light_3d", "audio", "camera"]:
+		if out["dynamic"].has(forbidden):
+			push_error("Skeleton2D NO debería tener dynamic.%s: %s" % [forbidden, out["dynamic"]])
+			parent.queue_free()
+			return false
+	parent.queue_free()
+	return true
+
+
+func _test_coords_light_3d_tier3() -> bool:
+	# OmniLight3D: type + color + energy + range (omni_range).
+	var parent := Node3D.new()
+	root.add_child(parent)
+	var light := OmniLight3D.new()
+	light.name = "Lamp"
+	light.light_color = Color(1.0, 0.5, 0.2)
+	light.light_energy = 2.5
+	light.omni_range = 8.0
+	parent.add_child(light)
+	var out := CoordsScript.coords_of_node(light, "Parent", 3)
+	if not out.has("dynamic"):
+		push_error("OmniLight3D tier=3 sin dynamic: %s" % out)
+		parent.queue_free()
+		return false
+	var sec: Dictionary = out["dynamic"].get("light_3d", {})
+	if sec.get("type", "") != "OmniLight3D":
+		push_error("light_3d.type != OmniLight3D: %s" % sec)
+		parent.queue_free()
+		return false
+	if float(sec.get("energy", 0.0)) != 2.5:
+		push_error("light_3d.energy != 2.5: %s" % sec)
+		parent.queue_free()
+		return false
+	if float(sec.get("range", 0.0)) != 8.0:
+		push_error("light_3d.range != 8.0: %s" % sec)
+		parent.queue_free()
+		return false
+	# Purity.
+	for forbidden in ["animation", "animation_tree", "skeleton_3d", "skeleton_2d", "audio", "camera"]:
+		if out["dynamic"].has(forbidden):
+			push_error("Light3D NO debería tener dynamic.%s: %s" % [forbidden, out["dynamic"]])
+			parent.queue_free()
+			return false
+	parent.queue_free()
+	return true
+
+
+func _test_coords_audio_tier3() -> bool:
+	# AudioStreamPlayer3D: type + playing + volume_db + pitch_scale + bus + stream +
+	# max_distance + attenuation_model. No forzamos bus custom (default es Master y
+	# cambiar requiere AudioServer config — fuera de scope test).
+	var parent := Node3D.new()
+	root.add_child(parent)
+	var audio := AudioStreamPlayer3D.new()
+	audio.name = "SFX"
+	audio.volume_db = -6.0
+	audio.pitch_scale = 1.25
+	parent.add_child(audio)
+	var out := CoordsScript.coords_of_node(audio, "Parent", 3)
+	if not out.has("dynamic"):
+		push_error("AudioStreamPlayer3D tier=3 sin dynamic: %s" % out)
+		parent.queue_free()
+		return false
+	var sec: Dictionary = out["dynamic"].get("audio", {})
+	if sec.get("type", "") != "AudioStreamPlayer3D":
+		push_error("audio.type != AudioStreamPlayer3D: %s" % sec)
+		parent.queue_free()
+		return false
+	if float(sec.get("volume_db", 0.0)) != -6.0:
+		push_error("audio.volume_db != -6.0: %s" % sec)
+		parent.queue_free()
+		return false
+	if float(sec.get("pitch_scale", 0.0)) != 1.25:
+		push_error("audio.pitch_scale != 1.25: %s" % sec)
+		parent.queue_free()
+		return false
+	if sec.get("bus", "") == "":
+		push_error("audio.bus vacío (debería tener Master por default): %s" % sec)
+		parent.queue_free()
+		return false
+	if not ("max_distance" in sec):
+		push_error("AudioStreamPlayer3D sin max_distance: %s" % sec)
+		parent.queue_free()
+		return false
+	# Purity.
+	for forbidden in ["animation", "animation_tree", "skeleton_3d", "skeleton_2d", "light_3d", "camera"]:
+		if out["dynamic"].has(forbidden):
+			push_error("AudioStreamPlayer3D NO debería tener dynamic.%s: %s" % [forbidden, out["dynamic"]])
+			parent.queue_free()
+			return false
+	parent.queue_free()
+	return true
+
+
+func _test_coords_camera_tier3() -> bool:
+	# Camera3D: type + fov + near + far + current.
+	var parent := Node3D.new()
+	root.add_child(parent)
+	var cam := Camera3D.new()
+	cam.name = "Cam"
+	cam.fov = 60.0
+	cam.near = 0.5
+	cam.far = 1500.0
+	cam.current = true
+	parent.add_child(cam)
+	var out := CoordsScript.coords_of_node(cam, "Parent", 3)
+	if not out.has("dynamic"):
+		push_error("Camera3D tier=3 sin dynamic: %s" % out)
+		parent.queue_free()
+		return false
+	var sec: Dictionary = out["dynamic"].get("camera", {})
+	if sec.get("type", "") != "Camera3D":
+		push_error("camera.type != Camera3D: %s" % sec)
+		parent.queue_free()
+		return false
+	if float(sec.get("fov", 0.0)) != 60.0:
+		push_error("camera.fov != 60.0: %s" % sec)
+		parent.queue_free()
+		return false
+	if not bool(sec.get("current", false)):
+		push_error("camera.current != true: %s" % sec)
+		parent.queue_free()
+		return false
+	# Purity.
+	for forbidden in ["animation", "animation_tree", "skeleton_3d", "skeleton_2d", "light_3d", "audio"]:
+		if out["dynamic"].has(forbidden):
+			push_error("Camera3D NO debería tener dynamic.%s: %s" % [forbidden, out["dynamic"]])
+			parent.queue_free()
+			return false
+	# Camera2D: zoom Vector2.
+	var parent2 := Node2D.new()
+	root.add_child(parent2)
+	var cam2 := Camera2D.new()
+	cam2.name = "Cam2D"
+	cam2.zoom = Vector2(2.0, 3.0)
+	parent2.add_child(cam2)
+	var out2 := CoordsScript.coords_of_node(cam2, "Parent2D", 3)
+	var sec2: Dictionary = out2["dynamic"].get("camera", {})
+	if sec2.get("type", "") != "Camera2D":
+		push_error("Camera2D.type != Camera2D: %s" % sec2)
+		parent2.queue_free()
+		return false
+	var zoom: Dictionary = sec2.get("zoom", {})
+	if float(zoom.get("x", 0.0)) != 2.0 or float(zoom.get("y", 0.0)) != 3.0:
+		push_error("Camera2D.zoom != (2.0, 3.0): %s" % zoom)
+		parent2.queue_free()
+		return false
+	parent2.queue_free()
+	return true
+
+
+func _test_coords_node3d_tier3_empty_dynamic() -> bool:
+	# Node3D genérico SIN animation/light/audio/camera/skeleton → NO debe emitir
+	# ninguna sección dynamic. flags.has_dynamic_state debe ser false.
+	var parent := Node3D.new()
+	root.add_child(parent)
+	var node := Node3D.new()
+	node.name = "Generic"
+	parent.add_child(node)
+	var out := CoordsScript.coords_of_node(node, "Parent", 3)
+	if out.has("dynamic"):
+		push_error("Node3D genérico NO debe tener bloque dynamic: %s" % out)
+		parent.queue_free()
+		return false
+	var flags: Dictionary = out.get("flags", {})
+	if bool(flags.get("has_dynamic_state", false)):
+		push_error("flags.has_dynamic_state != false: %s" % flags)
+		parent.queue_free()
+		return false
+	parent.queue_free()
 	return true

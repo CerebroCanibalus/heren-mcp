@@ -765,8 +765,140 @@ visual_text(action="spatial", mode="bounds")
 
 **Tests**: 8 nuevos en `run_tests.gd` (overlaps 2D encuentra/excluye self, overlaps 3D, distance, neighbors radius, layout Control, bounds, unknown mode).
 
-#### Fase C — Tier 3 (animation/light/audio state)
-Añadir a `coords_of_node` con `tier=3`: `current_animation`, `animation_position`, `light_energy`, `light_color`, `volume_db`, `pitch_scale`. **Solo si el agente lo pide** — no proactivo.
+#### Fase C — Tier 3 dynamic state (animation/light/audio/camera/skeleton) ✅ COMPLETADA (2026-09-04)
+
+**Decisión del General (2026-09-04)**: tier 3 = **resumen proactivo** (lo devuelven TODAS las mutaciones); tier 4 = **completo opt-in** vía `tier=4` en `visual/coords`. **AnimationTree entra en sinergia con AnimationPlayer** — siempre van juntos, el tree lleva coords del player del que se nutre (sinergia, sin duplicación).
+
+### Categorías implementadas (7 secciones opt-in por nodo)
+
+| Sección | Aplica a | Coste tier 3 | Coste tier 4 |
+|---------|----------|--------------|--------------|
+| `animation` | AnimationPlayer | ~50 tok (current/position/playing/speed/autoplay/length) | N/A |
+| `animation_tree` | AnimationTree | ~80-120 tok (active, anim_player_path, tree_root_type, current_state si StateMachine, **anim_player_state snapshot**) | + state_machine_state + blend_position |
+| `skeleton_3d` | Skeleton3D | ~150-300 tok (count + bone_names + 3 primeras poses) | TODAS las poses (sin truncate) |
+| `skeleton_2d` | Skeleton2D | ~150-300 tok (count + lista resumida — son pocos huesos) | + weights / transforms completos |
+| `light_3d` | Omni/Spot/DirectionalLight3D | ~30 tok (type, color, energy, indirect_energy, range o spot_range+spot_angle) | N/A |
+| `audio` | AudioStreamPlayer/2D/3D | ~40 tok (type, playing, volume_db, pitch_scale, bus, stream, max_distance si 3D) | N/A |
+| `camera` | Camera2D/3D | ~25 tok (type, fov o zoom, near/far/current) | N/A |
+
+### Reglas de pureza (verificadas por tests)
+
+- AnimationPlayer **NUNCA** emite animation_tree / skeleton_* / light_3d / audio / camera.
+- AnimationTree **NUNCA** emite animation / skeleton_* / light_3d / audio / camera.
+- Skeleton3D **NUNCA** emite animation / animation_tree / skeleton_2d / light_3d / audio / camera.
+- Skeleton2D **NUNCA** emite animation / animation_tree / skeleton_3d / light_3d / audio / camera.
+- Light3D **NUNCA** emite animation / skeleton_* / audio / camera.
+- AudioStreamPlayer* **NUNCA** emite animation / skeleton_* / light_3d / camera.
+- Camera **NUNCA** emite animation / skeleton_* / light_3d / audio.
+- Node3D/Node2D/Control sin estado dinámico → **NO se emite** el bloque `dynamic` (32 tok ahorrados).
+
+### Diseño — API expuesta
+
+**Tool `visual` con param `tier`** (default 1 = comportamiento actual):
+
+```jsonc
+visual(action="coords", tier=3)        // resumen por nodo (animation/skeleton_3d count+3 primeros/etc.)
+visual(action="coords", tier=4)        // completo (todas las poses skeleton, AnimationTree params completos)
+visual(action="coords")                // tier=1 default (mapa visual barato, sin dynamic)
+```
+
+**Mutaciones devuelven tier 3 (resumen) proactivo** — `coords_of_node(node, parent, 3)` desde `_node_coords()` (Fase A). Tier 4 SOLO opt-in vía `visual(coords, tier=4)`.
+
+### Sinergia AnimationTree ↔ AnimationPlayer
+
+AnimationTree lleva `anim_player_state` (snapshot del AnimationPlayer asociado):
+- `anim_player_path` (NodePath RELATIVO al tree)
+- `tree.get_node_or_null(tree.anim_player)` resuelve y captura
+- Devuelve `{current, position, playing, speed_scale, autoplay, length}` del player
+- **Si el player está en otra rama del árbol, get_node_or_null() con NodePath RELATIVO resuelve correctamente** (FIX: antes usaba scene_root que fallaba en runtime sin editor)
+
+### Snapshot de AnimationTree en detalle
+
+```jsonc
+{
+  "animation_tree": {
+    "active": true,
+    "anim_player_path": "../AnimationPlayer",
+    "tree_root_type": "AnimationNodeStateMachine" | "AnimationNodeBlendTree" | ...,
+    "anim_player_state": { /* snapshot completo del player */ },
+    // tier=4:
+    "current_state": "idle",                  // si StateMachine
+    "blend_position": 0.42                    // si BlendSpace1D/2D
+  }
+}
+```
+
+### Snapshot de Skeleton3D en detalle
+
+```jsonc
+{
+  "skeleton_3d": {
+    "bone_count": 30,
+    "motion_scale": 0.01,
+    "show_rest_only": false,
+    "bone_names": ["root", "spine", ...],    // SIEMPRE completo (strings cortos)
+    "poses": [                                // tier 3: 3 primeros; tier 4: TODOS
+      {"index": 0, "name": "root", "position": {...}, "rotation": {...}},
+      ...
+    ],
+    "poses_truncated": 27                     // tier 3 con más de 3 huesos
+  }
+}
+```
+
+### Snapshot de AudioStreamPlayer3D
+
+```jsonc
+{
+  "audio": {
+    "type": "AudioStreamPlayer3D",
+    "playing": false,
+    "volume_db": -6.0,
+    "pitch_scale": 1.25,
+    "bus": "Master",
+    "stream": "res://sfx/click.ogg" | "" | "(inline)",
+    "max_distance": 100.0,                    // 3D only
+    "attenuation_model": 0                    // 3D only
+  }
+}
+```
+
+### Decisiones técnicas
+
+- **Skeleton2D.get_bone_count()** en Godot 4 requiere `NOTIFICATION_PARENTED` en Bone2D — puede ser async en headless. Por robustez, `_fill_skeleton_2d` itera recursivamente `Bone2D` children en vez de usar la API virtual. Funciona incluso antes del primer frame.
+- **Light3D NO tiene `light_enabled` property** (Godot 4.5) — se omite. La luz está activa si el nodo `visible` del CanvasItem padre lo está (y Light3D no hereda de CanvasItem, así que es siempre). Verificado con `get_property_list()`.
+- **AudioStreamPlayer3D `bus`** se reporta pero no se puede cambiar en runtime sin AudioServer config — el default es "Master" en todos los casos.
+- **AnimationTree.anim_player** es NodePath RELATIVO al tree, no al scene root. `tree.get_node_or_null(tree.anim_player)` resuelve correctamente en runtime (FIX pre-existente: el código viejo usaba `tree.get_tree().get_edited_scene_root()` que retorna null en runtime).
+- **`flags.has_dynamic_state`** = `true` si alguna sección se emitió. Permite al agente hacer `if flags.has_dynamic_state: read dynamic.*` sin parsear.
+
+### Cambios por archivo
+
+| Archivo | Cambio |
+|---------|--------|
+| `coords.gd` | `coords_of_node()` con tier 3/4 + 7 helpers `_fill_animation/animation_tree/skeleton_3d/skeleton_2d/light_3d/audio/camera` + helper `_collect_bones_2d` recursivo |
+| `coords.gd::_empty_flags()` | Añadido `has_dynamic_state: false` |
+| `node_handlers.gd::_node_coords` | Tier 2 → tier 3 (proactivo con resumen) |
+| `visual_handlers.gd::handle_scene_coords` | Acepta `tier` arg (default 1); `_walk` propaga tier y añade bloque `dynamic` al entry si tier>=3 |
+| `server.rs::visual` | Parámetro `tier: Option<i64>` con doc inline |
+
+### Métricas Fase C
+
+| Métrica | Antes | Ahora |
+|---------|-------|-------|
+| Categorías de estado dinámico | 0 | 7 (animation, animation_tree, skeleton_3d, skeleton_2d, light_3d, audio, camera) |
+| Handlers que devolvían tier 3 | 0 | 13 (todos los de mutación) |
+| Pureza 2D↔3D verificada por test | — | Sí (7 secciones × 9 tests de purity) |
+| Tests GDScript | 34 (Fase A+B+D) | **43** (+9 nuevos Fase C) |
+| Cobertura AnimationPlayer/Tree/Skeleton/Light/Audio/Camera | — | **9 tests nuevos** |
+
+### Verificación
+
+| Check | Resultado |
+|-------|-----------|
+| `cargo clippy -- -D warnings` | verde |
+| `cargo test -p heren-server` | 84 unit + 28 integration = 112 verdes (race LSP pre-existente aislado) |
+| Tests GDScript (`run_tests.gd`) | **43/43 verdes** (34 viejos + 9 nuevos Fase C) |
+| Grafo headless | **0 SCRIPT ERROR, 0 Parse Error** |
 
 #### Fase D — `summary` recursivo (cierra §0.1 P6) ✅ COMPLETADA (2026-09-04)
 
@@ -1160,6 +1292,7 @@ Playback+inspección · edición+one_shot · avanzado (blend spaces 1D/2D, tween
 - [ ] P10 animation/get_animation: pending implementar acción get_animation específica
 - [x] **§0.11 Spatial Proactivity — Fase A (2026-09-04)**: `coords_of_node` fuente única en `coords.gd` + 13/13 handlers devuelven `coords` + `scene_node_count` proactivos + purity 2D↔3D verificada por 9 tests GDScript.
 - [x] **§0.11 Spatial Proactivity — Fase B (2026-09-04)**: `visual_text/spatial` con 5 modes (overlaps/distance/neighbors/layout/bounds) en `visual_tool/spatial_tool.gd` (funciones puras). 8 tests GDScript nuevos + AABB global en `_fill_3d` (bug colateral false-positive arreglado).
+- [x] **§0.11 Spatial Proactivity — Fase C (2026-09-04)**: tier 3 dynamic state (animation, animation_tree en sinergia con AnimationPlayer, skeleton_3d con resumen 3 primeros huesos, skeleton_2d iterando Bone2D children, light_3d, audio, camera) proactivo en mutaciones + tier 4 opt-in vía `visual/coords tier=4`. 9 tests GDScript nuevos.
 - [x] **§0.11 Spatial Proactivity — Fase D (2026-09-04)**: `visual_text/summary` recursivo (node_count + by_type + tree_depth + bounds_2d/3d + warnings z_fighting/material/texture/shape) + validator Engine B sin imagen (lee visual_summary JSON en vez de capture_scene). 7 tests GDScript nuevos.
 - [x] **§0.11 Spatial Proactivity — Fase E (2026-09-04)**: ELIMINACIÓN total de `visual_image` (no deprecation) + rename `visual_text` → `visual` → UNA tool unificada con 4 actions (coords/summary/ascii/spatial). `with_image` zombie de §0.1 también eliminado. Ver §0.11.
 

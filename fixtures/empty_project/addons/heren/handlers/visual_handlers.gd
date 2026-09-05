@@ -64,23 +64,27 @@ func _path_relative(node: Node, root: Node) -> String:
 	return str(path)
 
 
-func _walk(node: Node, root: Node, out: Dictionary, depth: int, max_depth: int) -> void:
+func _walk(node: Node, root: Node, out: Dictionary, depth: int, max_depth: int, tier: int = 1) -> void:
 	if max_depth >= 0 and depth > max_depth:
 		return
 	# Fase A: coords unificadas — fuente única HerenCoords.coords_of_node.
 	# El entry expone solo los campos que NIVEL 0 necesita en el mapa textual;
 	# si el agente quiere más detalle (modulate, anchors, effective_rect),
 	# llama a node_query/get_info o coords_of_node con tier=2.
-	var coords := HerenCoordsScript.coords_of_node(node, _path_relative(node, root), 1)
+	# Fase C: tier>=3 → añade bloque `dynamic` opt-in (animation/light/audio/camera/skeleton
+	# summary). tier=4 → full (todas las poses, params completos).
+	var coords := HerenCoordsScript.coords_of_node(node, _path_relative(node, root), tier)
 	var entry: Dictionary = {
 		"type": coords.get("kind", node.get_class()),
 		"pos": coords.get("pos", {}),
 	}
 	if coords.has("bbox"):
 		entry["bbox"] = coords["bbox"]
+	if coords.has("dynamic"):
+		entry["dynamic"] = coords["dynamic"]
 	out[_path_relative(node, root)] = entry
 	for child in node.get_children():
-		_walk(child, root, out, depth + 1, max_depth)
+		_walk(child, root, out, depth + 1, max_depth, tier)
 
 
 # ---------------------------------------------------------------- NIVEL 0: coords
@@ -88,12 +92,15 @@ func _walk(node: Node, root: Node, out: Dictionary, depth: int, max_depth: int) 
 func handle_scene_coords(args: Dictionary) -> Dictionary:
 	# P0.2 (2026-09-03): usar _scene_root(args) para honrar scene_path del args
 	# (antes _root_node ignoraba scene_path → retornaba pestaña activa incorrecta).
+	# Fase C (2026-09-04): tier opt-in. tier=1 default (mapa visual barato);
+	# tier=3 → añade bloque `dynamic` (resumen) por nodo; tier=4 → completo.
 	var root := _scene_root(args)
 	if root == null:
 		return {"ok": false, "error": "no scene open in editor"}
 	var max_depth: int = int(args.get("max_depth", -1))
+	var tier: int = int(args.get("tier", 1))
 	var out := {}
-	_walk(root, root, out, 0, max_depth)
+	_walk(root, root, out, 0, max_depth, tier)
 	return {"ok": true, "root": root.name, "node_count": out.size(), "coords": out}
 
 
