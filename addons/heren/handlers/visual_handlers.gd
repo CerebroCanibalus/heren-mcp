@@ -15,6 +15,7 @@ extends "res://addons/heren/handlers/heren_handler.gd"
 
 const HerenCoordsScript := preload("coords.gd")
 const HerenSceneRegistryScript := preload("../scene_registry.gd")
+const HerenSpatialToolScript := preload("visual_tool/spatial_tool.gd")
 
 
 
@@ -125,6 +126,18 @@ func handle_scene_ascii(args: Dictionary) -> Dictionary:
 	var build := _ascii_build.bind(lines, max_depth)
 	build.call(root, "", true, 0)
 	return {"ok": true, "ascii": "\n".join(lines)}
+
+
+# ---------------------------------------------------------------- NIVEL 1.5: spatial (Fase B)
+# Cálculos derivados sobre el sistema unificado de coordenadas (Fase A):
+# overlaps / distance / neighbors / layout / bounds. El agente valida layout
+# geométrico SIN captura de imagen — reemplazo progresivo de visual_image.
+
+func handle_scene_spatial(args: Dictionary) -> Dictionary:
+	var root := _scene_root(args)
+	if root == null:
+		return {"ok": false, "error": "no scene open in editor"}
+	return HerenSpatialToolScript.compute(root, args)
 
 
 func _ascii_build(node: Node, prefix: String, is_last: bool, depth: int, lines: Array[String], max_depth: int) -> void:

@@ -1,5 +1,39 @@
 # Changelog — Heren MCP
 
+## [Unreleased] - 2026-09-04 - Spatial Proactivity Fase B (visual_text/spatial)
+
+### 🧭 spatial_tool — 5 modes para validación geométrica sin imagen
+
+**Problema**: el agente quería verificar overlaps/distancia/layout de UI pero
+`visual_image/capture` falla durante play (§0.8 #8), consume 200-800 tok y el
+modelo no razona bien sobre PNGs renderizados.
+
+**Solución** (Fase B de §0.11):
+- Nuevo `addons/heren/handlers/visual_tool/spatial_tool.gd` (clase
+  `HerenSpatialTool`, funciones estáticas puras + testeables).
+- Nueva action `spatial` en `visual_text` con 5 modes:
+  - `overlaps(node_path, padding)` → nodos cuya bbox/aabb intersecta
+  - `distance(from, to)` → vector + magnitud entre dos puntos/nodos
+  - `neighbors(of, radius)` → nodos dentro de un radio
+  - `layout(node_path)` → Control effective_rect + Container padding
+  - `bounds(of=".")` → AABB total escena (2D + 3D separadas)
+
+**Bugs colaterales arreglados**:
+- `_fill_3d` ahora devuelve AABB transformada (`transform` local o
+  `global_transform` según `is_inside_tree()`) — antes retornaba `get_aabb()`
+  LOCAL sin transformar, false-positive en overlaps 3D.
+- `_relpath` no usa `get_path()` (requiere SceneTree) — construido manualmente
+  con parent chain. Funciona con nodos detached.
+
+**Tests**: 8 nuevos en `run_tests.gd` (overlaps 2D encuentra/excluye self,
+overlaps 3D, distance, neighbors, layout Control, bounds, unknown mode).
+27/27 GDScript verdes, 113 Rust verdes, clippy verde, grafo headless sin
+parse errors. `cargo build --release` falla por binario bloqueado (no
+relacionado con Fase B).
+
+**Coste típico**: 50-200 tok por llamada. Reemplaza la necesidad de
+captura de imagen para validación geométrica.
+
 ## [Unreleased] - 2026-09-04 - Spatial Proactivity Fase A
 
 ### 🧭 coords_of_node — fuente única de verdad

@@ -620,10 +620,20 @@ static func _fill_3d(node: Node, out: Dictionary, flags: Dictionary) -> void:
 		"quat": serialize_value(n3.quaternion, true),
 	}
 	# AABB solo si es MeshInstance3D con mesh asignado.
+	# Usar AABB transformada (global si inside_tree, local `transform` si no)
+	# para que comparaciones espaciales entre meshes de distintos nodos sean
+	# correctas (Fase B spatial). `get_aabb()` devuelve AABB LOCAL — no
+	# comparable entre nodos distintos sin aplicar la transform.
 	if node is MeshInstance3D:
 		var mi: MeshInstance3D = node
 		if mi.mesh != null:
-			var aabb: AABB = mi.get_aabb()
+			var aabb_local: AABB = mi.get_aabb()
+			# Transform local SIEMPRE funciona (position/rotation/scale del nodo);
+			# global_transform solo si está dentro del SceneTree (composición con
+			# ancestros). Para tests headless con nodos detached, transform basta.
+			var aabb: AABB = mi.transform * aabb_local
+			if mi.is_inside_tree():
+				aabb = mi.global_transform * aabb_local
 			out["aabb"] = serialize_value(aabb, true)
 			out["size_3d"] = serialize_value(aabb.size, true)
 			flags["has_aabb"] = true

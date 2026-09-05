@@ -728,15 +728,42 @@ Tier 3 (animation/light/audio state) queda para Fase C — no implementado aún.
 
 ### Pendientes (no parte de Fase A — contrato definido, implementación en próximos sprints)
 
-#### Fase B — `visual_text/spatial` (cálculos derivados)
+#### Fase B — `visual_text/spatial` ✅ COMPLETADA (2026-09-04)
+
+5 modes que permiten al agente verificar layout geométrico SIN captura de imagen:
+
+| Mode | Args | Output |
+|------|------|--------|
+| `overlaps` | `node_path, padding=0` | nodos cuya bbox/aabb intersecta |
+| `distance` | `from, to` | vector + magnitud entre dos puntos/nodos |
+| `neighbors` | `of, radius` | nodos dentro de un radio |
+| `layout` | `node_path` (Control) | effective_rect + Container padding del padre |
+| `bounds` | `of="."` | AABB total escena (2D + 3D separadas) |
+
+**Módulo nuevo**: `addons/heren/handlers/visual_tool/spatial_tool.gd` (clase `HerenSpatialTool`, funciones estáticas puras + testeables). Handler: `visual_handlers.handle_scene_spatial(args)` → delega a `HerenSpatialTool.compute(root, args)`.
+
+**Coste típico**: 50-200 tok por llamada. **Reemplaza `visual_image` para validación geométrica.**
+
+**Ejemplo**:
 ```jsonc
-visual_text(action="spatial", mode="overlaps",  node_path="Player", padding=0)
-visual_text(action="spatial", mode="distance",  from="Player", to="Enemy_3")
-visual_text(action="spatial", mode="neighbors", of="Player", radius=200)
-visual_text(action="spatial", mode="layout",    node_path="HUD/HealthBar")  // Control effective_rect + Container padding
-visual_text(action="spatial", mode="bounds",    of=".")                     // AABB escena total
+// ¿colisionan mis sprites?
+visual_text(action="spatial", mode="overlaps", node_path="Player")
+// → { "ok": true, "results": [{"path":"Enemy_1","kind":"Sprite2D"}, ...], "count": 3 }
+
+// ¿dónde está realmente mi HealthBar post-anchors?
+visual_text(action="spatial", mode="layout", node_path="HUD/HealthBar")
+// → { "effective_rect": {x,y,w,h}, "anchors":..., "offsets":..., "parent_is_container": true, "parent_margin": {l,t,r,b} }
+
+// ¿qué tan grande es la escena?
+visual_text(action="spatial", mode="bounds")
+// → { "bounds_2d": {x,y,w,h}, "bounds_3d": {min,max,size} }
 ```
-Distancia, overlaps, AABB scene, layout Control resuelto, vecinos espaciales. Coste 50-200 tok. **Reemplaza la necesidad de capturar imagen** para validación.
+
+**Bugs colaterales arreglados**:
+1. `_fill_3d` ahora devuelve AABB transformada (global si inside_tree, `transform` local si detached) — antes retornaba `get_aabb()` LOCAL sin transformar, lo que hacía que TODAS las BoxMesh tuvieran el mismo AABB y siempre intersectaran (false positive).
+2. `_relpath` no usa `get_path()` (que requiere SceneTree) — construido manualmente con parent chain. Funciona con nodos detached en tests headless.
+
+**Tests**: 8 nuevos en `run_tests.gd` (overlaps 2D encuentra/excluye self, overlaps 3D, distance, neighbors radius, layout Control, bounds, unknown mode).
 
 #### Fase C — Tier 3 (animation/light/audio state)
 Añadir a `coords_of_node` con `tier=3`: `current_animation`, `animation_position`, `light_energy`, `light_color`, `volume_db`, `pitch_scale`. **Solo si el agente lo pide** — no proactivo.
@@ -745,7 +772,7 @@ Añadir a `coords_of_node` con `tier=3`: `current_animation`, `animation_positio
 `visual_text/summary` con `by_type` + `bounds_2d` + `bounds_3d` + `tree_depth` + `warnings` (z_fighting_risk, etc.). Permite que el `validator.rs::run_engine_b` (§0.8 bug #4) elimine `capture_scene` y use JSON puro.
 
 #### Fase E — Deprecar `visual_image`
-Solo cuando Fases B+C+D estén verdes y validadas durante 1 sprint con el agente real.
+Solo cuando Fases C+D estén verdes y validadas durante 1 sprint con el agente real.
 
 ### Notas operativas
 
@@ -1070,7 +1097,8 @@ Playback+inspección · edición+one_shot · avanzado (blend spaces 1D/2D, tween
 - [x] BUG GRAVE save re-embebe scripts + freed instance crash (2026-08-15): handle_save prioridad pestaña real primero (no registry stale); scene_registry is_instance_valid antes de is Node
 - [x] BUG shape pierde radius (2026-08-15): resource_local_to_scene roto (Godot #44008) → quitar de handle_set_prop + deserialize_resource; radius=10 era default correcto
 - [ ] P10 animation/get_animation: pending implementar acción get_animation específica
-- [x] **§0.11 Spatial Proactivity — Fase A (2026-09-04)**: `coords_of_node` fuente única en `coords.gd` + 13/13 handlers devuelven `coords` + `scene_node_count` proactivos + purity 2D↔3D verificada por 9 tests GDScript. Pendientes Fase B (visual_text/spatial), C (tier 3), D (summary recursivo), E (deprecar visual_image) — ver §0.11.
+- [x] **§0.11 Spatial Proactivity — Fase A (2026-09-04)**: `coords_of_node` fuente única en `coords.gd` + 13/13 handlers devuelven `coords` + `scene_node_count` proactivos + purity 2D↔3D verificada por 9 tests GDScript.
+- [x] **§0.11 Spatial Proactivity — Fase B (2026-09-04)**: `visual_text/spatial` con 5 modes (overlaps/distance/neighbors/layout/bounds) en `visual_tool/spatial_tool.gd` (funciones puras). 8 tests GDScript nuevos + AABB global en `_fill_3d` (bug colateral false-positive arreglado). Pendientes Fase C (tier 3), D (summary recursivo), E (deprecar visual_image) — ver §0.11.
 
 ---
 

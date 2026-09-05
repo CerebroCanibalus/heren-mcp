@@ -2224,13 +2224,20 @@ async fn signal(
 // ============================================================
 
 #[tool(
-    description = "Visión textual sin imagen: coords|summary|ascii. Barata, usarla primero antes de capturar. args: scene_path, max_depth (default 10)."
+    description = "Visión textual sin imagen: coords|summary|ascii|spatial. Barata, usarla primero antes de capturar. spatial (Fase B): overlaps|distance|neighbors|layout|bounds. args: scene_path, max_depth (default 10), y según mode: node_path, from, to, of, radius, padding."
 )]
 async fn visual_text(
     action: String,
     project_path: Option<String>,
     scene_path: Option<String>,
     max_depth: Option<i64>,
+    mode: Option<String>,
+    node_path: Option<String>,
+    from: Option<String>,
+    to: Option<String>,
+    of: Option<String>,
+    radius: Option<f64>,
+    padding: Option<f64>,
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
@@ -2238,9 +2245,10 @@ async fn visual_text(
         "coords" => "visual/scene_coords",
         "summary" => "visual/scene_summary",
         "ascii" => "visual/scene_ascii",
+        "spatial" => "visual/scene_spatial",
         other => {
             return Err(ToolError::invalid_params(format!(
-                "unknown visual_text action: {other} (coords|summary|ascii)"
+                "unknown visual_text action: {other} (coords|summary|ascii|spatial)"
             )));
         }
     };
@@ -2255,6 +2263,13 @@ async fn visual_text(
                     .map(Value::String),
             ),
             ("max_depth", max_depth.map(|v| json!(v))),
+            ("mode", mode.map(Value::String)),
+            ("node_path", node_path.map(Value::String)),
+            ("from", from.map(Value::String)),
+            ("to", to.map(Value::String)),
+            ("of", of.map(Value::String)),
+            ("radius", radius.map(|v| json!(v))),
+            ("padding", padding.map(|v| json!(v))),
         ]),
     );
     forward(registry, &proj, handler, a).await

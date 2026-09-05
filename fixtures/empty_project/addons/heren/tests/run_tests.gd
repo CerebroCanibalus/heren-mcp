@@ -20,6 +20,7 @@ const ConstantsScript := preload("res://addons/heren/constants.gd")
 const ErrorScript := preload("res://addons/heren/handlers/heren_error.gd")
 const TemplateRegistryScript := preload("res://addons/heren/template_registry.gd")
 const UiHandlersScript := preload("res://addons/heren/handlers/ui_handlers.gd")
+const SpatialToolScript := preload("res://addons/heren/handlers/visual_tool/spatial_tool.gd")
 
 var _passed := 0
 var _failed := 0
@@ -46,6 +47,15 @@ func _init() -> void:
 	_run("coords_of_node tier0 minimo", _test_coords_of_node_tier0)
 	_run("coords_of_node tier2 enrich", _test_coords_of_node_tier2)
 	_run("coords_of_node discriminator kind+flags", _test_coords_of_node_discriminator)
+	# Fase B: spatial_tool — overlaps/distance/neighbors/layout/bounds (NIVEL 1.5).
+	_run("spatial overlaps 2D finds intersecting sprite", _test_spatial_overlaps_2d)
+	_run("spatial overlaps 2D excludes self", _test_spatial_overlaps_2d_excludes_self)
+	_run("spatial overlaps 3D finds intersecting mesh", _test_spatial_overlaps_3d)
+	_run("spatial distance between two nodes", _test_spatial_distance)
+	_run("spatial neighbors within radius", _test_spatial_neighbors)
+	_run("spatial layout Control effective_rect", _test_spatial_layout_control)
+	_run("spatial bounds scene total bbox", _test_spatial_bounds_scene)
+	_run("spatial unknown mode returns error", _test_spatial_unknown_mode)
 
 	print("RESULT: %d passed, %d failed" % [_passed, _failed])
 	quit(0 if _failed == 0 else 1)
@@ -434,4 +444,248 @@ func _test_coords_of_node_discriminator() -> bool:
 		n2.queue_free()
 		return false
 	n2.queue_free()
+	return true
+
+
+# ============================================================== Fase B
+# spatial_tool — overlaps / distance / neighbors / layout / bounds.
+# Verifica que el agente puede verificar layout geométrico SIN imagen.
+
+func _make_2d_tex(w: int, h: int) -> Texture2D:
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	img.fill(Color.WHITE)
+	return ImageTexture.create_from_image(img)
+
+
+func _add_sprite2d(parent: Node, name: String, x: float, y: float, w: int = 32, h: int = 32) -> Sprite2D:
+	var s := Sprite2D.new()
+	s.name = name
+	s.texture = _make_2d_tex(w, h)
+	s.position = Vector2(x, y)
+	parent.add_child(s)
+	return s
+
+
+func _add_mesh3d(parent: Node, name: String, x: float, y: float, z: float, mesh_size: float = 1.0) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	mi.name = name
+	var box := BoxMesh.new()
+	box.size = Vector3(mesh_size, mesh_size, mesh_size)
+	mi.mesh = box
+	mi.position = Vector3(x, y, z)
+	parent.add_child(mi)
+	return mi
+
+
+func _test_spatial_overlaps_2d() -> bool:
+	var scene_root := Node2D.new()
+	root.add_child(scene_root)
+	var ref := _add_sprite2d(scene_root, "Ref", 0, 0, 32, 32)
+	var overlap := _add_sprite2d(scene_root, "Over", 20, 20, 32, 32)  # intersecta
+	var far := _add_sprite2d(scene_root, "Far", 500, 500, 16, 16)    # no intersecta
+	var out := SpatialToolScript.overlaps(scene_root, "Ref", 0.0)
+	if not out.get("ok", false):
+		push_error("overlaps 2D no ok: %s" % out)
+		scene_root.queue_free()
+		return false
+	var results: Array = out.get("results", [])
+	var paths: Array = []
+	for r in results:
+		paths.append(r.get("path", ""))
+	if "Over" not in paths:
+		push_error("overlaps no encontró Over en %s" % paths)
+		scene_root.queue_free()
+		return false
+	if "Far" in paths:
+		push_error("overlaps encontró Far (no debería): %s" % paths)
+		scene_root.queue_free()
+		return false
+	if "Ref" in paths:
+		push_error("overlaps incluye self: %s" % paths)
+		scene_root.queue_free()
+		return false
+	if int(out.get("count", 0)) != 1:
+		push_error("count=%d esperaba 1" % out.get("count", 0))
+		scene_root.queue_free()
+		return false
+	scene_root.queue_free()
+	return true
+
+
+func _test_spatial_overlaps_2d_excludes_self() -> bool:
+	var scene_root := Node2D.new()
+	root.add_child(scene_root)
+	var ref := _add_sprite2d(scene_root, "Ref", 0, 0, 64, 64)
+	var child := _add_sprite2d(ref, "Child", 0, 0, 32, 32)  # descendiente — excluir
+	var out := SpatialToolScript.overlaps(scene_root, "Ref", 0.0)
+	var paths: Array = []
+	for r in out.get("results", []):
+		paths.append(r.get("path", ""))
+	if "Ref" in paths or "Ref/Child" in paths:
+		push_error("overlaps incluye self o descendiente: %s" % paths)
+		scene_root.queue_free()
+		return false
+	scene_root.queue_free()
+	return true
+
+
+func _test_spatial_overlaps_3d() -> bool:
+	var scene_root := Node3D.new()
+	root.add_child(scene_root)
+	var ref := _add_mesh3d(scene_root, "Ref", 0, 0, 0)
+	var overlap := _add_mesh3d(scene_root, "Over", 0.5, 0.5, 0.5)  # intersecta
+	var far := _add_mesh3d(scene_root, "Far", 100, 100, 100)
+	var out := SpatialToolScript.overlaps(scene_root, "Ref", 0.0)
+	if not out.get("ok", false):
+		push_error("overlaps 3D no ok: %s" % out)
+		scene_root.queue_free()
+		return false
+	var paths: Array = []
+	for r in out.get("results", []):
+		paths.append(r.get("path", ""))
+	if "Over" not in paths or "Far" in paths:
+		push_error("overlaps 3D paths incorrectos: %s" % paths)
+		scene_root.queue_free()
+		return false
+	scene_root.queue_free()
+	return true
+
+
+func _test_spatial_distance() -> bool:
+	var scene_root := Node2D.new()
+	root.add_child(scene_root)
+	var a := Node2D.new()
+	a.name = "A"
+	a.position = Vector2(0, 0)
+	scene_root.add_child(a)
+	var b := Node2D.new()
+	b.name = "B"
+	b.position = Vector2(3, 4)
+	scene_root.add_child(b)
+	var out := SpatialToolScript.distance(scene_root, "A", "B")
+	if not out.get("ok", false):
+		push_error("distance no ok: %s" % out)
+		scene_root.queue_free()
+		return false
+	# distancia 3-4-5 = 5.0
+	if absf(float(out.get("distance", -1.0)) - 5.0) > 0.001:
+		push_error("distance=%f esperaba 5.0" % out.get("distance", 0))
+		scene_root.queue_free()
+		return false
+	if str(out.get("kind", "")) != "2d":
+		push_error("kind=%s esperaba 2d" % out.get("kind", ""))
+		scene_root.queue_free()
+		return false
+	var vec: Dictionary = out.get("vector", {})
+	if absf(float(vec.get("x", -1)) - 3.0) > 0.001 or absf(float(vec.get("y", -1)) - 4.0) > 0.001:
+		push_error("vector=%s esperaba {x:3,y:4}" % vec)
+		scene_root.queue_free()
+		return false
+	scene_root.queue_free()
+	return true
+
+
+func _test_spatial_neighbors() -> bool:
+	var scene_root := Node2D.new()
+	root.add_child(scene_root)
+	var center := _add_sprite2d(scene_root, "Center", 0, 0, 32, 32)
+	var near := _add_sprite2d(scene_root, "Near", 50, 0, 8, 8)    # dist ~50
+	var mid := _add_sprite2d(scene_root, "Mid", 150, 0, 8, 8)     # dist ~150
+	var far := _add_sprite2d(scene_root, "Far", 500, 0, 8, 8)      # dist ~500
+	# Radio 100 — debería incluir Near pero no Mid/Far.
+	var out := SpatialToolScript.neighbors(scene_root, "Center", 100.0)
+	if not out.get("ok", false):
+		push_error("neighbors no ok: %s" % out)
+		scene_root.queue_free()
+		return false
+	var paths: Array = []
+	for r in out.get("results", []):
+		paths.append(r.get("path", ""))
+	if "Near" not in paths:
+		push_error("neighbors no encontró Near en %s" % paths)
+		scene_root.queue_free()
+		return false
+	if "Center" in paths or "Far" in paths:
+		push_error("neighbors incluyó self o Far: %s" % paths)
+		scene_root.queue_free()
+		return false
+	scene_root.queue_free()
+	return true
+
+
+func _test_spatial_layout_control() -> bool:
+	# Control requiere padre Control o CanvasLayer para que is_inside_tree() y
+	# get_global_rect() reporten valores. Usamos Control como root.
+	var scene_root := Control.new()
+	root.add_child(scene_root)
+	var ctl := Control.new()
+	ctl.name = "HealthBar"
+	ctl.size = Vector2(200, 30)
+	scene_root.add_child(ctl)
+	var out := SpatialToolScript.layout(scene_root, "HealthBar")
+	if not out.get("ok", false):
+		push_error("layout no ok: %s" % out)
+		scene_root.queue_free()
+		return false
+	if not out.has("effective_rect"):
+		push_error("layout sin effective_rect: %s" % out)
+		scene_root.queue_free()
+		return false
+	if not out.has("anchors") or not out.has("offsets"):
+		push_error("layout sin anchors/offsets")
+		scene_root.queue_free()
+		return false
+	# Padre es Control (no Container) → la key NO debe existir.
+	if out.get("parent_is_container", false):
+		push_error("parent_is_container=true pero parent es Control: %s" % out)
+		scene_root.queue_free()
+		return false
+	scene_root.queue_free()
+	return true
+
+
+func _test_spatial_bounds_scene() -> bool:
+	var scene_root := Node2D.new()
+	root.add_child(scene_root)
+	_add_sprite2d(scene_root, "A", 0, 0, 32, 32)
+	_add_sprite2d(scene_root, "B", 100, 50, 32, 32)  # extiende el bbox
+	var out := SpatialToolScript.bounds(scene_root, ".")
+	if not out.get("ok", false):
+		push_error("bounds no ok: %s" % out)
+		scene_root.queue_free()
+		return false
+	if not out.has("bounds_2d"):
+		push_error("bounds sin bounds_2d: %s" % out)
+		scene_root.queue_free()
+		return false
+	var b2: Dictionary = out.get("bounds_2d", {})
+	var w: float = float(b2.get("w", 0))
+	var h: float = float(b2.get("h", 0))
+	# A en (0,0) size 32 → bbox [-16,-16, 32,32]; B en (100,50) size 32 → [84,34, 32,32].
+	# Merge Rect2: min(-16,-16) max(116,66) → size(132, 82).
+	if w < 130.0 or w > 135.0:
+		push_error("bounds_2d.w=%f esperaba ~132" % w)
+		scene_root.queue_free()
+		return false
+	if h < 80.0 or h > 85.0:
+		push_error("bounds_2d.h=%f esperaba ~82" % h)
+		scene_root.queue_free()
+		return false
+	scene_root.queue_free()
+	return true
+
+
+func _test_spatial_unknown_mode() -> bool:
+	var scene_root := Node2D.new()
+	root.add_child(scene_root)
+	var out := SpatialToolScript.compute(scene_root, {"mode": "no_existe"})
+	if out.get("ok", true):
+		push_error("mode inválido debería fallar: %s" % out)
+		scene_root.queue_free()
+		return false
+	if not String(out.get("error", "")).begins_with("unknown spatial mode"):
+		push_error("error incorrecto: %s" % out.get("error", ""))
+		scene_root.queue_free()
+		return false
+	scene_root.queue_free()
 	return true

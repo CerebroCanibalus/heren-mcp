@@ -173,6 +173,7 @@ const ROUTES := {
 	"visual/coords": "handle_coords",
 	"visual/summary": "handle_summary",
 	"visual/ascii": "handle_ascii",
+	"visual/spatial": "handle_scene_spatial",
 	"visual/capture": "handle_capture",
 	"visual/node": "handle_node",
 	"visual/scene_summary": "handle_summary",  # alias interno usado por validator
