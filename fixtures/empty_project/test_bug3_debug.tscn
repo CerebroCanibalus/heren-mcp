@@ -1,5 +1,0 @@
-[gd_scene format=3 uid="uid://i0njjkboneg5"]
-
-[node name="TestBug3Debug" type="Control" unique_id=89861356]
-layout_mode = 3
-anchors_preset = 0
