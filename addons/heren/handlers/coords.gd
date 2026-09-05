@@ -535,42 +535,285 @@ static func _ensure_owner_child(node: Node, owner: Node) -> void:
 ## - Node2D: position (Vector2), rotation_degrees (float), scale (Vector2).
 ## - Control: anchors_preset (int), anchors (4 floats), offsets (4 floats),
 ##             pivot_offset, size, rotation_degrees, scale.
-static func coords_of(node: Node) -> Dictionary:
+## Única fuente de verdad del sistema de coordenadas del plugin (Fase A).
+## Devuelve un dict discriminado por `kind` (clase real Godot) + `flags`
+## (capacidades detectadas) para que el cliente sepa qué campos esperar SIN
+## parsear. NO desperdicia datos: un nodo 2D jamás trae `quaternion`/`basis`/
+## `cast_shadow`/`render_layers`; un nodo 3D jamás trae `z_index`/`y_sort`
+## ni `anchors`.
+##
+## tier (int, default 1):
+##   0 → kind + flags + parent_path + visible                    (~30 tok)
+##   1 → + pos / scale / rotation (kind-specific) + bbox / aabb  (~80-150 tok)
+##   2 → + modulate / material / collision / render layers /
+##       Control: anchors, offsets, size, effective_rect         (~150-250 tok)
+##   3 → + animation / light / audio (Fase C — no usado aún)     (~250-400 tok)
+##
+## `parent_path` es del PADRE inmediato ("" si el nodo es root). Quien llama
+## lo precalcula con `_node_path_relative(node.get_parent(), root)` —
+## desacoplar coords.gd del "root" mantiene la función pura y testeable.
+static func coords_of_node(node: Node, parent_path: String = "", tier: int = 1) -> Dictionary:
 	if node == null:
-		return {}
-	if node is Node3D:
-		return {
-			"position": serialize_value(node.position),
-			"rotation_degrees": serialize_value(node.rotation_degrees),
-			"scale": serialize_value(node.scale),
-			"global_position": serialize_value(node.global_position),
-		}
+		return {"kind": "None", "flags": _empty_flags(), "parent_path": parent_path, "visible": true}
+
+	var flags := _detect_flags(node)
+	var out: Dictionary = {
+		"kind": node.get_class(),
+		"flags": flags,
+		"parent_path": parent_path,
+		"visible": node.is_visible_in_tree() if node.has_method("is_visible_in_tree") else true,
+	}
+
+	# === POSICIÓN + TRANSFORM por DIMENSIÓN (MUTUAMENTE EXCLUYENTE) ===
+	# tier >= 1 → pos/scale/rotation/bbox; tier 0 → solo metadatos estructurales.
+	if tier >= 1:
+		if node is Node3D:
+			_fill_3d(node, out, flags)
+		elif node is CanvasItem:
+			_fill_2d_canvas(node, out, flags)
+
+	# === UI Control (descendiente de CanvasItem — siempre encima de _fill_2d) ===
+	if node is Control:
+		flags["is_control"] = true
+		_fill_control(node, out, tier)
+
+	# === TIER 2: modulate / material / collision / render layers / effective_rect ===
+	if tier >= 2:
+		_fill_tier2(node, out, flags)
+
+	return out
+
+
+## Backward-compat: tier=1 sin parent_path (legacy `coords_of`).
+## Migrar los call sites a coords_of_node cuando se pueda.
+static func coords_of(node: Node) -> Dictionary:
+	return coords_of_node(node, "", 1)
+
+
+static func _empty_flags() -> Dictionary:
+	return {"is_2d": false, "is_3d": false, "is_control": false, "has_bbox": false, "has_aabb": false}
+
+
+static func _detect_flags(node: Node) -> Dictionary:
+	return {
+		"is_2d": node is Node2D,
+		"is_3d": node is Node3D,
+		"is_control": node is Control,
+		"has_bbox": false,
+		"has_aabb": false,
+	}
+
+
+## Nodo 3D: pos global + scale + rotación Euler (deg) + quaternion (compact).
+## NO trae z_index ni anchors (eso es CanvasItem/Control).
+## Asume que node está inside_tree() — si no, global_position/rotation devuelven
+## Transform() vacío (warning). Quien llama debe garantizar add_child previo.
+static func _fill_3d(node: Node, out: Dictionary, flags: Dictionary) -> void:
+	var n3: Node3D = node
+	if n3.is_inside_tree():
+		out["pos"] = serialize_value(n3.global_position)
+	else:
+		out["pos"] = serialize_value(n3.position)
+	out["scale"] = serialize_value(n3.scale)
+	out["rotation"] = {
+		"euler_deg": {"x": n3.rotation_degrees.x, "y": n3.rotation_degrees.y, "z": n3.rotation_degrees.z},
+		"quat": serialize_value(n3.quaternion, true),
+	}
+	# AABB solo si es MeshInstance3D con mesh asignado.
+	if node is MeshInstance3D:
+		var mi: MeshInstance3D = node
+		if mi.mesh != null:
+			var aabb: AABB = mi.get_aabb()
+			out["aabb"] = serialize_value(aabb, true)
+			out["size_3d"] = serialize_value(aabb.size, true)
+			flags["has_aabb"] = true
+
+
+## Nodo 2D / CanvasItem: pos global + scale (si Node2D) + rotación Z (si Node2D)
+## + z_index (CanvasItem) + bbox según tipo específico.
+## NO trae quaternion ni basis (eso es Node3D).
+static func _fill_2d_canvas(node: Node, out: Dictionary, flags: Dictionary) -> void:
+	var ci: CanvasItem = node
+	if ci.is_inside_tree():
+		out["pos"] = serialize_value(ci.global_position)
+	else:
+		out["pos"] = serialize_value(Vector2.ZERO)
 	if node is Node2D:
+		var n2: Node2D = node
+		out["scale"] = serialize_value(n2.scale)
+		out["rotation"] = {"deg": roundf(rad_to_deg(n2.rotation) * 100.0) / 100.0, "rad": n2.rotation}
+	out["z_index"] = ci.z_index
+
+	var bbox := _bbox_of_2d(node)
+	if not bbox.is_empty():
+		out["bbox"] = bbox
+		if bbox.has("w") and bbox.has("h"):
+			out["size"] = {"w": bbox["w"], "h": bbox["h"]}
+		flags["has_bbox"] = true
+
+
+## Bbox 2D inferida por tipo. Cubre los tipos con geometría derivable;
+## cualquier otro CanvasItem (Node, ColorRect, Container...) no tiene bbox
+## natural y devuelve {}.
+static func _bbox_of_2d(node: Node) -> Dictionary:
+	if node is Sprite2D:
+		var s: Sprite2D = node
+		var tex: Texture2D = s.texture
+		if tex != null:
+			var w: float = tex.get_width() * s.scale.x
+			var h: float = tex.get_height() * s.scale.y
+			return {
+				"x": s.global_position.x - w * 0.5,
+				"y": s.global_position.y - h * 0.5,
+				"w": w, "h": h,
+			}
+		return {}
+	if node is AnimatedSprite2D:
+		var as2: AnimatedSprite2D = node
+		if as2.sprite_frames != null:
+			var tex2: Texture2D = as2.sprite_frames.get_frame_texture(as2.animation, as2.frame)
+			if tex2 != null:
+				var w: float = tex2.get_width() * as2.scale.x
+				var h: float = tex2.get_height() * as2.scale.y
+				return {
+					"x": as2.global_position.x - w * 0.5,
+					"y": as2.global_position.y - h * 0.5,
+					"w": w, "h": h,
+				}
+		return {}
+	if node is CollisionShape2D:
+		var cs: CollisionShape2D = node
+		var shape: Shape2D = cs.shape
+		if shape is RectangleShape2D:
+			var rsize: Vector2 = (shape as RectangleShape2D).size
+			return {
+				"x": cs.global_position.x - rsize.x * 0.5,
+				"y": cs.global_position.y - rsize.y * 0.5,
+				"w": rsize.x, "h": rsize.y,
+			}
+		if shape is CircleShape2D:
+			var radius: float = (shape as CircleShape2D).radius
+			return {
+				"x": cs.global_position.x - radius,
+				"y": cs.global_position.y - radius,
+				"w": radius * 2.0, "h": radius * 2.0,
+			}
+		return {}
+	if node is Label:
+		var lbl: Label = node
+		var s2: Vector2 = lbl.get_minimum_size()
 		return {
-			"position": serialize_value(node.position),
-			"rotation_degrees": node.rotation_degrees,
-			"scale": serialize_value(node.scale),
-			"global_position": serialize_value(node.global_position),
+			"x": lbl.global_position.x, "y": lbl.global_position.y,
+			"w": s2.x, "h": s2.y,
+		}
+	if node is Polygon2D:
+		var pg: Polygon2D = node
+		var pr: Rect2 = pg.get_rect()
+		return {
+			"x": pg.global_position.x + pr.position.x,
+			"y": pg.global_position.y + pr.position.y,
+			"w": pr.size.x, "h": pr.size.y,
+		}
+	if node is Line2D:
+		var ln: Line2D = node
+		var lr: Rect2 = ln.get_rect()
+		return {
+			"x": ln.global_position.x + lr.position.x,
+			"y": ln.global_position.y + lr.position.y,
+			"w": lr.size.x, "h": lr.size.y,
+		}
+	if node is TextureRect:
+		var tr: TextureRect = node
+		var ts: Vector2 = tr.size
+		return {
+			"x": tr.global_position.x, "y": tr.global_position.y,
+			"w": ts.x, "h": ts.y,
 		}
 	if node is Control:
-		var ctl: Control = node
+		var ctl2: Control = node
+		var cs: Vector2 = ctl2.size
 		return {
-			"position": serialize_value(ctl.position),
-			"size": serialize_value(ctl.size),
-			"rotation_degrees": ctl.rotation_degrees,
-			"scale": serialize_value(ctl.scale),
-			"anchors_preset": ctl.anchors_preset if "anchors_preset" in ctl else -1,
-			"anchors": {
-				"left": ctl.anchor_left,
-				"top": ctl.anchor_top,
-				"right": ctl.anchor_right,
-				"bottom": ctl.anchor_bottom,
-			},
-			"offsets": {
-				"left": ctl.offset_left,
-				"top": ctl.offset_top,
-				"right": ctl.offset_right,
-				"bottom": ctl.offset_bottom,
-			},
+			"x": ctl2.global_position.x, "y": ctl2.global_position.y,
+			"w": cs.x, "h": cs.y,
 		}
 	return {}
+
+
+## Control UI: anchors, offsets, size. Tier≥1 ya dio size (si had_bbox); aqui
+## siempre expone los anchors/offsets aunque el Control no tenga geometría
+## propia. tier=1 → solo anchors/offsets (barato). tier≥2 → + effective_rect
+## (post-container-layout) + size_flags.
+static func _fill_control(ctl: Control, out: Dictionary, tier: int) -> void:
+	out["anchors"] = {
+		"left": ctl.anchor_left, "top": ctl.anchor_top,
+		"right": ctl.anchor_right, "bottom": ctl.anchor_bottom,
+	}
+	out["offsets"] = {
+		"left": ctl.offset_left, "top": ctl.offset_top,
+		"right": ctl.offset_right, "bottom": ctl.offset_bottom,
+	}
+	if tier >= 2:
+		# effective_rect = Rect2 global post-anchors y post-container-layout.
+		# Más fiel al "lo que el usuario ve" que size/anchors separados.
+		var eff: Rect2 = ctl.get_global_rect()
+		out["effective_rect"] = serialize_value(eff, true)
+		out["size_flags"] = {
+			"horizontal": ctl.size_flags_horizontal,
+			"vertical": ctl.size_flags_vertical,
+			"stretch_ratio": ctl.size_flags_stretch_ratio,
+		}
+		out["parent_is_container"] = ctl.get_parent() is Container
+
+
+## Tier 2: visibility, modulate, material, collision/render layers.
+## Accesos defensivos con `"prop" in node` para tolerar builds de Godot donde
+## la propiedad no exista (ej: `visibility_mode` añadido en 4.5+;
+## `render_layers` vive en GeometryInstance3D, no Node3D puro).
+static func _fill_tier2(node: Node, out: Dictionary, flags: Dictionary) -> void:
+	# --- CanvasItem: modulate / visibility / material (común 2D y 3D CanvasItem) ---
+	if node is CanvasItem:
+		var ci: CanvasItem = node
+		out["modulate"] = serialize_value(ci.modulate, true)
+		out["self_modulate"] = serialize_value(ci.self_modulate, true)
+		if "visibility_mode" in ci:
+			out["visibility_mode"] = _visibility_mode_str(int(ci.visibility_mode))
+		out["top_level"] = ci.top_level
+		if "clip_children" in ci:
+			out["clip_children"] = int(ci.clip_children)
+		if ci.material != null:
+			out["material_path"] = ci.material.resource_path if ci.material.resource_path != "" else "(inline)"
+
+	# --- Collision: 2D o 3D ---
+	if node is CollisionObject2D:
+		var co2: CollisionObject2D = node
+		out["collision_layer"] = co2.collision_layer
+		out["collision_mask"] = co2.collision_mask
+		out["collision_priority"] = co2.collision_priority
+	elif node is CollisionObject3D:
+		var co3: CollisionObject3D = node
+		out["collision_layer"] = co3.collision_layer
+		out["collision_mask"] = co3.collision_mask
+		out["collision_priority"] = co3.collision_priority
+
+	# --- Render: GeometryInstance3D (no Node3D puro) ---
+	# En Godot 4.5 las props viven en GeometryInstance3D: cast_shadow, gi_mode.
+	# NO existe `render_layers` ni `visibility_layer` — fue eliminado.
+	if "cast_shadow" in node:
+		out["cast_shadow"] = int(node.cast_shadow)
+	if "gi_mode" in node:
+		out["gi_mode"] = int(node.gi_mode)
+	if "material_override" in node and node.material_override != null:
+		out["material_override_path"] = node.material_override.resource_path if node.material_override.resource_path != "" else "(inline)"
+	if "material_overlay" in node and node.material_overlay != null:
+		out["material_overlay_path"] = node.material_overlay.resource_path if node.material_overlay.resource_path != "" else "(inline)"
+
+
+static func _visibility_mode_str(mode: int) -> String:
+	# CanvasItem en Godot 4: VISIBILITY_INHERIT=0, VISIBILITY_VISIBLE=1, VISIBILITY_INVISIBLE=2.
+	match mode:
+		1:
+			return "visible"
+		2:
+			return "invisible"
+		_:
+			return "inherit"

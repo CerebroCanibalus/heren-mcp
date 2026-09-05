@@ -128,6 +128,9 @@ static func _apply_params(instance: Node, template: Dictionary, params: Dictiona
 				var loaded: Resource = load(value)
 				if loaded != null:
 					final_value = loaded
-			else:
+			elif not (value is String):
+				# Solo deserializa tipos estructurados (dict/array/etc).
+				# Strings puros se pasan tal cual — JSON.parse_string lanza error
+				# en Godot 4.5 cuando el valor no es JSON válido.
 				final_value = CoordsScript.deserialize_value(value)
 			node.set(prop, final_value)

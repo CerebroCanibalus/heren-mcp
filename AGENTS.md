@@ -519,8 +519,246 @@ Mismo patrón para `animation` y `skeleton`:
 - [x] `orchestrate` (tool plana) quitada del schema — duplicaba `scene/plan`+`scene/orchestrate` (Fase 0); §6 actualizado a "Las 18 Tools"
 - [x] `heren-build.bat` → 74 tests verdes
 - [x] **Plan Round-2 (Fase 0-bis)** — fixes completos del flujo de planning, ver §0.9
+- [x] **LSP bridge OpenCode** (`heren-server lsp-bridge`) — sub-comando CLI en Rust puro, stdio↔TCP :6005, auto-launch Godot headless liviano, reconexión automática, modo verbose. 0 deps Node. Ver §0.10 + `docs/lsp-setup.md`.
 - [ ] E2E manual con el proyecto del bug report (humanoid.tscn + 8 input actions)
 - [ ] Commit + tag
+
+---
+
+## 0.10 LSP Bridge para OpenCode (2026-09-03) — IMPLEMENTADO
+
+> **Origen**: el agente no tenía autocompletado ni chequeo de errores mientras
+> escribía código GDScript en OpenCode. El competidor GoPeak tenía 4 tools
+> MCP de LSP (`lsp_get_diagnostics`, etc.) — pero eso NO es LSP real, es
+> proxy vía tools MCP. Lo que el agente necesita es **LSP server estándar**
+> que OpenCode consuma por su stack LSP nativo (`opencode.jsonc` → `lsp.gdscript.command`).
+
+### Decisión del General (2026-09-03)
+
+Bridge **stdio ↔ TCP** en **Rust puro**, dentro del binario `heren-server`,
+sub-comando `lsp-bridge`. **0 deps Node** (MasuRii/opencode-godot-lsp descartado
+por requerir Node.js, regla "el LSP va a parte del MCP pero hay que hacer que
+el auto-lanzado por el LSP consuma apenas recursos").
+
+### Arquitectura
+
+```
+OpenCode ──── stdio LSP ────► heren-server lsp-bridge ──── TCP :6005 ────► Godot Editor (LSP nativo)
+                                  │
+                                  └─ si nadie escucha :6005 y --auto-launch-godot (default ON):
+                                     spawn godot --editor --headless --audio-driver Dummy
+                                     --lsp-port 6005 --path <project>  (~150-250 MB RAM)
+```
+
+### Módulos nuevos (crates/heren-server/src/lsp_bridge/)
+
+- **`frame.rs`** — Parser LSP puro (Content-Length framing + JSON-RPC 2.0). 9 tests unitarios. **Bugs encontrados y resueltos durante implementación**:
+  - **OOM 6.4GB**: `parse_one` devolvía `Complete(body)` pero NO drenaba el buffer → `feed()` loop infinito copiando el mismo body. Fix: `parse_one_and_consume()` drena `..body_end` antes de devolver. **Lección: parser incremental = consumir antes de devolver, SIEMPRE**.
+  - **Case mismatch**: `has_lsp_enabled` no normalizaba case del key. Fix: `to_ascii_lowercase()` antes de `strip_prefix`.
+
+- **`launcher.rs`** — Auto-launcher de Godot headless liviano. Verifica `project.godot` tiene `[network] language_server/enabled=true`. Espera conexión con backoff 250ms→2s. 6 tests (parser `project.godot` tolerante a espacios/case).
+
+- **`proxy.rs`** — Proxy bidireccional stdin ↔ TcpStream con **reconexión automática** (backoff 1s, ventana `reconnect-max-ms` default 60s). **Mensajes LSP durante desconexión**: se descartan (mejor fail-fast que buffer — LSP requests de OpenCode tienen timeout corto). Modo verbose: preview de 80ch por mensaje a stderr.
+
+- **`mod.rs`** — Clap derive CLI + `BridgeConfig` + orchestrator `run_bridge()`. Entry point `TopLevelCli` con dispatch: sin args = MCP server (compat), `lsp-bridge` = LSP bridge.
+
+### Configuración OpenCode
+
+```jsonc
+{
+  "lsp": {
+    "gdscript": {
+      "command": ["D:/path/to/heren-server.exe", "lsp-bridge", "--project-path", "D:/path/to/project"],
+      "extensions": [".gd", ".gdshader"],
+      "env": { "HEREN_LSP_LOG_FILE": "D:/logs/heren-lsp.log" }
+    }
+  }
+}
+```
+
+### Pre-requisito en `project.godot`
+
+```ini
+[network]
+language_server/enabled=true
+language_server/port=6005
+```
+
+El bridge **NO modifica** `project.godot` del usuario (decisión conservadora — el setup.md documenta la activación; un flag `--enable-lsp-in-project` puede añadirse si el flujo lo demanda).
+
+### Tests
+
+| Suite | Tests | Tiempo |
+|-------|-------|--------|
+| `cargo test -p heren-server --lib lsp_bridge` | 23 (frame: 9, launcher: 6, mod: 8) | 0.01s |
+| `cargo test -p heren-server --test lsp_bridge` | 2 (proxy con fake LSP server TCP) | 0.07s |
+| `cargo test -p heren-server` (total) | **106** (78 + 28 viejos) | ~1.4s |
+
+**Cero regresiones** en el flujo MCP existente (los 55 tests viejos siguen verdes).
+
+### Lint y Release
+
+- `cargo clippy --all -- -D warnings`: **VERDE**
+- `cargo build --release`: binario **11.9 MB** (release optimizado)
+- Deps nuevas: solo `clap` con feature `["derive", "env"]` (~0.5 MB extra vs dev). **`serde_json`/`tokio`/`tracing` ya estaban en el workspace**.
+
+### Decisiones clave (vs MasuRii/gopeak)
+
+| Decisión | Razón |
+|----------|-------|
+| Bridge stdio↔TCP (no cliente LSP completo) | OpenCode ya implementa cliente LSP nativo; nosotros solo necesitamos transporte |
+| 0 deps Node | Regla explícita del General; Rust puro es viable (~250 LOC del bridge) |
+| Auto-launch default ON | El bridge debe funcionar sin config adicional del usuario; Godot headless consume apenas recursos (`--headless --audio-driver Dummy`) |
+| Reconnect automático | Godot LSP puede reiniciarse (script reload, project edit); ventana 60s es razonable para entornos de desarrollo |
+| Verbose minimalista | Preview 80ch por mensaje: suficiente para debug, no inunda log |
+| Sin `lsp-types` crate | El bridge no parsea tipos LSP semánticos (proxy passthrough); ahorra ~3MB binario |
+
+---
+
+## 0.11 Spatial Proactivity — coords unificadas (2026-09-04) — FASE A ✅
+
+> **Origen**: el General detectó que las herramientas de imagen eran "una porquería" (§0 ronda) y propuso reemplazar TODO por coords + espacio puro. Antes de matar `visual_image`, **debíamos asegurar que el sistema de coordenadas fuera robusto** — un agente "ve casi en tiempo real" solo si cada mutación devuelve la posición/bbox/rotación del nodo afectado **sin llamada extra**.
+>
+> Auditoría reveló **2 problemas gemelos**:
+> 1. **Coordenadas dispersas en 4 funciones** (`_node_coords`, `_node_pos`, `_node_bbox`, `coords_of`) con campos solapados y comportamiento inconsistente.
+> 2. **9/13 handlers de mutación NO devolvían coords** — tras `set_props` batch / `move` / `duplicate` / `rename` el agente quedaba ciego hasta pedir `get_info` extra.
+
+### Decisión del General (2026-09-04)
+
+**Único punto de verdad** = `HerenCoords.coords_of_node(node, parent_path, tier)` (estática, pura, testeable).
+- **Discriminator** `kind` (clase Godot) + `flags` (capacidades) — el cliente sabe qué esperar sin parsear.
+- **Tiers** 0/1/2 — el agente pide solo lo que necesita.
+- **Pureza 2D ↔ 3D** — un Node2D jamás trae `quat`/`basis`/`cast_shadow`; un Node3D jamás trae `z_index`/`anchors`/`effective_rect`. **El agente deja de desperdiciar tokens en la dimensión equivocada.**
+
+### Fase A — COMPLETADA
+
+| Cambio | Archivo | Detalle |
+|--------|---------|---------|
+| **Nueva función unificada** | `addons/heren/handlers/coords.gd` | `coords_of_node(node, parent_path, tier)` + helpers privados `_fill_3d` / `_fill_2d_canvas` / `_fill_control` / `_fill_tier2` / `_bbox_of_2d` / `_visibility_mode_str` / `_detect_flags` |
+| **Wrapper thin** | `node_handlers.gd::_node_coords` | Antes 118 líneas inlined → ahora 2 líneas que delegan a `coords_of_node(node, _parent_path(node, root), 2)` |
+| **Helper `parent_path`** | `node_handlers.gd::_parent_path` | Centraliza el cálculo del path relativo del padre |
+| **Eliminar duplicación** | `node_handlers.gd` `_node_coords` (118 líneas) | Borrado; `coords_of_node` es la única implementación |
+| **Eliminar duplicación** | `visual_handlers.gd` `_node_pos` + `_node_bbox` | Borradas; `_walk` y `_capture_node` usan `coords_of_node` |
+| **Propagar a 13 mutaciones** | `node_handlers.gd` | `add`, `remove`, `set_prop`, `set_props` (batch), `duplicate`, `instantiate`, `rename`, `move`, `set_owner`, `reorder`, `array_append`, `array_remove`, `set_script` → TODAS devuelven `coords` + `scene_node_count` |
+| **Migrar scene_handlers** | `scene_handlers.gd` | 3 calls de `coords_of` (legacy) → `coords_of_node(node, "", 2)` |
+
+### Diseño — Discriminator `kind` + `flags`
+
+```jsonc
+{
+  "kind": "Node2D" | "Node3D" | "Control" | "MeshInstance3D" | "Sprite2D" | ...,
+  "flags": {
+    "is_2d": bool,         // CanvasItem + descendientes
+    "is_3d": bool,         // Node3D + descendientes
+    "is_control": bool,    // Control + descendientes
+    "has_bbox": bool,      // bbox 2D inferida por tipo
+    "has_aabb": bool       // 3D mesh
+  },
+  "parent_path": str,
+  "visible": bool
+}
+```
+
+### Diseño — Tiers progresivos
+
+| tier | Coste aprox | Contenido |
+|------|-------------|-----------|
+| **0** | ~30 tok | `kind` + `flags` + `parent_path` + `visible` |
+| **1** | ~80-150 tok | + pos + scale + rotation **kind-specific** + bbox/aabb |
+| **2** | ~150-250 tok | + modulate + material + collision + render layers + Control: anchors, offsets, size, effective_rect, size_flags |
+
+Tier 3 (animation/light/audio state) queda para Fase C — no implementado aún.
+
+### Diseño — Pureza 2D ↔ 3D (regla crítica)
+
+| Tipo | SÍ incluye | NO incluye (verificado por test) |
+|------|------------|---------------------------------|
+| **Node2D / Sprite2D / CollisionShape2D** | `pos{x,y}`, `scale{x,y}`, `rotation{deg,rad}`, `z_index`, `bbox`, `size{w,h}` | ❌ `quat`, ❌ `aabb`, ❌ `size_3d`, ❌ `cast_shadow`, ❌ `render_layers` |
+| **Node3D / MeshInstance3D** | `pos{x,y,z}`, `scale{x,y,z}`, `rotation{euler_deg, quat}`, `aabb`, `size_3d{x,y,z}`, `cast_shadow`, `gi_mode`, `material_override_path` | ❌ `z_index`, ❌ `bbox`, ❌ `anchors`, ❌ `offsets`, ❌ `effective_rect` |
+| **Control** | lo anterior 2D + `anchors`, `offsets`, `size`, `effective_rect`, `size_flags`, `parent_is_container` (tier 2) | ❌ campos exclusivos 3D |
+| **Pure Node** | solo `kind`, `flags`, `parent_path`, `visible` | nada más |
+
+### CONTRATO — qué devuelve cada handler (Fase A)
+
+| Handler | Devuelve `coords` | Devuelve `count` | Otra info proactiva |
+|---------|:-:|:-:|---------|
+| `node/add` | ✅ | ✅ `count` | `inline_resources` warning |
+| `node/instantiate` | ✅ | ✅ `count` | `template`, `instance_path` |
+| `node/remove` | ✅ | ✅ `scene_node_count` | `had_children`, `parent_path` |
+| `node_props/set_prop` | ✅ | ✅ `scene_node_count` | `old_value`, `new_value`, `applied_value` |
+| `node_props/set_props` (batch) | ✅ | ✅ `scene_node_count` | `applied`, `requested`, `skipped` |
+| `node/duplicate` | ✅ | ✅ `scene_node_count` | `original`, `duplicate` paths |
+| `node/rename` | ✅ | ✅ `scene_node_count` | `old_name`, `new_name`, `previous_path` |
+| `node/move` | ✅ | ✅ `scene_node_count` | `previous_path`, `old_parent`, `new_parent` |
+| `node/set_owner` | ✅ | ✅ `scene_node_count` | `owner_path` |
+| `node/reorder` | ✅ | ✅ `scene_node_count` | `new_index`, `old_index` |
+| `node/array_append` | ✅ | `array_size` | `value_added` |
+| `node/array_remove` | ✅ | `array_size` | `removed_value` |
+| `node/set_script` | ✅ | — | `script` |
+| `scene/get_edited_scene_root` | ✅ | `child_count` | — |
+| `scene/open` | ✅ | `child_count` | `lock_id`, `mode` |
+| `scene/save` | ✅ | `child_count` | `saved`, `path` |
+
+### Métricas Fase A
+
+| Métrica | Antes | Ahora |
+|---------|-------|-------|
+| Funciones de coords duplicadas | 4 (`_node_coords`, `_node_pos`, `_node_bbox`, `coords_of`) | **1** (`coords_of_node`) |
+| Handlers que devolvían `coords` | 4/13 | **13/13** |
+| Líneas de código de coords en handlers | ~145 | ~15 (wrapper) |
+| Datos 3D en respuestas 2D | contaminaba | **0%** (test verifica) |
+| Datos 2D en respuestas 3D | contaminaba | **0%** (test verifica) |
+| Tests GDScript Fase A | 0 | **9** (null/2D-purity/3D-purity/Control/Sprite/Mesh/tier0/tier2/discriminator) |
+
+### Verificación
+
+| Check | Resultado |
+|-------|-----------|
+| `cargo test -p heren-server` | **116 tests verdes** (sin regresiones) |
+| `cargo clippy -- -D warnings` | verde |
+| Grafo headless (`godot --headless --editor --quit-after 60`) | **0 SCRIPT ERROR, 0 Parse Error** |
+| Tests GDScript (`run_tests.gd`) | **19/19 verdes** (10 viejos + 9 nuevos) |
+| Binario release | OK (~11.9 MB) |
+
+### Bugs colaterales arreglados (gratis)
+
+1. `template_registry._apply_params` — `deserialize_value("HP 50/100")` emitía parse error en Godot 4.5. Fix: `if value is String`, pasa tal cual (string opaco).
+2. Coords globales sin parent — gates con `is_inside_tree()` evitan `get_global_transform` warning.
+3. Props 4.5+ (`cast_shadow`/`gi_mode`) con `in` defensivo — tolerante a builds donde no existan.
+
+### Pendientes (no parte de Fase A — contrato definido, implementación en próximos sprints)
+
+#### Fase B — `visual_text/spatial` (cálculos derivados)
+```jsonc
+visual_text(action="spatial", mode="overlaps",  node_path="Player", padding=0)
+visual_text(action="spatial", mode="distance",  from="Player", to="Enemy_3")
+visual_text(action="spatial", mode="neighbors", of="Player", radius=200)
+visual_text(action="spatial", mode="layout",    node_path="HUD/HealthBar")  // Control effective_rect + Container padding
+visual_text(action="spatial", mode="bounds",    of=".")                     // AABB escena total
+```
+Distancia, overlaps, AABB scene, layout Control resuelto, vecinos espaciales. Coste 50-200 tok. **Reemplaza la necesidad de capturar imagen** para validación.
+
+#### Fase C — Tier 3 (animation/light/audio state)
+Añadir a `coords_of_node` con `tier=3`: `current_animation`, `animation_position`, `light_energy`, `light_color`, `volume_db`, `pitch_scale`. **Solo si el agente lo pide** — no proactivo.
+
+#### Fase D — `summary` recursivo (cierra §0.1 P6)
+`visual_text/summary` con `by_type` + `bounds_2d` + `bounds_3d` + `tree_depth` + `warnings` (z_fighting_risk, etc.). Permite que el `validator.rs::run_engine_b` (§0.8 bug #4) elimine `capture_scene` y use JSON puro.
+
+#### Fase E — Deprecar `visual_image`
+Solo cuando Fases B+C+D estén verdes y validadas durante 1 sprint con el agente real.
+
+### Notas operativas
+
+- **NO** añadir `_node_coords` de vuelta en otros handlers — usar siempre `HerenCoordsScript.coords_of_node(...)`.
+- **NO** hardcodear campos 2D en respuestas 3D ni viceversa — el test `_test_coords_of_node_2d_purity` / `_test_coords_of_node_3d_purity` falla si alguien rompe la pureza.
+- **NO** saltar el helper `_parent_path` — calcula bien el caso `node == root` (parent = null → `""`).
+- **Tests a tocar** si se cambia el contrato: `_test_coords_of_node_*` en `addons/heren/tests/run_tests.gd`.
+
+
+
+---
+
+## 1. Filosofía de Hierro
 
 ### 📌 Lección aprendida (descripciones de tools)
 
@@ -680,7 +918,18 @@ fixtures/               # proyectos Godot mínimos para tests (empty_project/)
 ## 7. Sistema de Coordenadas (ADR-005) + Visión
 
 ### Coordenadas unificadas
-Auto-detección por keys: `x`+`y`→Vector2; `x`+`y`+`z`→Vector3; `r`+`g`+`b`→Color; `origin`+`x_axis`+`y_axis`→Transform2D; `origin`+`basis`→Transform3D; `normal`+`d`→Plane; `position`+`size`→Rect2/AABB. Expansión v4: Vector2i/3i, Quaternion, StringName. `deserialize_resource` instancia por ClassDB. **Proactivas en mutaciones**: `position`, `global_position`, `bbox`, `parent_path`.
+Auto-detección por keys: `x`+`y`→Vector2; `x`+`y`+`z`→Vector3; `r`+`g`+`b`→Color; `origin`+`x_axis`+`y_axis`→Transform2D; `origin`+`basis`→Transform3D; `normal`+`d`→Plane; `position`+`size`→Rect2/AABB. Expansión v4: Vector2i/3i, Quaternion, StringName. `deserialize_resource` instancia por ClassDB.
+
+### Fuente única de verdad (Fase A — §0.11)
+**`HerenCoords.coords_of_node(node, parent_path, tier)`** en `addons/heren/handlers/coords.gd`. Estática, pura, testeable.
+- **Discriminator** `kind` + `flags` (is_2d/is_3d/is_control/has_bbox/has_aabb)
+- **Tiers** 0/1/2 (3 reservado para Fase C): mínimo → estándar → enriquecido
+- **Pureza 2D ↔ 3D**: Node2D jamás trae `quat`/`basis`/`cast_shadow`; Node3D jamás trae `z_index`/`anchors`/`effective_rect`
+- **Proactividad en mutaciones**: 13/13 handlers de node devuelven `coords` del nodo post-op + `scene_node_count`. Ver contrato completo en §0.11.
+
+**Prohibido**: reimplementar `_node_coords` / `_node_pos` / `_node_bbox` / `coords_of` legacy en otros archivos. Toda lectura/escritura de coordenadas pasa por `coords_of_node`.
+
+
 
 ### Visión — jerarquía de costo (la clave)
 ```
@@ -790,6 +1039,8 @@ Playback+inspección · edición+one_shot · avanzado (blend spaces 1D/2D, tween
 ## 12. Gotchas y Lecciones
 
 - **Tools MCP se cargan al INICIO de la sesión** → tras recompilar el server, SESIÓN NUEVA (toolset no refresca en conversación en curso). E2E: la tool `ui` no existía en el server en ejecución (binario viejo).
+- **LSP bridge: parser incremental = consumir ANTES de devolver** (lección §0.10). Si `parse_one` devuelve `Complete(body)` pero no drena `..body_end` del buffer, el loop externo `feed()` ve el mismo separator otra vez y entra en loop infinito copiando el body → OOM 6.4GB en tests. SIEMPRE drenar el frame del buffer antes de devolver.
+- **LSP nativo de Godot requiere `[network] language_server/enabled=true` en `project.godot`** (no es solo pasar `--lsp-port=6005`). El bridge NO modifica el `project.godot` del usuario; el setup.md documenta la activación. Si el LSP no está habilitado, `--auto-launch-godot` falla con `LspNotEnabled` → instrucción clara al usuario.
 - **Un parse error en un handler rompe TODO el plugin** → editor no conecta sin error visible. Validar: `--check-only --script` + **grafo completo** `godot --headless --editor --path <proj> --quit-after 3` grep `SCRIPT ERROR|Parse Error` (—check-only NO detecta `:=` "Cannot infer"; preferir tipos explícitos).
 - **Handlers source NO se sincronizan solos con E2E** (`.temp/e2e_complex/...`) → copiar manual tras cada cambio.
 - **`String.split()` devuelve `PackedStringArray`** (sin `pop_back`) → tipar `var segments: Array`. **`NodePath` no tiene `begins_with`/`trim_prefix`** → `str(path)` primero.
@@ -819,6 +1070,7 @@ Playback+inspección · edición+one_shot · avanzado (blend spaces 1D/2D, tween
 - [x] BUG GRAVE save re-embebe scripts + freed instance crash (2026-08-15): handle_save prioridad pestaña real primero (no registry stale); scene_registry is_instance_valid antes de is Node
 - [x] BUG shape pierde radius (2026-08-15): resource_local_to_scene roto (Godot #44008) → quitar de handle_set_prop + deserialize_resource; radius=10 era default correcto
 - [ ] P10 animation/get_animation: pending implementar acción get_animation específica
+- [x] **§0.11 Spatial Proactivity — Fase A (2026-09-04)**: `coords_of_node` fuente única en `coords.gd` + 13/13 handlers devuelven `coords` + `scene_node_count` proactivos + purity 2D↔3D verificada por 9 tests GDScript. Pendientes Fase B (visual_text/spatial), C (tier 3), D (summary recursivo), E (deprecar visual_image) — ver §0.11.
 
 ---
 

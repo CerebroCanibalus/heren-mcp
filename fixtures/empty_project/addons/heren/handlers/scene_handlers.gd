@@ -51,8 +51,8 @@ func handle_get_edited_scene_root(_args: Dictionary) -> Dictionary:
 		"scene_path": root.scene_file_path,
 		"root_name": root.name,
 		# Coords del root (Node3D / Node2D) — el agente las necesita para
-		# verificar el state tras open/load/save.
-		"coords": HerenCoordsScript.coords_of(root) if "scene_file_path" in root else {},
+		# verificar el state tras open/load/save. Fuente unificada coords.gd.
+		"coords": HerenCoordsScript.coords_of_node(root, "", 2) if "scene_file_path" in root else {},
 	}
 
 
@@ -297,7 +297,7 @@ func handle_save(args: Dictionary) -> Dictionary:
 	# Coords estructurados del root tras save — confirma al agente que el
 	# state guardado coincide con lo que vio (position/rotation/scale).
 	if root != null:
-		result["coords"] = HerenCoordsScript.coords_of(root)
+		result["coords"] = HerenCoordsScript.coords_of_node(root, "", 2)
 		result["child_count"] = root.get_child_count()
 	return result
 
@@ -345,7 +345,7 @@ func handle_open(args: Dictionary) -> Dictionary:
 		"root_type": opened.get_class(),
 		# Coords estructurados del root — el agente las usa para verificar
 		# el state tras open (en lugar de un get_info extra).
-		"coords": HerenCoordsScript.coords_of(opened),
+		"coords": HerenCoordsScript.coords_of_node(opened, "", 2),
 		"lock_id": lock_result.get("lock_id", ""),
 		"mode": lock_result.get("mode", "isolated"),
 	}

@@ -1,5 +1,87 @@
 # Changelog — Heren MCP
 
+## [Unreleased] - 2026-09-04 - Spatial Proactivity Fase A
+
+### 🧭 coords_of_node — fuente única de verdad
+
+**Problema**: el sistema de coordenadas estaba disperso en 4 funciones
+(`_node_coords`, `_node_pos`, `_node_bbox`, `coords_of`) con campos solapados
+y comportamiento inconsistente. 9/13 handlers de mutación NO devolvían coords
+— el agente quedaba ciego tras `set_props` batch / `move` / `duplicate` /
+`rename` / `set_owner` / `reorder` / `array_*` / `set_script`.
+
+**Solución** (Fase A de §0.11):
+- Nueva `HerenCoords.coords_of_node(node, parent_path, tier)` en
+  `addons/heren/handlers/coords.gd` — estática, pura, testeable, **única fuente**.
+- **Discriminator** `kind` (clase Godot) + `flags` (capacidades).
+- **Tiers** 0/1/2/3 — el agente pide solo lo que necesita (30/150/250 tok).
+- **Pureza 2D ↔ 3D**: Node2D jamás trae `quat`/`basis`/`cast_shadow`; Node3D
+  jamás trae `z_index`/`anchors`/`effective_rect`.
+- 13/13 mutaciones ahora devuelven `coords` + `scene_node_count` proactivos.
+- Eliminadas las 4 funciones duplicadas (`_node_coords` 118 líneas inlined,
+  `_node_pos`, `_node_bbox`, `coords_of` legacy).
+
+**Bugs colaterales arreglados**:
+- `template_registry._apply_params` ya no llama `deserialize_value` con strings
+  opacos (parse error en Godot 4.5).
+- Coords globales con `is_inside_tree()` guard — sin warnings al usar nodos
+  sin parent.
+- Accesos defensivos `"prop" in node` para tolerar builds donde `cast_shadow`/
+  `gi_mode`/`visibility_mode` no existan.
+
+**Tests**: 9 nuevos en `addons/heren/tests/run_tests.gd` (null safety / 2D
+purity / 3D purity / Control / Sprite / Mesh / tier 0 / tier 2 / discriminator).
+19/19 GDScript verdes + 116 Rust verdes + clippy verde + grafo headless sin
+parse errors.
+
+**Contrato documentado**: AGENTS.md §0.11 — tabla de qué devuelve cada handler
+(13 mutaciones + 3 calls de scene_handlers). Fases B (visual_text/spatial),
+C (tier 3), D (summary recursivo) y E (deprecar visual_image) definidas pero
+NO implementadas — siguen el orden del plan.
+
+## [Unreleased] - 2026-09-03 - LSP bridge OpenCode (Rust puro, 0 deps Node)
+
+### 🚀 LSP bridge para OpenCode
+
+Sub-comando CLI `heren-server lsp-bridge` que conecta OpenCode (stdio LSP) con
+el LSP nativo de Godot (TCP :6005). Permite autocompletado, chequeo de errores,
+goto-definition y hover mientras el agente escribe GDScript en OpenCode.
+
+**Arquitectura**: bridge stdio↔TCP en Rust puro, 0 deps Node. Reusa el editor
+abierto (no auto-lanza) o auto-lanza Godot headless liviano (`--editor
+--headless --audio-driver Dummy`, ~150-250 MB RAM). Reconexión automática
+(ventana 60s), modo verbose minimalista (preview 80ch por mensaje).
+
+**Módulos nuevos**: `crates/heren-server/src/lsp_bridge/{frame,launcher,proxy,mod}.rs`
++ `crates/heren-server/tests/lsp_bridge.rs` (test integración con fake LSP server TCP).
+
+**Tests**: 23 unit + 2 integration (106 total en el crate, 0 regresiones MCP).
+**Lint**: `cargo clippy --all -- -D warnings` verde.
+**Binario release**: 11.9 MB (vs 11.4 MB sin clap — +0.5 MB).
+
+**Configuración OpenCode** (`~/.config/opencode/opencode.jsonc`):
+```jsonc
+"lsp": {
+  "gdscript": {
+    "command": ["D:/path/to/heren-server.exe", "lsp-bridge"],
+    "extensions": [".gd", ".gdshader"]
+  }
+}
+```
+
+**Pre-requisito** (en `project.godot`): `[network] language_server/enabled=true`
++ `language_server/port=6005`. El bridge NO modifica `project.godot` del usuario.
+
+**Docs**: `docs/lsp-setup.md` (guía completa) + `opencode.lsp.example.jsonc` (snippet copy-paste).
+
+### 🐛 Bugs encontrados y resueltos durante implementación
+
+1. **OOM 6.4GB en tests del frame parser**: `parse_one` devolvía `Complete(body)` pero NO drenaba el buffer → `feed()` loop infinito. Fix: `parse_one_and_consume()` drena `..body_end` antes de devolver. Lección en AGENTS.md §12.
+
+2. **Case mismatch en `has_lsp_enabled`**: el parser de `project.godot` no normalizaba case del key `language_server/enabled`. Fix: `to_ascii_lowercase()` antes de `strip_prefix`.
+
+3. **`clap::Arg::env()` no encontrado**: faltaba feature `env` en clap. Fix: `clap = { version = "4", features = ["derive", "env"] }`.
+
 ## [Unreleased] - 2026-08-15 - E2E escena compleja (11 problemas)
 
 ### 🧪 E2E real contra editor vivo

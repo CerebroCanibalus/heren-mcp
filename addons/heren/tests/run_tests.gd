@@ -36,6 +36,16 @@ func _init() -> void:
 	_run("template_registry instantiate health_bar params", _test_template_instantiate_params)
 	_run("template_registry instantiate all", _test_template_instantiate_all)
 	_run("ui layout presets (9)", _test_ui_layout_presets)
+	# Fase A: coords_of_node unificado (tier 0/1/2 + discriminator 2D/3D).
+	_run("coords_of_node null safe", _test_coords_of_node_null)
+	_run("coords_of_node Node2D NO trae 3D", _test_coords_of_node_2d_purity)
+	_run("coords_of_node Node3D NO trae 2D", _test_coords_of_node_3d_purity)
+	_run("coords_of_node Control trae anchors/effective_rect", _test_coords_of_node_control)
+	_run("coords_of_node Sprite2D trae bbox", _test_coords_of_node_sprite)
+	_run("coords_of_node MeshInstance3D trae aabb", _test_coords_of_node_mesh)
+	_run("coords_of_node tier0 minimo", _test_coords_of_node_tier0)
+	_run("coords_of_node tier2 enrich", _test_coords_of_node_tier2)
+	_run("coords_of_node discriminator kind+flags", _test_coords_of_node_discriminator)
 
 	print("RESULT: %d passed, %d failed" % [_passed, _failed])
 	quit(0 if _failed == 0 else 1)
@@ -190,4 +200,238 @@ func _test_ui_layout_presets() -> bool:
 	if presets.size() != expected.size():
 		push_error("LAYOUT_PRESETS size %d != %d" % [presets.size(), expected.size()])
 		return false
+	return true
+
+
+# ============================================================== Fase A
+# coords_of_node — fuente única de verdad del sistema de coordenadas.
+# Verifica que:
+#   - kind == node.get_class()
+#   - flags.is_2d / is_3d / is_control coherentes con el tipo
+#   - nodo 2D NO trae quaternion / basis / render_layers / cast_shadow / aabb
+#   - nodo 3D NO trae z_index / anchors / offsets / effective_rect / bbox
+#   - tier 0 = mínimo; tier 2 = enriquecido (modulate, material, collision, etc.)
+#   - coords_of_node(null) es seguro
+
+func _test_coords_of_node_null() -> bool:
+	var c := CoordsScript.coords_of_node(null)
+	if c.get("kind", "") != "None":
+		push_error("kind != None: %s" % c)
+		return false
+	if not c.get("flags", {}).get("is_2d", true) == false:
+		push_error("flags.is_2d != false en null: %s" % c)
+		return false
+	return true
+
+
+func _test_coords_of_node_2d_purity() -> bool:
+	var parent := Node2D.new()
+	root.add_child(parent)
+	var c := CoordsScript.coords_of_node(parent, "", 2)
+	# Discriminador y flags.
+	if c.get("kind", "") != "Node2D":
+		push_error("Node2D kind=%s" % c.get("kind", ""))
+		parent.queue_free()
+		return false
+	if not c.get("flags", {}).get("is_2d", false):
+		push_error("flags.is_2d=false para Node2D")
+		parent.queue_free()
+		return false
+	if c.get("flags", {}).get("is_3d", true):
+		push_error("flags.is_3d=true para Node2D (debe ser false)")
+		parent.queue_free()
+		return false
+	# Pureza 2D: NO debe traer claves exclusivas de 3D.
+	for forbidden in ["quat", "aabb", "size_3d", "render_layers"]:
+		if c.has(forbidden):
+			push_error("Node2D trajo clave 3D %s: %s" % [forbidden, c])
+			parent.queue_free()
+			return false
+	# Y SÍ debe traer 2D-específico.
+	if not c.has("pos") or not c.has("z_index"):
+		push_error("Node2D sin pos/z_index: %s" % c)
+		parent.queue_free()
+		return false
+	parent.queue_free()
+	return true
+
+
+func _test_coords_of_node_3d_purity() -> bool:
+	var n3 := Node3D.new()
+	root.add_child(n3)
+	var c := CoordsScript.coords_of_node(n3, "", 2)
+	# Discriminador y flags.
+	if c.get("kind", "") != "Node3D":
+		push_error("Node3D kind=%s" % c.get("kind", ""))
+		n3.queue_free()
+		return false
+	if not c.get("flags", {}).get("is_3d", false):
+		push_error("flags.is_3d=false para Node3D")
+		n3.queue_free()
+		return false
+	if c.get("flags", {}).get("is_2d", true):
+		push_error("flags.is_2d=true para Node3D (debe ser false)")
+		n3.queue_free()
+		return false
+	# Pureza 3D: NO debe traer 2D.
+	for forbidden in ["z_index", "bbox", "anchors", "offsets", "effective_rect"]:
+		if c.has(forbidden):
+			push_error("Node3D trajo clave 2D/UI %s: %s" % [forbidden, c])
+			n3.queue_free()
+			return false
+	# SÍ debe traer rotación 3D completa.
+	if not c.has("rotation") or not (c.get("rotation") as Dictionary).has("quat"):
+		push_error("Node3D sin rotation.quat: %s" % c)
+		n3.queue_free()
+		return false
+	n3.queue_free()
+	return true
+
+
+func _test_coords_of_node_control() -> bool:
+	var p := Node2D.new()
+	root.add_child(p)
+	var ctl := Control.new()
+	p.add_child(ctl)
+	ctl.size = Vector2(100, 50)
+	var c := CoordsScript.coords_of_node(ctl, "", 2)
+	if c.get("kind", "") != "Control":
+		push_error("Control kind=%s" % c.get("kind", ""))
+		ctl.queue_free(); p.queue_free()
+		return false
+	if not c.get("flags", {}).get("is_control", false):
+		push_error("Control flags.is_control=false")
+		ctl.queue_free(); p.queue_free()
+		return false
+	if not c.has("anchors") or not c.has("offsets"):
+		push_error("Control sin anchors/offsets")
+		ctl.queue_free(); p.queue_free()
+		return false
+	if not c.has("effective_rect"):
+		push_error("Control tier=2 sin effective_rect")
+		ctl.queue_free(); p.queue_free()
+		return false
+	ctl.queue_free(); p.queue_free()
+	return true
+
+
+func _test_coords_of_node_sprite() -> bool:
+	var img := Image.create(64, 32, false, Image.FORMAT_RGBA8)
+	img.fill(Color.RED)
+	var tex := ImageTexture.create_from_image(img)
+	var s := Sprite2D.new()
+	s.texture = tex
+	root.add_child(s)
+	var c := CoordsScript.coords_of_node(s, "", 1)
+	if not c.get("flags", {}).get("has_bbox", false):
+		push_error("Sprite2D tier=1 sin has_bbox: %s" % c)
+		s.queue_free()
+		return false
+	if not c.has("bbox") or not c.has("size"):
+		push_error("Sprite2D sin bbox/size: %s" % c)
+		s.queue_free()
+		return false
+	# bbox.w debe ser 64 (texture width * scale.x).
+	var bw: float = (c.get("bbox", {}) as Dictionary).get("w", -1.0)
+	if absf(bw - 64.0) > 0.01:
+		push_error("Sprite2D bbox.w=%f esperaba 64.0" % bw)
+		s.queue_free()
+		return false
+	s.queue_free()
+	return true
+
+
+func _test_coords_of_node_mesh() -> bool:
+	var mi := MeshInstance3D.new()
+	mi.mesh = BoxMesh.new()
+	root.add_child(mi)
+	var c := CoordsScript.coords_of_node(mi, "", 1)
+	if not c.get("flags", {}).get("has_aabb", false):
+		push_error("MeshInstance3D sin has_aabb: %s" % c)
+		mi.queue_free()
+		return false
+	if not c.has("aabb") or not c.has("size_3d"):
+		push_error("MeshInstance3D sin aabb/size_3d: %s" % c)
+		mi.queue_free()
+		return false
+	mi.queue_free()
+	return true
+
+
+func _test_coords_of_node_tier0() -> bool:
+	var n := Node2D.new()
+	root.add_child(n)
+	var c := CoordsScript.coords_of_node(n, "test", 0)
+	# Tier 0: solo kind + flags + parent_path + visible. NO pos.
+	if not c.has("kind") or not c.has("flags") or not c.has("parent_path"):
+		push_error("tier=0 sin kind/flags/parent_path: %s" % c)
+		n.queue_free()
+		return false
+	if c.has("pos"):
+		push_error("tier=0 incluye pos (debería omitirlo): %s" % c)
+		n.queue_free()
+		return false
+	if c.get("parent_path", "") != "test":
+		push_error("parent_path perdido: %s" % c)
+		n.queue_free()
+		return false
+	n.queue_free()
+	return true
+
+
+func _test_coords_of_node_tier2() -> bool:
+	# MeshInstance3D (GeometryInstance3D) en tier=2 trae campos específicos 3D:
+	# cast_shadow / gi_mode / material_override.
+	var n := MeshInstance3D.new()
+	n.mesh = BoxMesh.new()
+	n.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_DOUBLE_SIDED
+	root.add_child(n)
+	var c2 := CoordsScript.coords_of_node(n, "", 2)
+	if not c2.has("cast_shadow"):
+		push_error("MeshInstance3D tier=2 sin cast_shadow: %s" % c2)
+		n.queue_free()
+		return false
+	if (c2.get("cast_shadow", 0) as int) != int(GeometryInstance3D.SHADOW_CASTING_SETTING_DOUBLE_SIDED):
+		push_error("cast_shadow=%d esperaba %d" % [c2.get("cast_shadow", 0), int(GeometryInstance3D.SHADOW_CASTING_SETTING_DOUBLE_SIDED)])
+		n.queue_free()
+		return false
+	# CanvasItem en tier=2 SÍ trae modulate.
+	var ci := Sprite2D.new()
+	root.add_child(ci)
+	var cci2 := CoordsScript.coords_of_node(ci, "", 2)
+	if not cci2.has("modulate"):
+		push_error("CanvasItem tier=2 sin modulate: %s" % cci2)
+		ci.queue_free(); n.queue_free()
+		return false
+	# CollisionObject2D en tier=2 SÍ trae collision_layer.
+	var co := StaticBody2D.new()
+	root.add_child(co)
+	var cco := CoordsScript.coords_of_node(co, "", 2)
+	if not cco.has("collision_layer"):
+		push_error("CollisionObject2D tier=2 sin collision_layer: %s" % cco)
+		co.queue_free(); ci.queue_free(); n.queue_free()
+		return false
+	co.queue_free(); ci.queue_free(); n.queue_free()
+	return true
+
+
+func _test_coords_of_node_discriminator() -> bool:
+	var n2 := Node2D.new()
+	root.add_child(n2)
+	var c := CoordsScript.coords_of_node(n2, "parent/path", 1)
+	if c.get("kind", "") != n2.get_class():
+		push_error("kind=%s esperaba %s" % [c.get("kind", ""), n2.get_class()])
+		n2.queue_free()
+		return false
+	if c.get("parent_path", "") != "parent/path":
+		push_error("parent_path=%s" % c.get("parent_path", ""))
+		n2.queue_free()
+		return false
+	# flags es un dict, no string ni null.
+	var flags: Dictionary = c.get("flags", {})
+	if flags.is_empty():
+		push_error("flags vacío")
+		n2.queue_free()
+		return false
+	n2.queue_free()
 	return true

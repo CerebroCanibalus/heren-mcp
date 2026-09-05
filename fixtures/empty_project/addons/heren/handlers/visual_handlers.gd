@@ -56,36 +56,6 @@ func _scene_root(args: Dictionary = {}) -> Node:
 	return HerenSceneRegistryScript.resolve_root(ei, str(args.get("scene_path", "")))
 
 
-func _node_pos(node: Node) -> Dictionary:
-	if node is CanvasItem:
-		return HerenCoordsScript.serialize_value((node as CanvasItem).global_position, true)
-	if node is Node3D:
-		return HerenCoordsScript.serialize_value((node as Node3D).global_position, true)
-	return {}
-
-
-func _node_bbox(node: Node) -> Dictionary:
-	var bbox := {}
-	if node is Control:
-		var c := node as Control
-		bbox = {"x": c.global_position.x, "y": c.global_position.y, "w": c.size.x, "h": c.size.y}
-	elif node is Sprite2D:
-		var s := node as Sprite2D
-		var tex: Texture2D = s.texture
-		if tex != null:
-			bbox = {"x": s.global_position.x - tex.get_width() * s.scale.x * 0.5,
-					"y": s.global_position.y - tex.get_height() * s.scale.y * 0.5,
-					"w": tex.get_width() * s.scale.x, "h": tex.get_height() * s.scale.y}
-	elif node is CollisionShape2D:
-		var cs := node as CollisionShape2D
-		var shape: Shape2D = cs.shape
-		if shape is RectangleShape2D:
-			var size: Vector2 = (shape as RectangleShape2D).size
-			bbox = {"x": cs.global_position.x - size.x * 0.5, "y": cs.global_position.y - size.y * 0.5,
-					"w": size.x, "h": size.y}
-	return bbox
-
-
 func _path_relative(node: Node, root: Node) -> String:
 	if node == root:
 		return "."
@@ -96,15 +66,17 @@ func _path_relative(node: Node, root: Node) -> String:
 func _walk(node: Node, root: Node, out: Dictionary, depth: int, max_depth: int) -> void:
 	if max_depth >= 0 and depth > max_depth:
 		return
-	var entry := {
-		"type": node.get_class(),
+	# Fase A: coords unificadas — fuente única HerenCoords.coords_of_node.
+	# El entry expone solo los campos que NIVEL 0 necesita en el mapa textual;
+	# si el agente quiere más detalle (modulate, anchors, effective_rect),
+	# llama a node_query/get_info o coords_of_node con tier=2.
+	var coords := HerenCoordsScript.coords_of_node(node, _path_relative(node, root), 1)
+	var entry: Dictionary = {
+		"type": coords.get("kind", node.get_class()),
+		"pos": coords.get("pos", {}),
 	}
-	var pos := _node_pos(node)
-	if not pos.is_empty():
-		entry["pos"] = pos
-	var bbox := _node_bbox(node)
-	if not bbox.is_empty():
-		entry["bbox"] = bbox
+	if coords.has("bbox"):
+		entry["bbox"] = coords["bbox"]
 	out[_path_relative(node, root)] = entry
 	for child in node.get_children():
 		_walk(child, root, out, depth + 1, max_depth)
@@ -477,6 +449,8 @@ func handle_capture_node(args: Dictionary) -> Dictionary:
 		img_result = await _render_scene_offscreen(ei, root, mode, max_side, {}, format)
 	if img_result.is_empty():
 		return {"ok": false, "error": "capture failed"}
+	# Fase A: coords unificadas — kind/flags/pos/bbox/aabb desde coords.gd.
+	var node_coords := HerenCoordsScript.coords_of_node(node, node_path, 1)
 	var out := {
 		"ok": true,
 		"node_path": node_path,
@@ -484,8 +458,7 @@ func handle_capture_node(args: Dictionary) -> Dictionary:
 		"source": used_source,
 		"max_side": max_side,
 		"format": format,
-		"bbox": _node_bbox(node),
-		"pos": _node_pos(node),
+		"coords": node_coords,
 	}
 	out.merge(img_result)
 	return out
