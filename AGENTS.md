@@ -796,8 +796,44 @@ Añadir a `coords_of_node` con `tier=3`: `current_animation`, `animation_positio
 
 **Cierre**: §0.1 P6 (summary recursivo) cerrado. §0.8 bug #4 (validator sin imagen) cerrado.
 
-#### Fase E — Deprecar `visual_image`
-Solo cuando Fase C esté verde y validada durante 1 sprint con el agente real.
+#### Fase E — Eliminar `visual_image` (NO deprecar) ✅ COMPLETADA (2026-09-04)
+
+Decisión del General: las imágenes son "puro código muerto". Eliminación total en lugar de deprecation. **Resultado**: una sola tool `visual` con 4 actions (coords/summary/ascii/spatial).
+
+**Eliminado del server Rust**:
+- `async fn visual_image(...)` (tool completo).
+- `async fn capture_scene(...)` (método sin callers tras Fase D).
+- Parámetro `with_image: Option<bool>` en animation (zombie §0.1).
+- `__image_base64` handling en `pure.rs::unwrap_result` (test incluido).
+- Comentarios sobre `visual_image` en registry.rs y ws_plugin_server.rs.
+
+**Eliminado del plugin GDScript** (`addons/heren/handlers/visual_handlers.gd`):
+- Handlers: `handle_capture`, `handle_capture_node`, `handle_preview_resource`.
+- Funciones privadas: `_is_tiny_image`, `_resolve_max_side`, `_encode_image`,
+  `_capture_editor_viewport`, `_render_scene_offscreen`, `_fit_camera`,
+  `_apply_anim_to_clone`, `_resize_image`, `_find_animation_player`,
+  `_resolve_animation_player`, `_strip_scripts`.
+- Constantes: `OFFSCREEN_SIZE`, `QUALITY_PRESETS`.
+- Variables: `_svp_2d`, `_svp_3d` (pool de SubViewports).
+- Bloque `if bool(args.get("with_image", false)):` en
+  `animation_handlers.gd::handle_preview`.
+
+**Renombrado**:
+- `visual_text` → `visual` (tool unificada, server.rs).
+- Routes actualizadas: `visual/coords`, `visual/summary`, `visual/ascii`,
+  `visual/spatial`, `visual/scene_summary` (alias interno).
+- `visual/capture` y `visual/node` ELIMINADAS de `_routes.gd`.
+
+**Actualizado tests**:
+- `tools_parity.rs::dispatch_routes_are_in_plugin_table` — quitado
+  `visual/capture` de la lista (Fase 3 §0.8 contrato: cada route usada
+  internamente debe existir en `_routes.gd`).
+- `validator.rs::MockClient` y `PropMockClient` — sin `capture_scene`.
+- `pure.rs::unwrap_result_extracts_image_base64` — eliminado.
+
+**Renombrado del refactor v4.6**: tras la eliminación, la fragmentación
+visual_text/visual_image se desvanece — solo queda UNA tool `visual` con
+4 acciones (Fase A+B+D). Filosofía "1 tool N acciones" consolidada.
 
 ### Notas operativas
 
@@ -1124,7 +1160,8 @@ Playback+inspección · edición+one_shot · avanzado (blend spaces 1D/2D, tween
 - [ ] P10 animation/get_animation: pending implementar acción get_animation específica
 - [x] **§0.11 Spatial Proactivity — Fase A (2026-09-04)**: `coords_of_node` fuente única en `coords.gd` + 13/13 handlers devuelven `coords` + `scene_node_count` proactivos + purity 2D↔3D verificada por 9 tests GDScript.
 - [x] **§0.11 Spatial Proactivity — Fase B (2026-09-04)**: `visual_text/spatial` con 5 modes (overlaps/distance/neighbors/layout/bounds) en `visual_tool/spatial_tool.gd` (funciones puras). 8 tests GDScript nuevos + AABB global en `_fill_3d` (bug colateral false-positive arreglado).
-- [x] **§0.11 Spatial Proactivity — Fase D (2026-09-04)**: `visual_text/summary` recursivo (node_count + by_type + tree_depth + bounds_2d/3d + warnings z_fighting/material/texture/shape) + validator Engine B sin imagen (lee visual_summary JSON en vez de capture_scene). 7 tests GDScript nuevos. Pendientes Fase C (tier 3), E (deprecar visual_image) — ver §0.11.
+- [x] **§0.11 Spatial Proactivity — Fase D (2026-09-04)**: `visual_text/summary` recursivo (node_count + by_type + tree_depth + bounds_2d/3d + warnings z_fighting/material/texture/shape) + validator Engine B sin imagen (lee visual_summary JSON en vez de capture_scene). 7 tests GDScript nuevos.
+- [x] **§0.11 Spatial Proactivity — Fase E (2026-09-04)**: ELIMINACIÓN total de `visual_image` (no deprecation) + rename `visual_text` → `visual` → UNA tool unificada con 4 actions (coords/summary/ascii/spatial). `with_image` zombie de §0.1 también eliminado. Ver §0.11.
 
 ---
 

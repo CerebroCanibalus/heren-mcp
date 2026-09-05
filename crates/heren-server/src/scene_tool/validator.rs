@@ -1,6 +1,6 @@
 ﻿//! Scene Validator — Dual-Engine QA for scenes
 //! Engine A: Deterministic (validate/scene, validate/node, node_query)
-//! Engine B: Heuristic/Visual (visual_image/capture, visual_text/summary)
+//! Engine B: Heuristic/Visual (visual/summary + visual/spatial, JSON puro)
 
 use crate::scene_tool::schemas::{ScenePlan, SceneStep, SceneContext, QAReport, EngineReport, VerificationKind, QADetail, ErrorType, VerificationTarget};
 use serde_json::Value;
@@ -439,7 +439,7 @@ impl SceneValidator {
         // Snapshot JSON puro (sin imagen) — visual_text(action="summary").
         if let Ok(summary) = client.visual_summary(&plan.scene_path).await {
             let node_count = usize::try_from(
-                summary.get("node_count").and_then(|v| v.as_u64()).unwrap_or(0),
+                summary.get("node_count").and_then(Value::as_u64).unwrap_or(0),
             )
             .unwrap_or(0);
             let expected_count = context.nodes.len();
@@ -463,7 +463,7 @@ impl SceneValidator {
             });
 
             // Tree depth: si el plan excede 5 niveles sin razón, advertencia.
-            if let Some(depth) = summary.get("tree_depth").and_then(|v| v.as_u64()) {
+            if let Some(depth) = summary.get("tree_depth").and_then(Value::as_u64) {
                 results.push(QADetail {
                     target_id: "visual_tree_depth".to_string(),
                     passed: depth > 0,
@@ -812,7 +812,6 @@ impl SceneValidator {
 #[async_trait::async_trait]
 pub trait SceneValidatorClient: Send + Sync {
     async fn validate_scene(&self, scene_path: &str) -> Result<Value, String>;
-    async fn capture_scene(&self, scene_path: &str, viewport: &str) -> Result<Value, String>;
     async fn visual_summary(&self, scene_path: &str) -> Result<Value, String>;
     async fn list_signals(&self, scene_path: &str) -> Result<Value, String>;
     /// P-M3: lee una propiedad de un nodo vía node_query/get_prop.
@@ -832,12 +831,9 @@ mod tests {
         async fn validate_scene(&self, _scene_path: &str) -> Result<Value, String> {
             Ok(serde_json::json!({"valid": true}))
         }
-        async fn capture_scene(&self, _scene_path: &str, _viewport: &str) -> Result<Value, String> {
-            Ok(serde_json::json!({"node_count": 5}))
-        }
         async fn visual_summary(&self, _scene_path: &str) -> Result<Value, String> {
             // Fase D (§0.11): summary recursivo devuelve node_count + tree_depth
-            // + bounds_2d/3d + warnings (no "bbox" legacy).
+            // + bounds_2d/3d + warnings.
             Ok(serde_json::json!({
                 "node_count": 5,
                 "tree_depth": 3,
@@ -940,8 +936,7 @@ mod tests {
         #[async_trait::async_trait]
         impl SceneValidatorClient for PropMockClient {
             async fn validate_scene(&self, _: &str) -> Result<Value, String> { Ok(serde_json::json!({"valid":true})) }
-            async fn capture_scene(&self, _: &str, _: &str) -> Result<Value, String> { Ok(serde_json::json!({"node_count":1})) }
-            async fn visual_summary(&self, _: &str) -> Result<Value, String> { Ok(serde_json::json!({"bbox":{}})) }
+            async fn visual_summary(&self, _: &str) -> Result<Value, String> { Ok(serde_json::json!({"node_count":1, "tree_depth":1, "warnings":[]})) }
             async fn list_signals(&self, _: &str) -> Result<Value, String> { Ok(serde_json::json!({"signals":[]})) }
             async fn get_prop(&self, _: &str, _: &str, prop: &str) -> Result<Value, String> {
                 // Simula una propiedad medida = 3.0 cuando pide "count", error en otro caso.

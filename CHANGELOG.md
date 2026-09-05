@@ -1,5 +1,50 @@
 # Changelog — Heren MCP
 
+## [Unreleased] - 2026-09-04 - Limpieza Fase E (visual_image ELIMINADO, visual_text → visual)
+
+### 🧹 Eliminación total de `visual_image` + unificación `visual`
+
+**Decisión del General**: las imágenes son "puro código muerto" — no se
+deprecan, se ELIMINAN. La fragmentación v4.6 (visual_text + visual_image)
+se desvanece: queda UNA sola tool `visual` con 4 actions.
+
+**Eliminado del server Rust**:
+- `async fn visual_image(...)` (tool completo).
+- `async fn capture_scene(...)` (sin callers desde Fase D).
+- Parámetro `with_image` en animation tool (zombie §0.1).
+- `__image_base64` handling en `pure.rs::unwrap_result` + test.
+
+**Eliminado del plugin GDScript**:
+- Handlers: `handle_capture`, `handle_capture_node`, `handle_preview_resource`.
+- Funciones privadas: `_is_tiny_image`, `_resolve_max_side`, `_encode_image`,
+  `_capture_editor_viewport`, `_render_scene_offscreen`, `_fit_camera`,
+  `_apply_anim_to_clone`, `_resize_image`, `_find_animation_player`,
+  `_resolve_animation_player`, `_strip_scripts`.
+- Constantes: `OFFSCREEN_SIZE`, `QUALITY_PRESETS`.
+- Variables: `_svp_2d`, `_svp_3d` (SubViewport pool).
+- Bloque `with_image` en `animation_handlers.handle_preview`.
+- Routes `visual/capture`, `visual/node` eliminadas.
+
+**Renombrado**:
+- `visual_text` → `visual` (tool unificada en server.rs).
+- Mantiene 4 actions: `coords|summary|ascii|spatial` (todas JSON puro).
+- Routes internas: `visual/coords`, `visual/summary`, `visual/ascii`,
+  `visual/spatial`, `visual/scene_summary` (alias usado por validator).
+
+**Tests**:
+- `tools_parity.rs::dispatch_routes` actualizado (sin `visual/capture`).
+- `validator.rs::MockClient` y `PropMockClient` sin `capture_scene`.
+- `pure.rs` test `unwrap_result_extracts_image_base64` eliminado.
+
+**Verificación**:
+- 34/34 GDScript verdes (sin cambios).
+- 112 Rust tests verdes (sin regresiones).
+- `cargo clippy -- -D warnings` verde.
+- Grafo headless sin SCRIPT/Parse Error.
+
+**Resultado neto**: -440 líneas de código muerto eliminado. La tool `visual`
+consolida coords/summary/ascii/spatial en una sola API limpia.
+
 ## [Unreleased] - 2026-09-04 - Spatial Proactivity Fase D (summary recursivo + validator sin imagen)
 
 ### 🧭 summary — snapshot recursivo + validator Engine B sin imagen

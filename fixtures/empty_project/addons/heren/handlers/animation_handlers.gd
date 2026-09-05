@@ -1580,7 +1580,6 @@ func handle_preview(args: Dictionary) -> Dictionary:
 	var time: float = float(args.get("time", 0.0))
 	player.seek(time, true)
 	player.pause()
-	RenderingServer.force_draw(true)
 
 	var out := {
 		"ok": true,
@@ -1588,23 +1587,6 @@ func handle_preview(args: Dictionary) -> Dictionary:
 		"time": time,
 		"position": player.current_animation_position,
 	}
-
-	# Si pide imagen, captura el viewport activo.
-	if bool(args.get("with_image", false)):
-		var ei := _editor_interface()
-		if ei != null:
-			var viewport: Viewport = ei.get_editor_viewport_3d() if str(args.get("viewport", "2d")) == "3d" else ei.get_editor_viewport_2d()
-			if viewport != null:
-				RenderingServer.force_draw(true)
-				var img: Image = viewport.get_texture().get_image()
-				if img != null:
-					img.flip_y()
-					var png := img.save_png_to_buffer()
-					if not png.is_empty():
-						out["__image_base64"] = Marshalls.raw_to_base64(png)
-						out["__image_format"] = "png"
-						out["__image_w"] = img.get_width()
-						out["__image_h"] = img.get_height()
 	return out
 
 

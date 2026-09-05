@@ -49,8 +49,6 @@ pub fn normalize_scene_path(path: &str) -> String {
 }
 
 /// Desenvuelve la respuesta del plugin: content[0].text como JSON dict.
-/// Si el content incluye `__image_base64`, devuelve la imagen (y formato)
-/// como dict MCP en lugar del texto.
 pub fn unwrap_result(raw: &Value) -> Value {
     if let Some(content) = raw.get("content").and_then(|c| c.as_array()) {
         for item in content {
@@ -58,15 +56,6 @@ pub fn unwrap_result(raw: &Value) -> Value {
                 if let Ok(parsed) = serde_json::from_str::<Value>(text) {
                     return parsed;
                 }
-            }
-            // Imagen base64 (__image_base64 en el text-stream).
-            if let Some(b64) = item.get("__image_base64").and_then(|b| b.as_str()) {
-                let mut m = Map::new();
-                m.insert("__image_base64".into(), Value::String(b64.to_string()));
-                if let Some(fmt) = item.get("__image_format").and_then(|f| f.as_str()) {
-                    m.insert("__image_format".into(), Value::String(fmt.to_string()));
-                }
-                return Value::Object(m);
             }
         }
     }
@@ -143,16 +132,6 @@ mod tests {
         });
         let out = unwrap_result(&raw);
         assert_eq!(out, json!({"ok": true, "a": 1}));
-    }
-
-    #[test]
-    fn unwrap_result_extracts_image_base64() {
-        let raw = json!({
-            "content": [{"type": "text", "text": "hi", "__image_base64": "AAAA", "__image_format": "png"}]
-        });
-        let out = unwrap_result(&raw);
-        assert_eq!(out["__image_base64"], "AAAA");
-        assert_eq!(out["__image_format"], "png");
     }
 
     #[test]

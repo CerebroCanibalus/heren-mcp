@@ -169,13 +169,11 @@ const ROUTES := {
 	"signal/list": "handle_list",
 	"signal/set_script": "handle_set_script",
 
-	# Visual
+	# Visual (server side `visual` tool, 4 actions)
 	"visual/coords": "handle_coords",
 	"visual/summary": "handle_summary",
 	"visual/ascii": "handle_ascii",
 	"visual/spatial": "handle_scene_spatial",
-	"visual/capture": "handle_capture",
-	"visual/node": "handle_node",
 	"visual/scene_summary": "handle_summary",  # alias interno usado por validator
 
 	# UI

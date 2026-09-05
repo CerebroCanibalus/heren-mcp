@@ -1129,19 +1129,8 @@ impl crate::scene_tool::validator::SceneValidatorClient for ValidatorClientAdapt
         })).await.map_err(|e| e.to_string())
     }
 
-    async fn capture_scene(&self, scene_path: &str, viewport: &str) -> Result<serde_json::Value, String> {
-        let registry = EditorRegistry::global();
-        // 🚨 visual_image es nombre SERVER-side; el plugin registra "visual".
-        forward(registry, &self.project_path, "visual/capture", serde_json::json!({
-            "scene_path": scene_path,
-            "viewport": viewport,
-            "source": "scene",
-        })).await.map_err(|e| e.to_string())
-    }
-
     async fn visual_summary(&self, scene_path: &str) -> Result<serde_json::Value, String> {
         let registry = EditorRegistry::global();
-        // El método interno es scene_summary (NO summary).
         forward(registry, &self.project_path, "visual/scene_summary", serde_json::json!({
             "scene_path": scene_path,
         })).await.map_err(|e| e.to_string())
@@ -1791,7 +1780,6 @@ async fn animation(
     from_bone: Option<String>,
     depth: Option<i64>,
     dim: Option<String>,
-    with_image: Option<bool>,
     state: Option<String>,
     name: Option<String>,
     target_position: Option<GodotDict>,
@@ -1873,7 +1861,6 @@ async fn animation(
             ("from_bone", from_bone.map(Value::String)),
             ("depth", depth.map(|v| json!(v))),
             ("dim", dim.map(Value::String)),
-            ("with_image", with_image.map(|v| json!(v))),
             ("state", state.map(Value::String)),
             ("name", name.map(Value::String)),
             ("target_position", target_position.map(Into::into)),
@@ -2219,14 +2206,16 @@ async fn signal(
 // scene/plan + scene/orchestrate (steps tipados o GenericStep verbatim).
 
 // ============================================================
-// VISUAL (Sistema de visiÃ³n Â§13.6) â€” UNA tool, mÃºltiples acciones
-// (filosofÃ­a centralizada: coords|summary|ascii|capture|node|budget|cache)
+// VISUAL — UNA tool, 4 acciones (Fase A+B+D de §0.11; visual_image ELIMINADO)
+// Centralizada: coords|summary|ascii|spatial. Reemplaza captura de imagen
+// (json puro, sin GPU off-screen, sin 800 tok por PNG).
 // ============================================================
 
 #[tool(
-    description = "Visión textual sin imagen: coords|summary|ascii|spatial. Barata, usarla primero antes de capturar. spatial (Fase B): overlaps|distance|neighbors|layout|bounds. args: scene_path, max_depth (default 10), y según mode: node_path, from, to, of, radius, padding."
+    description = "Visión textual pura (sin imagen): coords|summary|ascii|spatial. Barata, usarla primero. spatial: overlaps|distance|neighbors|layout|bounds. summary: recursivo con warnings (z_fighting, missing_material/texture/shape). args: scene_path, max_depth (default 10), y según mode: node_path, from, to, of, radius, padding."
 )]
-async fn visual_text(
+#[allow(clippy::too_many_arguments)]
+async fn visual(
     action: String,
     project_path: Option<String>,
     scene_path: Option<String>,
@@ -2248,7 +2237,7 @@ async fn visual_text(
         "spatial" => "visual/scene_spatial",
         other => {
             return Err(ToolError::invalid_params(format!(
-                "unknown visual_text action: {other} (coords|summary|ascii|spatial)"
+                "unknown visual action: {other} (coords|summary|ascii|spatial)"
             )));
         }
     };
@@ -2270,55 +2259,6 @@ async fn visual_text(
             ("of", of.map(Value::String)),
             ("radius", radius.map(|v| json!(v))),
             ("padding", padding.map(|v| json!(v))),
-        ]),
-    );
-    forward(registry, &proj, handler, a).await
-}
-
-#[tool(
-    description = "Visión con imagen: capture|node. args: scene_path, viewport=2d|3d, source=scene|viewport, max_side, node_path (framing), animation (seek previo). Devuelve image_content MCP. Falla durante play con error claro."
-)]
-#[allow(clippy::too_many_arguments)]
-async fn visual_image(
-    action: String,
-    project_path: Option<String>,
-    scene_path: Option<String>,
-    viewport: Option<String>,
-    source: Option<String>,
-    quality: Option<String>,
-    max_side: Option<i64>,
-    format: Option<String>,
-    node_path: Option<String>,
-    animation: Option<GodotDict>,
-) -> Result<Value, ToolError> {
-    let proj = resolve_project(project_path.as_deref()).await?;
-    let registry = EditorRegistry::global();
-    let handler = match action.as_str() {
-        "capture" => "visual/capture",
-        "node" => "visual/capture_node",
-        other => {
-            return Err(ToolError::invalid_params(format!(
-                "unknown visual_image action: {other} (capture|node)"
-            )));
-        }
-    };
-    let a = apply_scene_context(
-        &proj,
-        args(&[
-            (
-                "scene_path",
-                scene_path
-                    .as_deref()
-                    .map(normalize_scene_path)
-                    .map(Value::String),
-            ),
-            ("viewport", viewport.map(Value::String)),
-            ("source", source.map(Value::String)),
-            ("quality", quality.map(Value::String)),
-            ("max_side", max_side.map(|v| json!(v))),
-            ("format", format.map(Value::String)),
-            ("node_path", node_path.map(Value::String)),
-            ("animation", animation.map(Into::into)),
         ]),
     );
     forward(registry, &proj, handler, a).await

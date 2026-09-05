@@ -57,7 +57,7 @@ func execute(tool_name: String, args: Dictionary) -> Dictionary:
 	var result = handler.call(method_name, args)
 	if result is Dictionary:
 		return result
-	# Soporte handlers coroutine (contienen `await`, ej: visual/capture off-screen):
+	# Soporte handlers coroutine (contienen `await`):
 	# completar la coroutine antes de devolver. GDScriptFunctionState no es un
 	# tipo usable en `is` (Godot 4) → detectar por get_class(). Requiere que el
 	# caller use `await`.
