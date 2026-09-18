@@ -1,0 +1,319 @@
+[gd_scene format=3 uid="uid://crw46ogr5xjna"]
+
+[ext_resource type="Material" uid="uid://c8tvtugdknq7y" path="res://materials/stone_gray.tres" id="1_jlbdn"]
+[ext_resource type="BoxMesh" uid="uid://d1g07hsxglbuo" path="res://meshes/terrain.tres" id="2_6eqwj"]
+[ext_resource type="Shape3D" uid="uid://b5jtvvqww1yro" path="res://shapes/terrain_col.tres" id="3_8qon0"]
+[ext_resource type="BoxMesh" uid="uid://buyanyou4nfed" path="res://meshes/wall.tres" id="4_a6jic"]
+[ext_resource type="Shape3D" uid="uid://tgpur48eofnx" path="res://shapes/wall_col.tres" id="5_gqq85"]
+[ext_resource type="Material" uid="uid://esvr4v1w26fw" path="res://materials/metal_dark.tres" id="6_liehy"]
+[ext_resource type="CylinderMesh" uid="uid://csjsjwjb87uik" path="res://meshes/tower.tres" id="7_kd77i"]
+[ext_resource type="BoxMesh" uid="uid://cuheqncjg8ijf" path="res://meshes/gate.tres" id="8_fonde"]
+[ext_resource type="Shape3D" uid="uid://dna7i5yy283u" path="res://shapes/gate_col.tres" id="9_mmxo8"]
+[ext_resource type="Material" uid="uid://duy76wjv6v2i2" path="res://materials/enemy_red.tres" id="10_bobw4"]
+[ext_resource type="CapsuleMesh" uid="uid://cgkqkts2ng7pd" path="res://meshes/grunt.tres" id="11_kxviq"]
+[ext_resource type="Shape3D" uid="uid://bthofq81uv2r" path="res://shapes/grunt_col.tres" id="12_iymco"]
+[ext_resource type="PackedScene" path="res://addons/heren/templates/hud/health_bar.tscn" id="13_10uvk"]
+[ext_resource type="PackedScene" path="res://addons/heren/templates/hud/score_label.tscn" id="14_fvr5b"]
+[ext_resource type="Material" uid="uid://bprhgexxt22nb" path="res://materials/hero_glow_mat.tres" id="15_6eqwj"]
+
+[sub_resource type="Animation" id="Animation_8qon0"]
+length = 2.0
+tracks/0/type = "rotation_3d"
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/path = NodePath("Hero/HeroBody")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/keys = PackedFloat32Array()
+
+[sub_resource type="AnimationLibrary" id="AnimationLibrary_a6jic"]
+_data = {
+&"Idle": SubResource("Animation_8qon0")
+}
+
+[sub_resource type="Animation" id="Animation_gqq85"]
+tracks/0/type = "rotation_3d"
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/path = NodePath("Boss/BossBody")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/keys = PackedFloat32Array(0, 1, 0, 0, 0, 1)
+
+[sub_resource type="AnimationLibrary" id="AnimationLibrary_liehy"]
+_data = {
+&"Roar": SubResource("Animation_gqq85")
+}
+
+[node name="Fortaleza" type="Node3D" unique_id=674183934]
+
+[node name="Terrain" type="StaticBody3D" parent="." unique_id=140222495]
+
+[node name="TerrainMesh" type="MeshInstance3D" parent="Terrain" unique_id=1239362581]
+material_override = ExtResource("1_jlbdn")
+mesh = ExtResource("2_6eqwj")
+
+[node name="TerrainCol" type="CollisionShape3D" parent="Terrain" unique_id=173889724]
+shape = ExtResource("3_8qon0")
+
+[node name="WallN" type="StaticBody3D" parent="." unique_id=1354417518]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, -15)
+
+[node name="WallNMesh" type="MeshInstance3D" parent="WallN" unique_id=798060763]
+material_override = ExtResource("1_jlbdn")
+mesh = ExtResource("4_a6jic")
+
+[node name="WallNCol" type="CollisionShape3D" parent="WallN" unique_id=1211881428]
+shape = ExtResource("5_gqq85")
+
+[node name="WallS" type="StaticBody3D" parent="." unique_id=151528493]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 15)
+
+[node name="WallSMesh" type="MeshInstance3D" parent="WallS" unique_id=639100537]
+material_override = ExtResource("1_jlbdn")
+mesh = ExtResource("4_a6jic")
+
+[node name="WallSCol" type="CollisionShape3D" parent="WallS" unique_id=1308155098]
+shape = ExtResource("5_gqq85")
+
+[node name="WallE" type="StaticBody3D" parent="." unique_id=238135902]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 1.5, 0)
+
+[node name="WallEMesh" type="MeshInstance3D" parent="WallE" unique_id=752055963]
+material_override = ExtResource("1_jlbdn")
+mesh = ExtResource("4_a6jic")
+
+[node name="WallECol" type="CollisionShape3D" parent="WallE" unique_id=1255145275]
+shape = ExtResource("5_gqq85")
+
+[node name="WallW" type="StaticBody3D" parent="." unique_id=1930377856]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -15, 1.5, 0)
+
+[node name="WallWMesh" type="MeshInstance3D" parent="WallW" unique_id=1136073492]
+material_override = ExtResource("1_jlbdn")
+mesh = ExtResource("4_a6jic")
+
+[node name="WallWCol" type="CollisionShape3D" parent="WallW" unique_id=1736758780]
+shape = ExtResource("5_gqq85")
+
+[node name="Tower_1" type="StaticBody3D" parent="." unique_id=1649840987]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -13, 0, 0)
+
+[node name="Tower1Mesh" type="MeshInstance3D" parent="Tower_1" unique_id=608363923]
+material_override = ExtResource("6_liehy")
+mesh = ExtResource("7_kd77i")
+
+[node name="Tower1Light" type="OmniLight3D" parent="Tower_1" unique_id=595997034]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 9, 0)
+omni_range = 12.0
+
+[node name="Tower_2" type="StaticBody3D" parent="." unique_id=2003318501]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 0, 0)
+
+[node name="Tower2Mesh" type="MeshInstance3D" parent="Tower_2" unique_id=116670581]
+material_override = ExtResource("6_liehy")
+mesh = ExtResource("7_kd77i")
+
+[node name="Tower2Light" type="OmniLight3D" parent="Tower_2" unique_id=1365524763]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 9, 0)
+omni_range = 12.0
+
+[node name="Gate" type="StaticBody3D" parent="." unique_id=1075933860]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 15)
+
+[node name="GateMesh" type="MeshInstance3D" parent="Gate" unique_id=822381764]
+material_override = ExtResource("6_liehy")
+mesh = ExtResource("8_fonde")
+
+[node name="GateCol" type="CollisionShape3D" parent="Gate" unique_id=2146507567]
+shape = ExtResource("9_mmxo8")
+
+[node name="Enemies" type="Node3D" parent="." unique_id=1516545839]
+
+[node name="Grunt_1" type="CharacterBody3D" parent="Enemies" unique_id=2044644914]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, -8)
+
+[node name="Grunt1Mesh" type="MeshInstance3D" parent="Enemies/Grunt_1" unique_id=1603749821]
+material_override = ExtResource("10_bobw4")
+mesh = ExtResource("11_kxviq")
+
+[node name="Grunt1Col" type="CollisionShape3D" parent="Enemies/Grunt_1" unique_id=444321603]
+shape = ExtResource("12_iymco")
+
+[node name="Grunt_2" type="CharacterBody3D" parent="Enemies" unique_id=661379758]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 1, -10)
+
+[node name="Grunt2Mesh" type="MeshInstance3D" parent="Enemies/Grunt_2" unique_id=1015193845]
+material_override = ExtResource("10_bobw4")
+mesh = ExtResource("11_kxviq")
+
+[node name="Grunt2Col" type="CollisionShape3D" parent="Enemies/Grunt_2" unique_id=469680930]
+shape = ExtResource("12_iymco")
+
+[node name="Grunt_3" type="CharacterBody3D" parent="Enemies" unique_id=1620150737]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 1, -10)
+
+[node name="Grunt3Mesh" type="MeshInstance3D" parent="Enemies/Grunt_3" unique_id=1485195728]
+material_override = ExtResource("10_bobw4")
+mesh = ExtResource("11_kxviq")
+
+[node name="Grunt3Col" type="CollisionShape3D" parent="Enemies/Grunt_3" unique_id=246299289]
+shape = ExtResource("12_iymco")
+
+[node name="Grunt_4" type="CharacterBody3D" parent="Enemies" unique_id=50655354]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2, 1, -12)
+
+[node name="Grunt4Mesh" type="MeshInstance3D" parent="Enemies/Grunt_4" unique_id=1640378798]
+material_override = ExtResource("10_bobw4")
+mesh = ExtResource("11_kxviq")
+
+[node name="Grunt4Col" type="CollisionShape3D" parent="Enemies/Grunt_4" unique_id=1197428974]
+shape = ExtResource("12_iymco")
+
+[node name="Grunt_5" type="CharacterBody3D" parent="Enemies" unique_id=1135642583]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 1, -14)
+
+[node name="Grunt5Mesh" type="MeshInstance3D" parent="Enemies/Grunt_5" unique_id=669552375]
+material_override = ExtResource("10_bobw4")
+mesh = ExtResource("11_kxviq")
+
+[node name="Grunt5Col" type="CollisionShape3D" parent="Enemies/Grunt_5" unique_id=1873109369]
+shape = ExtResource("12_iymco")
+
+[node name="PlayerSpawn" type="Marker3D" parent="." unique_id=108003602]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, -15)
+
+[node name="CameraRig" type="Node3D" parent="." unique_id=577048749]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 18, 20)
+
+[node name="Camera" type="Camera3D" parent="CameraRig" unique_id=2006953480]
+transform = Transform3D(1, 0, 0, 0, 0.76604444, 0.6427876, 0, -0.6427876, 0.76604444, 0, 0, 0)
+
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=1279322665]
+transform = Transform3D(0.8660254, -0.38302222, 0.32139382, 0, 0.64278764, 0.76604444, -0.5, -0.66341394, 0.5566704, 0, 0, 0)
+
+[node name="UILayer" type="CanvasLayer" parent="." unique_id=744936179]
+
+[node name="HUD" type="Control" parent="UILayer" unique_id=1067607026]
+layout_mode = 3
+anchors_preset = 0
+
+[node name="HealthBar" parent="UILayer/HUD" unique_id=1763108953 instance=ExtResource("13_10uvk")]
+layout_mode = 0
+
+[node name="ScoreLabel" parent="UILayer/HUD" unique_id=342790671 instance=ExtResource("14_fvr5b")]
+layout_mode = 0
+
+[node name="Hero" type="Node3D" parent="." unique_id=2123296551]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -5)
+
+[node name="HeroSkeleton" type="Skeleton3D" parent="Hero" unique_id=988519327]
+bones/0/name = "root"
+bones/0/parent = -1
+bones/0/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/0/enabled = true
+bones/0/position = Vector3(0, 0, 0)
+bones/0/rotation = Quaternion(0, 0, 0, 1)
+bones/0/scale = Vector3(1, 1, 1)
+bones/1/name = "spine"
+bones/1/parent = -1
+bones/1/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/1/enabled = true
+bones/1/position = Vector3(0, 0, 0)
+bones/1/rotation = Quaternion(0, 0, 0, 1)
+bones/1/scale = Vector3(1, 1, 1)
+bones/2/name = "head"
+bones/2/parent = -1
+bones/2/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/2/enabled = true
+bones/2/position = Vector3(0, 0, 0)
+bones/2/rotation = Quaternion(0, 0, 0, 1)
+bones/2/scale = Vector3(1, 1, 1)
+bones/3/name = "arm_l"
+bones/3/parent = -1
+bones/3/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/3/enabled = true
+bones/3/position = Vector3(0, 0, 0)
+bones/3/rotation = Quaternion(0, 0, 0, 1)
+bones/3/scale = Vector3(1, 1, 1)
+bones/4/name = "arm_r"
+bones/4/parent = -1
+bones/4/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/4/enabled = true
+bones/4/position = Vector3(0, 0, 0)
+bones/4/rotation = Quaternion(0, 0, 0, 1)
+bones/4/scale = Vector3(1, 1, 1)
+bones/5/name = "leg_l"
+bones/5/parent = -1
+bones/5/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/5/enabled = true
+bones/5/position = Vector3(0, 0, 0)
+bones/5/rotation = Quaternion(0, 0, 0, 1)
+bones/5/scale = Vector3(1, 1, 1)
+bones/6/name = "leg_r"
+bones/6/parent = -1
+bones/6/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/6/enabled = true
+bones/6/position = Vector3(0, 0, 0)
+bones/6/rotation = Quaternion(0, 0, 0, 1)
+bones/6/scale = Vector3(1, 1, 1)
+
+[node name="HeroBody" type="MeshInstance3D" parent="Hero/HeroSkeleton" unique_id=1530084747]
+material_override = ExtResource("6_liehy")
+mesh = ExtResource("11_kxviq")
+
+[node name="HeroAnim" type="AnimationPlayer" parent="Hero" unique_id=673598458]
+libraries/ = SubResource("AnimationLibrary_a6jic")
+
+[node name="GlowCrystal" type="MeshInstance3D" parent="Hero" unique_id=669407842]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.5, 1, -5)
+material_override = ExtResource("15_6eqwj")
+mesh = ExtResource("7_kd77i")
+
+[node name="Boss" type="Node3D" parent="." unique_id=1894854669]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 12)
+
+[node name="BossSkeleton" type="Skeleton3D" parent="Boss" unique_id=472401609]
+bones/0/name = "root"
+bones/0/parent = -1
+bones/0/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/0/enabled = true
+bones/0/position = Vector3(0, 0, 0)
+bones/0/rotation = Quaternion(0, 0, 0, 1)
+bones/0/scale = Vector3(1, 1, 1)
+bones/1/name = "crown"
+bones/1/parent = -1
+bones/1/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/1/enabled = true
+bones/1/position = Vector3(0, 0, 0)
+bones/1/rotation = Quaternion(0, 0, 0, 1)
+bones/1/scale = Vector3(1, 1, 1)
+bones/2/name = "eye_l"
+bones/2/parent = -1
+bones/2/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/2/enabled = true
+bones/2/position = Vector3(0, 0, 0)
+bones/2/rotation = Quaternion(0, 0, 0, 1)
+bones/2/scale = Vector3(1, 1, 1)
+
+[node name="BossBody" type="MeshInstance3D" parent="Boss/BossSkeleton" unique_id=1029209711]
+material_override = ExtResource("1_jlbdn")
+mesh = ExtResource("7_kd77i")
+
+[node name="BossAnim" type="AnimationPlayer" parent="Boss" unique_id=1213509437]
+libraries/ = SubResource("AnimationLibrary_liehy")
+
+[node name="PatrolLamp1" type="OmniLight3D" parent="." unique_id=1894864294]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8, 5, -8)
+omni_range = 10.0
+
+[node name="PatrolLamp2" type="OmniLight3D" parent="." unique_id=2055130929]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 5, -8)
+omni_range = 10.0
+
+[node name="Trap1" type="StaticBody3D" parent="." unique_id=2111894043]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5, 0.5, 5)
+
+[node name="Trap1Mesh" type="MeshInstance3D" parent="Trap1" unique_id=1457273781]
+material_override = ExtResource("10_bobw4")
+mesh = ExtResource("4_a6jic")

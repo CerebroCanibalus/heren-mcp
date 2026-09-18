@@ -548,7 +548,7 @@ pub fn is_editor_running(project_path: &str) -> bool {
 }
 
 /// Resultado estructurado de `launch_editor` — el server lo expone al agente
-/// para que sepa si el plugin está al día o necesita `session/reopen`.
+/// para que sepa si el plugin está al día o necesita recargar.
 pub struct LaunchOutcome {
     pub launched: bool,
     pub msg: String,
@@ -607,14 +607,15 @@ pub fn launch_editor(
     let source_version = source_plugin_version();
     let installed_version = read_plugin_version(project_path);
 
-    // Editor ya conectado → reutilizar. Si el plugin cambió, avisamos que hace
-    // falta reopen para recargar el código nuevo (nunca relanzar a medias).
+    // Editor ya conectado → reutilizar. Si el plugin cambió, el server lo
+    // recarga automáticamente (auto-reload en ensure_editor_connected). Aquí
+    // solo reportamos estado para diagnóstico.
     if editor_connected {
         let msg = if plugin_changed {
             format!(
-                "editor already running (connected); PLUGIN ACTUALIZADO en disco \
-                 (v{installed} -> v{source}). Ejecuta session/reopen para recargar \
-                 el plugin con el código nuevo.",
+                "editor already running (connected); plugin newly synced on disk \
+                 (v{installed} -> v{source}). Auto-reload will restart the editor on \
+                 the next tool call (Godot can't hot-reload plugins — issue #11612).",
                 installed = installed_version.as_deref().unwrap_or("?"),
                 source = source_version.as_deref().unwrap_or("?"),
             )
@@ -1128,6 +1129,39 @@ DESKTOP-C36BCKD,"D:\Mis Juegos\Godot\Godot_v4.7.1-stable_win64.exe" "D:\Mis Jueg
             "handler con prefijo handlers/: {files:?}"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Auto-reload §0.13 (fix 2026-09-10): `ensure_plugin_installed` debe
+    /// ser idempotente y barato en la segunda llamada (no panic, no escritura).
+    /// La invariante completa (changed=true tras modificación de source) está
+    /// cubierta por `ensure_editor_connected` en integración; aquí validamos
+    /// el camino feliz que el auto-reload depende.
+    #[test]
+    fn ensure_plugin_installed_is_idempotent() {
+        // Crear proyecto mínimo sin tocar el workspace real (ensure_plugin_installed
+        // usa plugin_source() hardcoded al workspace, pero tolera que el destino
+        // no exista: crea los directorios y copia).
+        let project = std::env::temp_dir().join("heren_idem_proj");
+        let _ = std::fs::remove_dir_all(&project);
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            project.join("project.godot"),
+            "[application]\nconfig/name=\"test\"\n",
+        )
+        .unwrap();
+        // 1ª llamada: source nuevo en destino → debe copiar (changed=true).
+        let (changed1, msg1) = ensure_plugin_installed(project.to_str().unwrap());
+        assert!(
+            changed1,
+            "1ª llamada contra destino vacío debe devolver changed=true (sync inicial): {msg1}"
+        );
+        // 2ª llamada: source y destino idénticos → debe ser NO-OP.
+        let (changed2, msg2) = ensure_plugin_installed(project.to_str().unwrap());
+        assert!(
+            !changed2,
+            "2ª llamada con destino ya sincronizado debe devolver changed=false (idempotente): {msg2}"
+        );
+        let _ = std::fs::remove_dir_all(&project);
     }
 
     const CANONICAL: &str = "enabled=PackedStringArray(\"res://addons/heren/plugin.cfg\")";

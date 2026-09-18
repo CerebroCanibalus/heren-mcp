@@ -1,0 +1,14 @@
+{
+  "plan_id": "qa-edge-v4",
+  "scene_path": "res://qa_edge.tscn",
+  "workplane": "XZ",
+  "workplane_offset": {"x": 0.0, "y": 0.0, "z": 0.0},
+  "steps": [
+    {"action": "add_node", "id": "e1", "node_type": "Node3D", "name": "OK_Node", "parent": "."},
+    {"action": "set_transform", "id": "e2", "node_path": "Nodo_Inexistente", "position": {"x": 1.0, "y": 2.0, "z": 3.0}}
+  ],
+  "verification": [
+    {"id": "ev1", "kind": "node_exists", "description": "OK_Node creado", "node_path": "OK_Node", "tolerance": 0.0}
+  ],
+  "key_dimensions": {}
+}

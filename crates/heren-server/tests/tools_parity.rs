@@ -29,6 +29,12 @@ const TOOLS_WITHOUT_ACTION: &[&str] = &["health"];
 /// Cada (tool, action) debe existir en `addons/heren/_routes.gd::ROUTES`.
 /// Si añades un nuevo forward() a scene/nodepath/etc., agrégalo aquí Y en
 /// _routes.gd (Fase 3 §0.8, 2026-09-03).
+///
+/// 2026-09-09 (§0.12 W4 cleanup): removidas routes archivadas:
+///   animation/tree_*, animation/blend_pose/retarget/capture_pose,
+///   skeleton/*, tilemap/*, ui/layout, ui/theme,
+///   shader/material/uniform/apply, node/reorder/move/set_owner,
+///   signal/set_script.
 const DISPATCH_ROUTES: &[&str] = &[
     "scene/open", "scene/save", "scene/get_edited_scene_root",
     "scene/get_open_scenes", "scene/get_plan", "scene/set_qa_report",
@@ -42,12 +48,9 @@ const DISPATCH_ROUTES: &[&str] = &[
     "visual/scene_summary",
     "animation/add_track", "animation/add_key", "animation/create_player",
     "animation/create", "animation/update_props", "animation/duplicate",
-    "animation/delete", "animation/tree_set_param",
-    "animation/tree_add_blend_node", "animation/tree_connect_blend_nodes",
-    "animation/tree_set_anim_player",
-    "skeleton/skeleton_add_bone", "skeleton/skeleton_set_rest",
-    "skeleton/skeleton_skin", "skeleton/skeleton_set_pose",
-    "skeleton/skeleton_ik",
+    "animation/delete",
+    "filesystem/scan", "filesystem/status", "filesystem/import_errors",
+    "filesystem/exists", "filesystem/import",
 ];
 
 async fn list_tools() -> Vec<flojo_mcp::rmcp::model::Tool> {

@@ -1,0 +1,7 @@
+{
+  "agent_id": "qa-v5-dry",
+  "scene_path": "res://dryrun_test.tscn",
+  "progress": "Opening scene",
+  "pid": 20016,
+  "since": "2026-08-25T00:19:36.407005200+00:00"
+}

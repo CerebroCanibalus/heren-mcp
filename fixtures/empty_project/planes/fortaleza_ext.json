@@ -1,0 +1,56 @@
+{
+  "plan_id": "fortaleza-ext-v4",
+  "scene_path": "res://fortaleza_v2.tscn",
+  "workplane": "XZ",
+  "workplane_offset": {"x": 0.0, "y": 0.0, "z": 0.0},
+  "steps": [
+    {"action": "add_node", "id": "h_hero", "node_type": "Node3D", "name": "Hero", "parent": ".", "local_pos": {"x": 0.0, "y": 0.0, "z": -5.0}},
+    {"action": "add_node", "id": "h_skel", "node_type": "Skeleton3D", "name": "HeroSkeleton", "parent": "Hero"},
+    {"action": "add_node", "id": "h_body", "node_type": "MeshInstance3D", "name": "HeroBody", "parent": "HeroSkeleton", "properties": {"mesh": "res://meshes/grunt.tres", "material_override": "res://materials/metal_dark.tres"}},
+    {"action": "add_bone", "id": "hb1", "skeleton_path": "Hero/HeroSkeleton", "bone_name": "root", "parent_bone": "", "local_pos": {"x": 0.0, "y": 1.0, "z": 0.0}},
+    {"action": "add_bone", "id": "hb2", "skeleton_path": "Hero/HeroSkeleton", "bone_name": "spine", "parent_bone": "root", "local_pos": {"x": 0.0, "y": 0.5, "z": 0.0}},
+    {"action": "add_bone", "id": "hb3", "skeleton_path": "Hero/HeroSkeleton", "bone_name": "head", "parent_bone": "spine", "local_pos": {"x": 0.0, "y": 0.6, "z": 0.0}},
+    {"action": "add_bone", "id": "hb4", "skeleton_path": "Hero/HeroSkeleton", "bone_name": "arm_l", "parent_bone": "spine", "local_pos": {"x": -0.4, "y": 0.3, "z": 0.0}},
+    {"action": "add_bone", "id": "hb5", "skeleton_path": "Hero/HeroSkeleton", "bone_name": "arm_r", "parent_bone": "spine", "local_pos": {"x": 0.4, "y": 0.3, "z": 0.0}},
+    {"action": "add_bone", "id": "hb6", "skeleton_path": "Hero/HeroSkeleton", "bone_name": "leg_l", "parent_bone": "root", "local_pos": {"x": -0.2, "y": -0.5, "z": 0.0}},
+    {"action": "add_bone", "id": "hb7", "skeleton_path": "Hero/HeroSkeleton", "bone_name": "leg_r", "parent_bone": "root", "local_pos": {"x": 0.2, "y": -0.5, "z": 0.0}},
+    {"action": "set_bone_rest", "id": "hbr", "skeleton_path": "Hero/HeroSkeleton", "bone_name": "head", "rest_transform": {"position": {"x": 0.0, "y": 0.6, "z": 0.0}, "rotation": {"x": 0.0, "y": 0.0, "z": 0.0}, "scale": {"x": 1.0, "y": 1.0, "z": 1.0}}},
+    {"action": "generic", "id": "ha1", "tool": "animation", "tool_action": "create_player", "args": {"player_path": "Hero/HeroAnim"}},
+    {"action": "generic", "id": "ha2", "tool": "animation", "tool_action": "create", "args": {"player_path": "Hero/HeroAnim", "anim_name": "Idle", "length": 2.0}},
+    {"action": "add_track", "id": "ha3", "player_path": "Hero/HeroAnim", "anim_name": "Idle", "track_type": "bone", "node_path": "Hero/HeroSkeleton:head"},
+    {"action": "add_key", "id": "ha4", "player_path": "Hero/HeroAnim", "anim_name": "Idle", "track_idx": 0, "time": 0.0, "value": {"position": {"x": 0.0, "y": 0.6, "z": 0.0}, "rotation": {"x": 0.0, "y": 0.0, "z": 0.0}, "scale": {"x": 1.0, "y": 1.0, "z": 1.0}}},
+    {"action": "add_key", "id": "ha5", "player_path": "Hero/HeroAnim", "anim_name": "Idle", "track_idx": 0, "time": 1.0, "value": {"position": {"x": 0.0, "y": 0.7, "z": 0.0}, "rotation": {"x": 0.0, "y": 0.0, "z": 0.0}, "scale": {"x": 1.0, "y": 1.0, "z": 1.0}}},
+    {"action": "add_track", "id": "ha6", "player_path": "Hero/HeroAnim", "anim_name": "Idle", "track_type": "rotation_3d", "node_path": "Hero/HeroBody"},
+    {"action": "add_key", "id": "ha7", "player_path": "Hero/HeroAnim", "anim_name": "Idle", "track_idx": 1, "time": 0.0, "value": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}},
+    {"action": "add_key", "id": "ha8", "player_path": "Hero/HeroAnim", "anim_name": "Idle", "track_idx": 1, "time": 1.0, "value": {"x": 0.0, "y": 0.5, "z": 0.0, "w": 0.866}},
+
+    {"action": "create_shader", "id": "sh1", "shader_path": "res://shaders/hero_glow.gdshader", "shader_type": "spatial", "code": "shader_type spatial;\nvoid fragment() {\n  ALBEDO = vec3(0.2, 0.8, 1.0);\n  EMISSION = ALBEDO * 0.6;\n}"},
+    {"action": "add_resource", "id": "sh3", "resource_type": "ShaderMaterial", "path": "res://materials/hero_glow_mat.tres", "properties": {"shader": "res://shaders/hero_glow.gdshader"}},
+    {"action": "set_shader_uniform", "id": "sh2", "material_path": "res://materials/hero_glow_mat.tres", "uniform_name": "glow_strength", "value": 2.0},
+    {"action": "add_node", "id": "h_crystal", "node_type": "MeshInstance3D", "name": "GlowCrystal", "parent": "Hero", "local_pos": {"x": 1.5, "y": 1.0, "z": -5.0}, "properties": {"mesh": "res://meshes/tower.tres", "material_override": "res://materials/hero_glow_mat.tres"}},
+
+    {"action": "add_node", "id": "b_boss", "node_type": "Node3D", "name": "Boss", "parent": ".", "local_pos": {"x": 0.0, "y": 0.0, "z": 12.0}},
+    {"action": "add_node", "id": "b_skel", "node_type": "Skeleton3D", "name": "BossSkeleton", "parent": "Boss"},
+    {"action": "add_node", "id": "b_body", "node_type": "MeshInstance3D", "name": "BossBody", "parent": "BossSkeleton", "properties": {"mesh": "res://meshes/tower.tres", "material_override": "res://materials/stone_gray.tres"}},
+    {"action": "add_bone", "id": "bb1", "skeleton_path": "Boss/BossSkeleton", "bone_name": "root", "parent_bone": "", "local_pos": {"x": 0.0, "y": 1.0, "z": 0.0}},
+    {"action": "add_bone", "id": "bb2", "skeleton_path": "Boss/BossSkeleton", "bone_name": "crown", "parent_bone": "root", "local_pos": {"x": 0.0, "y": 1.0, "z": 0.0}},
+    {"action": "add_bone", "id": "bb3", "skeleton_path": "Boss/BossSkeleton", "bone_name": "eye_l", "parent_bone": "crown", "local_pos": {"x": -0.3, "y": 0.2, "z": 0.0}},
+    {"action": "generic", "id": "ba1", "tool": "animation", "tool_action": "create_player", "args": {"player_path": "Boss/BossAnim"}},
+    {"action": "generic", "id": "ba2", "tool": "animation", "tool_action": "create", "args": {"player_path": "Boss/BossAnim", "anim_name": "Roar", "length": 1.0}},
+    {"action": "add_track", "id": "ba3", "player_path": "Boss/BossAnim", "anim_name": "Roar", "track_type": "rotation_3d", "node_path": "Boss/BossBody"},
+    {"action": "add_key", "id": "ba4", "player_path": "Boss/BossAnim", "anim_name": "Roar", "track_idx": 0, "time": 0.0, "value": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}},
+    {"action": "add_key", "id": "ba5", "player_path": "Boss/BossAnim", "anim_name": "Roar", "track_idx": 0, "time": 0.5, "value": {"x": 0.3, "y": 0.0, "z": 0.0, "w": 0.954}},
+
+    {"action": "add_node", "id": "x_lamp1", "node_type": "OmniLight3D", "name": "PatrolLamp1", "parent": ".", "local_pos": {"x": -8.0, "y": 5.0, "z": -8.0}, "properties": {"omni_range": 10.0}},
+    {"action": "add_node", "id": "x_lamp2", "node_type": "OmniLight3D", "name": "PatrolLamp2", "parent": ".", "local_pos": {"x": 8.0, "y": 5.0, "z": -8.0}, "properties": {"omni_range": 10.0}},
+    {"action": "add_node", "id": "x_trap1", "node_type": "StaticBody3D", "name": "Trap1", "parent": ".", "local_pos": {"x": -5.0, "y": 0.5, "z": 5.0}},
+    {"action": "add_node", "id": "x_trap1m", "node_type": "MeshInstance3D", "name": "Trap1Mesh", "parent": "Trap1", "properties": {"mesh": "res://meshes/wall.tres", "material_override": "res://materials/enemy_red.tres"}}
+  ],
+  "verification": [
+    {"id": "vx_skel", "kind": "node_exists", "description": "HeroSkeleton existe", "node_path": "Hero/HeroSkeleton", "tolerance": 0.0},
+    {"id": "vx_anim", "kind": "node_exists", "description": "HeroAnim existe", "node_path": "Hero/HeroAnim", "tolerance": 0.0},
+    {"id": "vx_shader", "kind": "resource_exists", "description": "shader hero_glow existe", "node_path": "res://shaders/hero_glow.gdshader", "tolerance": 0.0},
+    {"id": "vx_bossbone", "kind": "node_exists", "description": "BossSkeleton existe", "node_path": "Boss/BossSkeleton", "tolerance": 0.0}
+  ],
+  "key_dimensions": {}
+}

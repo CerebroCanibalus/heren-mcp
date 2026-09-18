@@ -282,15 +282,17 @@ func handle_run_scene(args: Dictionary) -> Dictionary:
 				"hint": "revisa debug/output filter=error",
 			}
 		# 🚨 CRASH CHECK (2026-09-04): la escena puede arrancar y crashear
-		# en _ready (error de runtime). El agente debe saberlo, no ver
-		# "verified: true" con el juego muerto. Esperar 2 frames más y
-		# verificar si el debugger está breaked con errores capturados.
+		# en _ready (error de runtime). Esperar 2 frames más y verificar.
 		await get_tree().process_frame
 		await get_tree().process_frame
-		var crash := _check_crash()
-		if not crash.is_empty():
-			return crash
-		return {"ok": true, "running": scene_path, "custom": true, "verified": true}
+		var diagnostic := _check_crash()
+		if diagnostic.has("crash"):
+			return diagnostic["crash"]
+		var resp := {"ok": true, "running": scene_path, "custom": true, "verified": true}
+		if diagnostic.has("runtime_errors"):
+			resp["runtime_errors"] = diagnostic["runtime_errors"]
+			resp["error_count"] = diagnostic["error_count"]
+		return resp
 
 	ei.play_main_scene()
 	await get_tree().process_frame
@@ -303,32 +305,45 @@ func handle_run_scene(args: Dictionary) -> Dictionary:
 		}
 	await get_tree().process_frame
 	await get_tree().process_frame
-	var crash_main := _check_crash()
-	if not crash_main.is_empty():
-		return crash_main
-	return {"ok": true, "running": "main_scene", "custom": false, "verified": true}
+	var diagnostic_main := _check_crash()
+	if diagnostic_main.has("crash"):
+		return diagnostic_main["crash"]
+	var resp_main := {"ok": true, "running": "main_scene", "custom": false, "verified": true}
+	if diagnostic_main.has("runtime_errors"):
+		resp_main["runtime_errors"] = diagnostic_main["runtime_errors"]
+		resp_main["error_count"] = diagnostic_main["error_count"]
+	return resp_main
 
 
 func _check_crash() -> Dictionary:
-	# Verifica si el juego crasheó al arrancar (breakpoint hit por error).
-	# Devuelve {} si no hay crash, o un Dictionary con el error si lo hay.
+	# Verifica errores durante el arranque de la escena.
+	# Devuelve {} si no hay nada, o:
+	#   {"crash": {ok:false, ...}} — el juego crasheó (breaked + error estructurado)
+	#   {"runtime_errors": [...], "error_count": N} — errores de runtime (sin break)
 	if _dbg_plugin == null:
 		return {}
-	if not _dbg_plugin.stack_breaked:
-		return {}
-	if _dbg_plugin.last_errors.is_empty():
-		return {}
-	var top: Dictionary = _dbg_plugin.last_errors[0]
-	return {
-		"ok": false,
-		"error": "scene_crashed_on_start",
-		"file": top.get("file", ""),
-		"line": top.get("line", 0),
-		"function": top.get("function", ""),
-		"message": str(top.get("error", "")) + ": " + str(top.get("descr", "")),
-		"stack": top.get("stack", []),
-		"hint": "usa debug/output filter=error para ver el error completo",
-	}
+	var result := {}
+	# Crash: el debugger está breaked con error estructurado (protocolo "error")
+	if _dbg_plugin.stack_breaked and not _dbg_plugin.last_errors.is_empty():
+		var top: Dictionary = _dbg_plugin.last_errors[0]
+		result["crash"] = {
+			"ok": false,
+			"error": "scene_crashed_on_start",
+			"file": top.get("file", ""),
+			"line": top.get("line", 0),
+			"function": top.get("function", ""),
+			"message": str(top.get("error", "")) + ": " + str(top.get("descr", "")),
+			"stack": top.get("stack", []),
+			"hint": "usa debug/output filter=error para ver el error completo",
+		}
+	# Runtime errors: errores de output level==2 (C++ ERR_FAIL_COND, scripts, etc.)
+	# que no causaron break pero SÍ aparecen en el log.
+	if not _dbg_plugin.last_output_errors.is_empty():
+		var count: int = _dbg_plugin.last_output_errors.size()
+		var preview: Array = _dbg_plugin.last_output_errors.slice(0, 10)
+		result["runtime_errors"] = preview
+		result["error_count"] = count
+	return result
 
 
 func handle_output(args: Dictionary) -> Dictionary:
@@ -345,7 +360,8 @@ func handle_output(args: Dictionary) -> Dictionary:
 	else:
 		lines = _dbg_plugin.last_output_errors.duplicate()
 	# filter=error: añadir errores del panel Output del editor (parse errors,
-	# script errors). Busca el RichTextLabel del dock Output y parsea líneas "E ".
+	# script errors). Busca el RichTextLabel del dock Output y parsea líneas.
+	# Godot 3: "E hh:mm:ss:mmm ..." | Godot 4: " ERROR: ..." (con icono+bold)
 	if filter == "error":
 		var root := _editor_interface().get_base_control()
 		if root:
@@ -353,8 +369,9 @@ func handle_output(args: Dictionary) -> Dictionary:
 			if rtl:
 				var raw_text: String = rtl.get_parsed_text()
 				for line in raw_text.split("\n"):
-					if line.begins_with("E "):
-						lines.append({"text": line, "level": 2})
+					var stripped := line.strip_edges()
+					if stripped.begins_with("ERROR:") or stripped.begins_with("WARNING:") or line.begins_with("E "):
+						lines.append({"text": stripped, "level": 2})
 		# Añadir errores del tab Errors del Debugger (Tree widget) — fuente
 		# robusta: Godot puebla ese Tree siempre, sin depender del hook timing.
 		_dbg_plugin.refresh_errors_tree()

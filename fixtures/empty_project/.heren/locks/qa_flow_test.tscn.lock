@@ -1,0 +1,7 @@
+{
+  "agent_id": "qa-test",
+  "scene_path": "res://qa_flow_test.tscn",
+  "progress": "Opening scene",
+  "pid": 10292,
+  "since": "2026-08-24T07:47:56.036807800+00:00"
+}

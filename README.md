@@ -33,7 +33,7 @@ Servidor MCP de alto rendimiento para **Godot Engine 4.x** que permite a IAs y a
 |---|---|
 | ⚡ **Server en Rust (FlojoMCP)** | `heren-server.exe` de **~7 MB**, sin Python ni Node.js. Arranque instantáneo, schemas en compile-time |
 | 🎯 **Editor real, no daemon** | Se conecta al **EditorPlugin** dentro del Godot abierto — Undo/Redo, viewports 2D/3D reales, EditorFileSystem |
-| 🔄 **Auto-launch del editor** | `session/open` lanza Godot, instala el plugin, habilita `[editor_plugins]` y espera la conexión WS. Reutiliza el editor abierto; relanza limpio si hay uno zombie |
+| 🔄 **Auto-launch del editor** | Cualquier tool con `project_path` lanza Godot (o reusa uno ya abierto) — sin tool de sesión previa |
 | 🛠️ **19 tools centralizadas** | Escenas, nodos (mutaciones/lecturas/props), recursos, scripts, señales, animaciones, esqueletos, shaders, tilemaps, validación, debug y **UI 2D (tool `ui` + templates)** — **solo `action` required**, schemas sin trampas |
 | 👀 **Sistema de visión** | `visual_text` (coords/summary/ascii, ~20-150 tok) + `visual_image` (capture/nodo, render off-screen de la escena real) — jerarquía de costo sin quemar contexto |
 | 🧩 **UI 2D + templates** | Tool `ui` (create/layout/canvas_layer/templates/get_info/theme) + **sistema transversal de templates**: 6 prefabs .tscn instanciables con 1 llamada (`node/instantiate {template}` o `ui/create`), params por nombre de nodo canónico |
@@ -117,7 +117,7 @@ cargo build --release
 }
 ```
 
-> El server habla **NDJSON por stdio** (el framing estándar de MCP). El editor se lanza solo en `session/open`.
+> El server habla **NDJSON por stdio** (el framing estándar de MCP). El editor se lanza solo al primer tool call con `project_path` (auto-launch).
 
 ### Variables de entorno
 
@@ -256,12 +256,14 @@ HerenEditorPlugin  (EditorPlugin GDScript)
 
 **El ciclo de vida:**
 
-1. **`session/open`** → el server encuentra Godot, instala el plugin, lo habilita en `project.godot` y lanza `godot --editor`.
+1. **Primer tool call con `project_path`** → `ensure_editor_connected`: el server encuentra Godot, instala el plugin si hace falta, lo habilita en `project.godot` y lanza `godot --editor` (auto-launch, 3-10s una sola vez; luego ~20ms).
 2. **El plugin conecta** al server por WebSocket (`HEREN_MCP_PORT`) y se registra por proyecto.
 3. **Las tools** se enrutan al handler correcto, operan sobre el editor real (con Undo/Redo) y devuelven coordenadas/resultados.
-4. **`health`** te dice qué proyectos tienen editor conectado.
+4. **`health`** te dice qué proyectos tienen editor conectado y diagnósticos bajo demanda.
 
-**Robustez de conexión:** si hay un editor del proyecto abierto pero **desconectado** (plugin obsoleto o editor colgado), `session/open` lo relanza limpio. El plugin tiene auto-reconnect con backoff.
+**Robustez de conexión:** si hay un editor del proyecto abierto pero **desconectado** (plugin obsoleto o editor colgado), el siguiente tool call con `project_path` lo relanza limpio. El plugin tiene auto-reconnect con backoff vía `.heren/server_port.json`.
+
+**Sin tool de sesión:** `session/open|close|info|status|list|diagnose|reopen` fueron **eliminados** (2026-09-09) — el primer tool call con `project_path` paga el auto-launch; los siguientes son ~20ms. `HEREN_AUTO_LAUNCH=0` deshabilita el auto-launch (el usuario abre Godot manualmente).
 
 ---
 

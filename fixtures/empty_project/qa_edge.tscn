@@ -1,0 +1,5 @@
+[gd_scene format=3 uid="uid://dy7q57mn7n64j"]
+
+[node name="QAEdge" type="Node3D" unique_id=1671922856]
+
+[node name="OK_Node" type="Node3D" parent="." unique_id=1476478718]

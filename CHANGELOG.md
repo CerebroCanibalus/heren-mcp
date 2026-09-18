@@ -1,5 +1,159 @@
 # Changelog — Heren MCP
 
+## [Unreleased] - 2026-09-18 - Fix: discovery file solo en project_path real
+
+### 🐛 Bug: `.heren` se creaba en CWD aunque no fuera proyecto Godot
+- **Síntoma**: al arrancar `heren-server.exe` desde cualquier directorio, se creaba `.heren/server_port.json` en el CWD — incluso si no había proyecto Godot allí.
+- **Causa**: `run()` escribía discovery en `std::env::current_dir()` antes de saber qué proyecto se usaría.
+- **Fix**: mover escritura de discovery a `ensure_editor_connected` (que recibe `project_path` real). El server ya no crea `.heren` en directorios no-Godot al arrancar.
+- **Files**: `crates/heren-server/src/server.rs`, `crates/heren-server/src/discovery.rs`.
+
+---
+
+## [Unreleased] - 2026-09-10 - W4-c validador maduró + 2 bugs pre-existentes críticos
+
+### ✨ W4-c: static analyzer inline en `validate/script` (fix-loop 3→2 calls)
+- `heren_handler.gd`: nuevos statics `static_analyze_gdscript(source)` y
+  `script_diagnostics(path)` (DRY — reemplaza al local `_script_diagnostics` de
+  resource_handlers.gd).
+- **13 reglas** heurísticas con `confidence:high|medium`:
+  - **high**: `tabs_and_spaces_mixed`, `unbalanced_parens/brackets/braces`,
+    `unterminated_string`, `unterminated_triple_string`, `export_on_const`,
+    `await_stuck_to_identifier`, `shadow_builtin_var`, `class_name_duplicate_in_file`
+  - **medium**: `missing_colon_after_func_def`, `missing_colon_after_keyword`,
+    `await_at_top_level` (placeholder — desactivado en v1)
+- Schema unificado:
+  - Roto: `{valid:false, reload_err:43, parse_hints:[{rule,line,col,message,confidence}], hint}`
+  - Válido: `{valid:true, reload_err:0, can_instance:bool, warnings:[...]}`
+- `validate/script` y `validate/scripts` ahora devuelven `parse_hints` inline.
+  El fix-loop baja de **3 calls (validate → debug/output → fix) a 2** (validate
+  con hints → fix).
+- 17 tests nuevos: 1 regresión NodePath, 14 reglas W4-c, 2 unified shape.
+
+### 🐛 Bug pre-existente crítico: 5 helpers perdidos en `shader_handlers.gd`
+- **Causa**: el W4 cleanup archivó `shader_ops_handlers.gd` pero dejó los CALLERS
+  `_shader_structural_issues`, `_parse_shader_type`, `_shader_uniforms_to_json`,
+  `_find_shader_material`, `_mode_to_str` (más `_uniform_type_str`, `_hint_str`).
+- **Efecto**: `shader/validate`, `shader/inspect`, `shader/get` crasheaban al
+  compilar el plugin. SCRIPT ERROR desde 2026-09-09 — **detectado por el
+  headless compile check del validador nuevo** (W4-c fue lo que lo expuso).
+- **Fix**: restaurados desde commit `0728708` (8 funciones, ~80 líneas).
+- **Lección meta**: el `validate/scripts` que ya teníamos ESTE handler como
+  roto y NO lo sabíamos. W4-c + el script `validate_plugin.bat` son la red
+  de seguridad que faltaba.
+
+### 🐛 Bug runtime: `NodePath == String` crashea en GDScript 4.5+
+- **Síntoma**: `node/set_props` con `skeleton_path: "Physical..."` (o cualquier
+  NodePath string) → "Invalid operands 'NodePath' and 'String' in operator '=='"
+  en `node_handlers.gd:372` → handler crashea → respuesta malformada → el
+  MCP cliente intenta parsear y falla con "Parse JSON failed: got 'Physical'".
+- **Fix**: `_values_match` coerce `NodePath↔String` antes de `==`.
+- Regresión: `_test_nodepath_string_coerce`.
+
+### 🐛 Bug UX: `no handler for prefix` sin diagnóstico
+- **Síntoma**: agente llama `godot_scene_script` (registrada en server.rs) →
+  plugin devuelve `{"ok":false,"error":"no handler for prefix: scene_script"}`.
+  El usuario no sabe si es bug MCP, bug de routing, o plugin desactualizado.
+- **Causa típica**: el plugin del proyecto del usuario fue instalado con
+  `install_plugin.py` SIN `--force` → el source del plugin quedó viejo (sin
+  `scene_script_handlers`). El server Rust SÍ conoce `scene_script` (rebuilt),
+  el plugin NO. Mismatch de versiones.
+- **Fix**: el dispatcher ahora devuelve `error` con la lista de prefixes
+  registrados + `hint` accionable: "install_plugin.py --force + reinicia Godot
+  (no hay hot-reload de plugins — Godot issue #11612)".
+- Regresión: `_test_dispatcher_unknown_prefix`.
+
+### ✨ Auto-reload del plugin (W5 §0.13, fix 2026-09-10)
+- **Problema**: `ensure_editor_connected` tenía fast-path SI el editor ya estaba
+  conectado → plugin stale en RAM, agent trabaja con código viejo. El sync a
+  disco (`ensure_plugin_installed`) solo corría en `launch_editor` (cuando NO
+  había editor). Resultado: editabas `addons/heren/*` → recompilabas server →
+  `cargo build` no tocaba nada en el editor abierto → `godot_scene_script`
+  fallaba con "no handler for prefix".
+- **Síntoma reportado**: agente llamó `godot_scene_script` → MCP devolvió
+  `-32603: no handler for prefix: scene_script`. La herramienta estaba en el
+  schema del server pero NO en el plugin del proyecto del usuario.
+- **Fix**: `ensure_editor_connected` ahora SIEMPRE corre `ensure_plugin_installed`
+  PRIMERO (content-aware sync, barato si no hay cambios). Si el editor YA está
+  conectado pero el plugin cambió en disco → mata editor + espera kill +
+  re-lanza con código nuevo. El agente solo tiene que RETRY la tool call.
+- **Mecánica**: `close_editor` (taskkill) + poll `is_editor_running` hasta
+  `EDITOR_KILL_WAIT_MS * 2` (3s) + call `launch_editor` (que re-escribe
+  `project.godot` con `enable_plugin_in_project` antes de spawn).
+- **Mensaje legacy borrado**: `launch_editor` ya no dice "ejecuta
+  session/reopen" (tool eliminada en §0.5). Ahora: "Auto-reload will restart
+  the editor on the next tool call".
+- **Limitación documentada**: si la escena tiene cambios sin guardar (dirty),
+  el agente los PIERDE al matar el editor. Para uso personal aceptable.
+- Tests Rust: `ensure_plugin_installed_is_idempotent` (idempotencia del sync).
+- Validación: `cargo test -p heren-server` → 113/113 passed.
+- Validación GDScript: `run_tests.gd` → 72/72 passed.
+
+### 📦 `install_plugin.py` ahora es content-aware
+- Por defecto solo chequea EXISTENCIA → "ya instalado" aunque los archivos
+  hayan cambiado.
+- Con `--force` (alias del futuro `--content-aware`): diff real de bytes,
+  copia solo lo que cambió, elimina archivos extra en dst (ej. `.uid`
+  regenerados por Godot).
+- `--dry-run` muestra el diff sin tocar disco.
+
+### 🆕 Script `scripts/validate_plugin.bat` (el "actualizador" honesto)
+- Ejecuta los 4 pasos OBLIGATORIOS de AGENTS.md §3.7 en 1 comando:
+  1. Sync fixtures (addons/heren → fixtures/empty_project/addons/heren)
+  2. Headless compile check (`godot --headless --editor --quit-after 5`)
+     → grep SCRIPT ERROR / Parse Error / Compile Error = 0
+  3. Test suite (`godot --headless --script res://addons/heren/tests/run_tests.gd`)
+  4. (opcional) `cargo build -p heren-server`
+- Sale con código 1 si CUALQUIER paso falla. Antes esto era flujo manual de
+  3-4 comandos.
+
+### 📊 Resultado de validación
+- **0 parse errors** en el grafo del plugin.
+- **71/71 tests passed** (67 originales + 4 nuevos: Bug NodePath + 3 W4-c
+  que se añadieron en la segunda iteración).
+- 17 tests W4-c cubren las 13 reglas heurísticas + 2 unified shape + 1
+  regresión + 1 sanity (no false positives en código válido).
+
+### 📌 Lecciones
+- **El validador ES la red de seguridad**: sin el headless compile check,
+  el bug de `shader_handlers.gd` pudo vivir semanas. Era exactamente el
+  tipo de regresión que la §0.13 (W4-c) iba a prevenir.
+- **`install_plugin.py` sin `--force` es engañoso**: dice "ya instalado"
+  pero los archivos pueden estar desactualizados. El comportamiento por
+  defecto se preserva por compatibilidad, pero `--force` es lo correcto
+  para iterar.
+- **`run_tests.gd` no detecta parse errors del plugin graph** — solo
+  ejecuta helpers puros. El compile check headless es la única red de
+  seguridad real para "el plugin CARGA?". W4-c más `validate_plugin.bat`
+  cierran ese gap.
+
+## [Unreleased] - 2026-09-05 - debug runtime_errors + validate/scripts (compilador del editor)
+
+### 🐛 Fix: plugin no cargaba (`Nonexistent function 'new' in base 'GDScript'` en editor_plugin.gd:92)
+- Causa raíz: `debug_handlers.gd` L342 `var count := _dbg_plugin.last_output_errors.size()` —
+  `last_output_errors` es Variant (sin tipo en el debugger plugin) → `.size()` retorna Variant →
+  **"Cannot infer the type"** = parse error → `preload()` devuelve GDScript en estado de error → `.new()` falla.
+- Fix: `var count: int = ...` (tipo explícito). Verificado con grafo headless: 0 SCRIPT ERROR.
+
+### 🐛 Fix: `validate/script` mentía `valid:true` para scripts rotos
+- `load()` de un .gd con errores **NO retorna null** en Godot 4.5: devuelve el GDScript en estado
+  de error (verificado empíricamente: `load_null=false, can_instance=false, reload_err=43`).
+- Fix: `handle_script` ahora hace `gdscript.reload()` → `ERR_PARSE_ERROR (43)` si el análisis
+  falla → retorna `ok:false, valid:false, reload_err` en vez de `ok:true` hardcodeado.
+
+### ✨ Nuevo: `validate/scripts` — validación BULK con el compilador del editor
+- Recorre todos los `.gd` bajo `dir` (default `res://`), `load()` + `reload()` cada uno.
+- `reload()` ES el analyzer del editor → mismo veredicto que el editor.
+- Devuelve `{ok, checked, broken_count, broken:[{path, reload_err}]}`; los mensajes humanos
+  ("Cannot infer...") caen al EditorLog → `debug/output filter=error`.
+- Salta `res://addons/heren/` (auto-reload del plugin vivo es riesgoso; los handlers del plugin
+  se validan con grafo headless + run_tests.gd).
+- Schema: `validate(action, dir)` — nuevo param `dir`.
+
+### 📌 Lección
+- `--check-only --script` en Godot 4.5 **SÍ detecta** "Cannot infer" (nota vieja de §12 era incorrecta).
+- Regla reforzada en AGENTS.md §3: tras CUALQUIER cambio .gd → grafo headless + run_tests.gd.
+
 ## [Unreleased] - 2026-09-04 - Fase C (tier 3 dynamic state: animation/skeleton/light/audio/camera)
 
 ### 🆕 Tier 3 dynamic state (Fase C, §0.11)
@@ -573,3 +727,252 @@ editor vivo, y arquitectura cliente/servidor WS.
 
 Versiones previas basadas en daemon standalone con WebSocket. Historia completa
 en AGENTS.md §8 (Decisiones Registry) y §9 (Testing/Benchmarking).
+
+---
+
+## [4.9] - 2026-09-09 - Archivo de AGENTS.md (compresión 123KB → 36KB)
+
+Historia completada movida desde AGENTS.md. Referencias vivas en AGENTS.md §0.12 (Plan Worker-First).
+
+### §0.1 E2E Round-1 (COMPLETADO)
+- P1/P2: `session/open` con project_path explícito; `scene/open` con `apply_scene_context` + `_scene_root(args)`.
+- 5/5 tools críticas E2E OK (session, scene, node, node_query, node_props).
+
+### §0.3 Debug D1-D4 (D1-D3 COMPLETADOS, D4 PENDIENTE)
+- D1: `debug/output` vía signal `debug_data` de ScriptEditorDebugger (EditorDebuggerPlugin._capture solo recibe mensajes con `:`).
+- D2: `debug/summary` snapshot completo 1 llamada (verificar props del plugin antes de usar: `first_session()`, `vars_pending`).
+- D3: `debug/run_scene` funcional pero frágil (hooks one-shot, reintentos 10x1s). D4 (probes de gameplay) → Plan W5.
+
+### §0.4 Bug report usuario (4/5 FIXED)
+- BUG1-4 fixed (coords globales, deserialize, set_prop verificación, save prioridad). BUG5 (Shader/Theme serializados vacíos) NO reproducido — 3 casos de prueba pasaron.
+
+### §0.8 Fase 0 (COMPLETADO)
+- Checklist Fase 0: `session/open` primero, `apply_scene_context`, `normalize_scene_path` en 8 tools, dirty set, flush-before-destroy, `session/reopen` flush+graceful_close.
+
+### §0.9 E2E Round-2 (COMPLETADO — lecciones en AGENTS.md §10)
+- P-B1..P-B13: todos bugs del traductor coder→handler (param_name vs name, set_prop connections inexistente, path con `:` colgante, forward con nombres MCP `godot_*` vs internos bare, etc.). Motivación directa del Plan Worker-First (§0.12): con workers no hay traductor.
+
+### §0.11 Fases A-E (COMPLETADO — contrato vivo en AGENTS.md §7)
+- Fase A: coords proactivas 13/13 handlers de mutación.
+- Fase B: `visual/spatial` (overlaps/distance/neighbors/layout/bounds) — módulo puro `visual_tool/spatial_tool.gd`.
+- Fase C: pureza 2D/3D verificada por tests (`_test_coords_of_node_2d_purity` / `_3d_purity`).
+- Fase D: `visual/summary` recursivo con warnings (z_fighting_risk, missing_material/texture/shape) — Validator Engine B lee este JSON.
+- Fase E: `visual_image` ELIMINADO (implementación rota: placeholder 2x2, timeout en play). Concepto re-vivable como W6 opt-in.
+- Fase F: tipos semánticos FlojoMCP (`GodotVariant`, `GodotDict`...) — 42 props de schema vacías → 0.
+
+### §11 Bugs arreglados (historial)
+- BUG 1: coords globales sin `is_inside_tree()` → warning `get_global_transform`.
+- BUG 2: deserialize de strings `res://` creaba UID sintético → corrompía project.godot.
+- BUG 3: Color/dicts anidados serializados como strings JSON por WS → `deserialize_value` parsea strings JSON.
+- BUG 4: `scene/save` usaba registry stale → handle_save misma prioridad que resolve_root.
+- P0.5: `input_map` persistencia real via ProjectSettings.set_setting + save.
+- P0.7: `resource/*` con `EditorFileSystem.update_file()` post-write.
+- P1/P2: session/open + scene/open con contexto explícito.
+
+---
+
+## [4.10] - 2026-09-09 - W0 Safety + W4 scene_script (Worker-First)
+
+### W0 — Protección de paths + snapshot-before-save
+- `heren_handler.gd`: statics `protected_reason()` / `snapshot_file()` / `restore_snapshot()` + `PROTECTED_PREFIXES`
+  (`addons/heren/`, `project.godot`, `.git/`, `.godot/`, `export_presets.cfg`).
+- `resource_handlers.gd`: delete/update/create_script/edit_script bloquean paths protegidos y
+  dejan snapshot en `.heren/backup/<file>.<ts>.bak` antes de tocar disco (recuperable en receipt).
+- Motivación: `resource/delete` verificada SIN protección (grep `protect` → 0) — el agente podía
+  borrarse a sí mismo (`addons/heren/plugin.cfg`) o destruir `project.godot`.
+
+### W4 — `scene_script` (worker GDScript del agente)
+- Nueva tool `scene_script` (run|list) + handler `handlers/scene_script.gd` + rutas en `_routes.gd`.
+- Contrato del worker: `@tool` + `extends RefCounted` + `func run(ctx) -> void` (fail-fast si no).
+- ctx API: `get_scene_root/get_scene_path/is_read_only/set_scene_root/own/instance_scene/template/
+  coords/get_node_or_null/find_nodes_by_name/ensure_unique_child_name/remove_node/clear_children/
+  log/error/mark_modified/output`.
+- Flujo transaccional: parse-check previo (reload err 43) → root (pestaña→registry→disco) →
+  snapshot W0 → `worker.run(ctx)` → save SOLO si `mark_modified()` → post-validate (validate/scene)
+  → si falla: restore snapshot. Modo `inspect`: PackedScene detached read-only, liberado al final.
+- **Contrato de errores**: fallo del worker = `ok:true + ran:false` + diagnósticos + `script_path`
+  (el payload sobrevive el transporte; `ok:false` viaja como JSON-RPC error SIN payload).
+- Innovaciones vs Fennara: `ctx.template()` (templates transversales dentro del worker),
+  `ctx.coords()` (sistema ADR-005 consultable en el worker), receipt con coords proactivas
+  (root tier-N + nodos tocados tier-1) + `changes` (semantic diff de ops mediadas por ctx).
+- server.rs: tool `scene_script` (forward_mutating en edit, forward en inspect/list).
+
+### Bugs encontrados en E2E (arreglados)
+- Cache GDScript: `load()` de .gd ya cargado devuelve source VIEJO → refrescar `source_code`
+  desde disco antes de `reload()` (workflow de retry por script_path).
+- `add_child()` con nombre en conflicto + `force_readable_name=false` → `@Class@ID` (no "Tower2").
+  Workers deben usar `ctx.ensure_unique_child_name()` antes de add_child.
+- EFS scan en frío: assets recién copiados invisibles hasta scan (metadata.json → template null).
+  Confirma necesidad de W4b (filesystem/scan + readiness).
+
+### Validación
+- Suite GDScript: 49 passed, 0 failed (6 tests nuevos W0/W4).
+- Rust: cargo test OK (104 tests), clippy -D warnings limpio.
+- E2E stdio NDJSON contra editor vivo (`.temp/e2e_scene_script.py`): **27 passed, 0 failed**
+  (worker edit+save, transaccionalidad sin mark_modified, inspect detached, parse-check fail-fast,
+  retry por script_path, contrato base/run, ctx.error, ctx.template, W0 protección, list).
+
+---
+
+## [4.11] - 2026-09-09 - E2E intrincado "Estación Omega" (vía MCP directo, GenericStep)
+
+### Qué se probó
+Escena compleja construida 100% por workers a través del flujo planning REAL
+(scene/plan + orchestrate con GenericStep passthrough → scene_script/run):
+- Jerarquía anidada (Station/Section1-6/Hull+Body+Col), 12 pilares procedurales
+  con CylinderMesh, materiales StandardMaterial3D, luces (Directional+Omni),
+  Camera3D con look_at_from_position (gotcha detached), AnimationPlayer +
+  AnimationLibrary + track "Station:rotation:y", AnimationTree con
+  AnimationNodeStateMachine (2 nodos + 2 transiciones), AudioStreamPlayer,
+  HUD (CanvasLayer + template health_bar + Button con anchors), Skeleton3D
+  con 4 huesos y poses, instancia de subescena (crosshair) vía instance_scene.
+
+### Resultados (ground truth: .tscn parseado + coords MCP)
+- 68 nodos, 0 nombres @-auto, todos los recursos serializados.
+- Cam transform con el look_at aplicado (pitch -45° persistido).
+- anim_player = ../Anim (binding tree→player sobrevivió save+reload).
+- Pilares en espiral persistidos (Pillar01 → 20,0,0).
+- health_bar y Cross como instancias ExtResource (no aplanadas).
+- Skeleton: 4 huesos vivos y en disco (bones/0/name = "Spine"...).
+- QA dual-engine: depth 5, bounds 3D ~55×13.5×54, 12 missing_material
+  warnings = detección CORRECTA (los pilares no tienen material).
+
+### Bugs/hallazgos nuevos
+- `Skeleton3D.add_bones()` NO existe en 4.7 → worker abortó silenciosamente
+  en esa línea (el save lo hizo un step posterior). Fix del worker: patrón
+  has_method() con fallback a add_bone(). **W2 class_info es la prevención
+  estructural — demostrado empíricamente.**
+- orchestrate no devuelve receipts por step (solo applied_state) — los
+  logs/outputs del worker se pierden en el flujo planning.
+- orchestrate exige que la escena del plan exista ("no scene open in editor")
+  — el flujo new-scene de scene_script funciona por llamada directa pero no
+  vía orchestrate. Workaround: scene/create primero.
+- visual/coords con node_path cae a contexto stale (misma respuesta para
+  "Rig" y "AnimTree") — bug preexistente del handler visual, investigar.
+
+### §0.5 re-scoped por Worker-First
+- S (roles + editor visible del agente): MÁS valioso (1 op grande e invisible
+  en vez de 50 pequeñas).
+- R (codec): CRÍTICO — strings GDScript enormes + receipts; prerrequisito W5.
+- U'': simplificado — 1 lock por worker; el commit atómico ya lo hizo W4;
+  _pending_ops replay casi obsoleto.
+- T: se encoge — resource/update muere (worker); sobreviven move/deps/reimport.
+
+---
+
+## [4.12] - 2026-09-09 - W1 + W2 + W3 (percepción y prevención)
+
+### W2 — `node_query class_info` + `props_diff` (ClassDB real)
+- `node_query class_info {class_name, filter?, include_inherited?}`: métodos (name+args+return,
+  const/vararg), propiedades (STORAGE only), señales, enums — de ClassDB de la versión conectada.
+  `filter=substring` acota (ej: `class_info Skeleton3D filter=bone` responde "¿existe add_bones?" de un vistazo).
+- `node_query props_diff {node_path}`: solo las props que DIFIEREN del default de la clase
+  (patrón Fennara "get_node_properties" — tokens mínimos). Cap 64 + truncated flag.
+- Motivación empírica: `Skeleton3D.add_bones()` NO existe en 4.7 y el worker del E2E Omega
+  abortó silenciosamente. class_info lo habría prevenido.
+- Ironía registrada: la primera implementación usó `ClassDB.is_virtual()` (no existe en 4.7)
+  y un `@warning_ignore` inválido — detectado por el grafo headless en el primer pase.
+
+### W1 — Diagnósticos inline en create/edit_script
+- `resource/create_script` y `edit_script` ejecutan `_script_diagnostics()` (load + refresh
+  source desde disco + reload) y devuelven `diagnostics: {valid, reload_err?, error?}` en la
+  MISMA respuesta. Fix-loop de 3 llamadas → 1.
+- El refresh de source_code evita el cache de recursos (source viejo en re-ediciones).
+
+### W3 — Guía inyectada en el proyecto del usuario
+- `addons/heren/ai/guidelines.md` viaja DENTRO del plugin (la sync la copia a cada proyecto).
+- Contenido: contrato scene_script, reglas del worker (has_method, ensure_unique_child_name,
+  own/PackedScene, detached ≠ runtime, tipado explícito, ctx.coords), jerarquía de percepción,
+  validación, límites (paths protegidos, EFS en frío), planning opcional.
+- `project/setup_plugin` reporta la ruta de la guía en su respuesta.
+
+### Validación
+- Suite GDScript: 51 passed, 0 failed (2 tests nuevos W1/W2).
+- heren-build.bat completo: debug + tests + release + clippy -D warnings — TODO VERDE
+  (el release pudo escribirse tras matar los servers con permiso del General).
+- Binario target/release actualizado con W0+W4+W1+W2+W3.
+
+---
+
+## [4.13] - 2026-09-09 - R0: Auditoría de codec + fix R1 (rediseño sesiones, fase 1)
+
+### R0 — Auditoría de codec (23/23 PASS)
+Round-trip de tipos complejos por el pipeline completo MCP→WS→plugin→receipt
+(`.temp/e2e_codec.py`, binario nuevo):
+- set_props con dicts estructurados (Vector3 position, euler rotation, scale) ✅
+- Strings JSON-anidados en props String: round-trip INTACTO (tras fix R1) ✅
+- Strings de 10KB+unicode ✅ · unicode/emoji en valores, logs, node names y
+  lookups por nombre unicode ✅ · worker receipts con outputs anidados ✅
+- `node_query class_info` (W2) verificado en el mismo pase ✅
+
+### Fix R1 — deserialización type-aware (bug real encontrado por la auditoría)
+- `coords.gd deserialize_typed`: si target_type == TYPE_STRING y el valor es
+  String, devolverlo TAL CUAL. Antes: valores no-Array iban directo a
+  `deserialize_value`, que parsea strings "JSON-looking" → un valor string
+  legítimo con JSON dentro se convertía en Dictionary (1→1.0, escapes
+  alterados) y el set_prop fallaba la verificación de valor aplicado.
+- El parseo JSON de strings sigue disponible para props NO-String (fix BUG 3 intacto).
+
+### Lecciones del audit (bugs del TEST, no del codec — documentados)
+- `rotation` en Node3D es euler Vector3, NO Quaternion (dict {x,y,z,w} falla).
+- set_prop de `name` RENOMBRA el nodo — los lookups posteriores por el nombre
+  viejo fallan (usar una prop no-identidad para tests de strings, ej: Label.text).
+- GDScript NO tiene repetición de strings ("y" * 5000 = compile error con tipos
+  literales) — usar `.repeat()`. GDScript cuenta codepoints: "ñ🦀" = 2 chars.
+- inspect lee del DISCO — scene/save antes de inspeccionar nodos solo en memoria.
+
+### Estado del rediseño de sesiones (§0.5 re-scoped)
+- ~~R0~~ ✅ (esta fase) · R3 (fuzz permanente) pendiente · S-cierre: S1/S2/S4 ya
+  existen (registry con rol, launch_agent_editor --heren-agent,
+  call_tool_with_role) — auditoría de gaps pendiente · U''-reducido (lock por
+  worker + EditorToaster) pendiente · W4b pendiente.
+
+### Validación
+- Suite GDScript: 51 passed, 0 failed · heren-build.bat completo VERDE.
+
+---
+
+## [4.14] - 2026-09-09 - Sin sesiones (Fennara-style): la herramienta `session` se elimina
+
+### Cambio arquitectural (decisión General 2026-09-09)
+**La tool `session` se elimina.** El server no tiene concepto de lifecycle de sesión:
+el editor conectado ES la sesión (ADR-004). Sin `agent_id`, sin roles, sin lock por
+escena (también eliminados en esta fase — el save transaccional + sync_from_disk
+cubren la seguridad de disco).
+
+### Qué cambia
+- **`session/open|close|info|status|list|diagnose|reopen`**: ELIMINADOS.
+  Reemplazo: cualquier tool con `project_path` funciona sin preámbulo.
+- **Auto-launch transparente**: el primer tool call con `project_path` paga el coste
+  de launch (3-10s) si no hay editor conectado. Implementado en
+  `ensure_editor_connected` (server.rs). Los siguientes son ~20ms.
+- **`HEREN_AUTO_LAUNCH=0`** deshabilita el auto-launch (el usuario abre Godot
+  manualmente con el plugin).
+- **`HEREN_DEFAULT_PROJECT=<path>`** fija el proyecto por defecto (si no, cae
+  a `last_project` server-side).
+- **`health`** absorbe las antiguas acciones de session: estado global + detalle
+  por proyecto + `diagnose=true` ejecuta el debugger unificado
+  (integridad plugin + grafo headless sandbox).
+- **Lifecycle del editor = del usuario**: el server **nunca** mata el editor al
+  desconectar. El editor vive; el WS se reconecta vía discovery
+  `.heren/server_port.json`.
+- Sin `agent_id`, sin roles: el registry rutea por `project_path` al único
+  editor del proyecto.
+
+### Archivos
+- `crates/heren-server/src/server.rs`: `ensure_editor_connected` (nuevo helper),
+  `forward`/`forward_mutating` lo invocan, nueva `health` tool, `session`
+  eliminada (20058 → 5023 bytes), role infrastructure eliminada
+  (`active_role_store`/`set_active_role`/`get_active_role`/`clear_active_role`).
+- `registry.rs`: `call_tool_with_role` queda (no usado por server; queda por
+  compat con el plugin si lo invoca directamente). No se elimina.
+- AGENTS.md §0.5 reescrito, §3 regla 1, §6 tool table, §8 "Sin sesiones", §11 EFS note, §12 checklist.
+- guidelines.md (en el plugin): sin menciones a `session/open`.
+- README.md / README.en.md: ciclo de vida y robustez actualizados.
+
+### Validación
+- tools_parity 7/7 PASS (MIN_TOOLS=15 satisfecho: 17 tools restantes).
+- cargo test 84/84 PASS.
+- clippy -D warnings: clean.
+- heren-build.bat completo: debug + tests + release + clippy — VERDE.
+- Binario target/release actualizado (11.8MB).

@@ -7,6 +7,7 @@ use flojo_mcp::prelude::*;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
+use tracing::info;
 
 use crate::editor::normalize_project_path;
 use crate::pure::{args, normalize_scene_path, unwrap_result};
@@ -52,23 +53,6 @@ fn apply_scene_context(proj: &str, mut a: Value) -> Value {
     a
 }
 
-/// Rol activo por proyecto (Fase S — agente visible). Cuando el agente hace
-/// session/open con mode:"isolated", el server recuerda que las siguientes
-/// tools deben ir al editor agente (role=agent:<id>) en vez de al user.
-fn active_role_store() -> &'static Mutex<HashMap<String, String>> {
-    static ACTIVE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
-    ACTIVE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-fn set_active_role(proj: &str, role: &str) {
-    active_role_store().lock().unwrap().insert(proj.to_string(), role.to_string());
-}
-fn get_active_role(proj: &str) -> Option<String> {
-    active_role_store().lock().unwrap().get(proj).cloned()
-}
-fn clear_active_role(proj: &str) {
-    active_role_store().lock().unwrap().remove(proj);
-}
-
 fn last_project_store() -> &'static std::sync::Mutex<Option<String>> {
     static LAST: std::sync::OnceLock<std::sync::Mutex<Option<String>>> = std::sync::OnceLock::new();
     LAST.get_or_init(|| std::sync::Mutex::new(None))
@@ -85,7 +69,8 @@ fn get_last_project() -> Option<String> {
 pub struct Heren;
 
 /// Resuelve el project_path: el editor conectado ES la sesión (ADR-004).
-/// Fallback robusto: explicit → last_project → active_role → connected_projects (1) → error con diagnóstico.
+/// Sin tool de session: el primer tool call con project_path paga el auto-launch
+/// (ensure_editor_connected). Fallback: explicit → last_project → único conectado → error.
 async fn resolve_project(project_path: Option<&str>) -> Result<String, ToolError> {
     // 1. Parámetro explícito
     if let Some(p) = project_path {
@@ -95,60 +80,143 @@ async fn resolve_project(project_path: Option<&str>) -> Result<String, ToolError
             return Ok(norm);
         }
     }
-    // 2. Último proyecto usado en esta sesión (persiste entre tool calls)
+    // 2. Último proyecto usado en este proceso (entre tool calls)
     if let Some(last) = get_last_project() {
         return Ok(last);
     }
-    // 3. Proyecto con rol activo (Fase S: agente visible tiene prioridad)
-    if let Some((proj, _role)) = {
-        let store = active_role_store().lock().unwrap();
-        store.iter().next().map(|(p, r)| (p.clone(), r.clone()))
-    } {
-        set_last_project(&proj);
-        return Ok(proj);
-    }
-    // 4. Un solo proyecto conectado → usarlo
+    // 3. Un solo proyecto conectado → usarlo
     let projects = crate::registry::EditorRegistry::global().connected_projects().await;
     if projects.len() == 1 {
         let sole = projects[0].clone();
         set_last_project(&sole);
         return Ok(sole);
     }
-    // 5. Múltiples proyectos → error con diagnóstico
+    // 4. Múltiples o ninguno → error con diagnóstico
     let editors = crate::registry::EditorRegistry::global().connected_editors().await;
     let detail = if editors.is_empty() {
         "ningún editor conectado".to_string()
     } else {
-        format!("proyectos conectados: {}", editors.iter().map(|(p, r, _)| format!("{p} (role={r})")).collect::<Vec<_>>().join(", "))
+        format!("proyectos conectados: {}", editors.iter().map(|(p, _, _)| p.clone()).collect::<Vec<_>>().join(", "))
     };
     Err(ToolError::invalid_params(format!(
-        "project_path required — {detail}. Usa session/open(project_path=...) primero."
+        "project_path required — {detail}. Pasa project_path explícito o abre Godot con el plugin y vuelve a llamar."
+    )))
+}
+
+/// Garantiza que hay un editor conectado para `project_path`.
+/// Si no hay editor Y `HEREN_AUTO_LAUNCH != 0`, lanza uno y espera conexión (timeout
+/// desde `constants::EDITOR_CONNECT_TIMEOUT_MS`). Si no hay editor Y auto_launch=0,
+/// retorna error claro: el usuario abre Godot con el plugin o habilita auto_launch.
+///
+/// Es la versión "sin sesión" del antiguo `session/open`: no hay tool de sesión;
+/// el primer tool call con project_path paga el coste de launch (3-10s), los
+/// siguientes son ~20ms.
+///
+/// Auto-reload del plugin (§0.13 W4-c, fix 2026-09-10): en CADA tool call
+/// sincronizamos `addons/heren/` source → proyecto (content-aware, barato si
+/// nada cambió). Si el editor YA está conectado pero el plugin cambió en
+/// disco, lo matamos para forzar recarga del código nuevo (Godot no tiene
+/// hot-reload de plugins — issue #11612). Esto evita que el agente trabaje
+/// con un plugin stale que no conoce las tools/acciones recién añadidas.
+async fn ensure_editor_connected(
+    project_path: &str,
+    godot_path: Option<&str>,
+    registry: &EditorRegistry,
+) -> Result<(), ToolError> {
+    // Discovery (fix 2026-09-18): escribir `.heren/server_port.json` EN EL PROYECTO
+    // (no en CWD) para que el editor sepa reconectar al server correcto.
+    // Solo se ejecuta cuando hay un project_path real (primer tool call con proyecto).
+    let port = ws_port();
+    crate::discovery::write_discovery(&std::path::PathBuf::from(project_path), port);
+
+    // 1. SIEMPRE sync source → proyecto (content-aware, barato si no cambió).
+    let (plugin_changed, _sync_msg) = crate::launcher::ensure_plugin_installed(project_path);
+
+    // 2. Si editor conectado y plugin al día → fast path (~0ms).
+    if registry.has_editor(project_path).await {
+        if !plugin_changed {
+            return Ok(());
+        }
+        // Plugin stale: matar editor para que el path de launch siguiente
+        // arranque con el código nuevo. El registry también debe olvidarlo.
+        info!(
+            project_path,
+            "plugin changed on disk; killing running editor to reload new code (Godot #11612)"
+        );
+        crate::launcher::close_editor(project_path);
+        // Esperar kill real (taskkill es async en Windows).
+        let kill_deadline = std::time::Instant::now()
+            + std::time::Duration::from_millis(crate::constants::EDITOR_KILL_WAIT_MS * 2);
+        while std::time::Instant::now() < kill_deadline {
+            if !crate::launcher::is_editor_running(project_path) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        // El registry olvida al editor cuando el WS se cierra (ver
+        // ws_plugin_server); aquí solo esperamos el timeout natural o el
+        // próximo has_editor lo verá como false.
+        // ⚠️ Nota: si la escena tiene cambios sin guardar (dirty), el agente
+        // los PIERDE al matar el editor. Para uso personal es aceptable; para
+        // producción habría que chequear dirty_set del registry y warnear.
+    }
+
+    // 3. Si llegamos aquí sin editor → lanzar.
+    let auto_launch = std::env::var("HEREN_AUTO_LAUNCH")
+        .map(|v| v != "0" && v.to_lowercase() != "false")
+        .unwrap_or(true);
+    if !auto_launch {
+        return Err(ToolError::internal(format!(
+            "no_editor_connected: {project_path} y HEREN_AUTO_LAUNCH=0. \
+             Abre Godot con el plugin o habilita auto_launch."
+        )));
+    }
+    let port = ws_port();
+    let outcome = crate::launcher::launch_editor(project_path, port, godot_path, false);
+    if !outcome.launched {
+        return Err(ToolError::internal(format!(
+            "launch_failed: {} (proyecto={})",
+            outcome.msg, project_path
+        )));
+    }
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_millis(crate::constants::EDITOR_CONNECT_TIMEOUT_MS);
+    let mut wait_ms = 0u64;
+    while std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(
+            crate::constants::EDITOR_CONNECT_POLL_MS,
+        ))
+        .await;
+        wait_ms += crate::constants::EDITOR_CONNECT_POLL_MS;
+        if registry.has_editor(project_path).await {
+            return Ok(());
+        }
+    }
+    Err(ToolError::internal(format!(
+        "editor lanzado pero NO conecto al WS server en {wait_ms}ms. \
+         Posibles causas: crash al arrancar, plugin con SCRIPT ERROR, puerto WS ocupado. \
+         Usa health (diagnose=true) para el debugger unificado."
     )))
 }
 
 /// Reenvía tools/call al editor y devuelve el resultado desenvuelto.
-/// Fase S: respeta el rol activo (agent vs user) si existe.
+/// Sin role routing (la tool session que lo gestionaba ya no existe):
+/// el primer editor conectado para el proyecto recibe la tool.
 async fn forward(
     registry: &EditorRegistry,
     project_path: &str,
     tool_name: &str,
     args: Value,
 ) -> Result<Value, ToolError> {
-    let role = get_active_role(project_path);
-    let raw = if let Some(r) = role.as_deref() {
-        registry.call_tool_with_role(tool_name, args, project_path, Some(r)).await
-            .map_err(ToolError::internal)?
-    } else {
-        registry.call_tool(tool_name, args, project_path).await
-            .map_err(ToolError::internal)?
-    };
+    ensure_editor_connected(project_path, None, registry).await?;
+    let raw = registry.call_tool(tool_name, args, project_path).await
+        .map_err(ToolError::internal)?;
     Ok(unwrap_result(&raw))
 }
 
 /// ReenvÃ­a una MUTACIÃ“N (tool que modifica el Ã¡rbol del editor) y marca la
 /// escena como dirty. RediseÃ±o persistencia 2026-08-07: el server recuerda
-/// quÃ© escenas tienen cambios sin guardar â†’ session/close hace flush y
-/// session/info las expone. scene/save limpia el dirty (ver `scene` tool).
+/// quÃ© escenas tienen cambios sin guardar â†’ scene/save limpia el dirty.
 async fn forward_mutating(
     registry: &EditorRegistry,
     project_path: &str,
@@ -156,6 +224,7 @@ async fn forward_mutating(
     args: Value,
     scene_path: &str,
 ) -> Result<Value, ToolError> {
+    ensure_editor_connected(project_path, None, registry).await?;
     let result = forward(registry, project_path, tool_name, args).await?;
     // Marcar dirty solo si la mutaciÃ³n tuvo Ã©xito (ok=true) y hay scene_path.
     if !scene_path.is_empty() {
@@ -170,389 +239,6 @@ async fn forward_mutating(
     Ok(result)
 }
 
-// ============================================================
-// SESSION
-// ============================================================
-
-#[tool(
-    description = "Sesiones: open|reopen|close|list|info|health|diagnose|status. open lanza el editor si no hay uno conectado (auto-launch) y espera conexión WS. mode={isolated,attached} (default attached). status = snapshot de roles, locks y escenas dirty. diagnose = integridad del plugin + grafo headless + estado editor."
-)]
-async fn session(
-    action: String,
-    project_path: Option<String>,
-    godot_path: Option<String>,
-    close_editor: Option<bool>,
-    mode: Option<String>,
-    // Mantenido en signatura para compat binaria con clientes que lo envíen.
-    // Solo se usa cuando mode=isolated; en flujo normal es ignorado.
-    #[allow(dead_code)]
-    agent_id: Option<String>,
-) -> Result<Value, ToolError> {
-    let registry = EditorRegistry::global();
-    let kill_editor = close_editor.unwrap_or(false);
-    match action.as_str() {
-        "list" => Ok(json!({
-            "ok": true,
-            "projects": registry.connected_projects().await,
-            // Fase S: también expone detalle por rol para debug multi-editor
-            "editors": registry.connected_editors().await.iter().map(|(proj, role, ver)| json!({
-                "project_path": proj,
-                "role": role,
-                "plugin_version": ver,
-            })).collect::<Vec<_>>(),
-        })),
-        "status" => {
-            // Snapshot completo de sesiones (Fase S) — 1 llamada para diagnosticar multi-editor.
-            let editors = registry.connected_editors().await;
-            let projects = registry.connected_projects().await;
-            let active_roles: Vec<Value> = {
-                let store = active_role_store().lock().unwrap();
-                store.iter().map(|(proj, role)| json!({"project_path": proj, "active_role": role})).collect()
-            };
-            // dirty por proyecto
-            let mut dirty_map = serde_json::Map::new();
-            for proj in &projects {
-                let dirty = registry.dirty_scenes(proj).await;
-                if !dirty.is_empty() {
-                    dirty_map.insert(proj.clone(), json!(dirty));
-                }
-            }
-            Ok(json!({
-                "ok": true,
-                "projects": projects,
-                "editors": editors.iter().map(|(proj, role, ver)| json!({
-                    "project_path": proj,
-                    "role": role,
-                    "plugin_version": ver,
-                })).collect::<Vec<_>>(),
-                "active_roles": active_roles,
-                "dirty_scenes": dirty_map,
-                "count": editors.len(),
-            }))
-        }
-        "health" => {
-            let editors = registry.connected_projects().await;
-            let source = crate::launcher::source_plugin_version();
-            // Â¿AlgÃºn editor conectado corre una versiÃ³n antigua del plugin?
-            let mut stale: Vec<Value> = Vec::new();
-            for proj in &editors {
-                let live = registry.editor_plugin_version(proj).await;
-                if let Some(live) = &live {
-                    if let Some(src) = &source {
-                        if live != src {
-                            stale.push(json!({
-                                "project_path": proj,
-                                "plugin_version_editor": live,
-                                "plugin_version_source": src,
-                                "remedy": "session/reopen para recargar el plugin con el codigo nuevo",
-                            }));
-                        }
-                    }
-                }
-            }
-            Ok(json!({
-                "ok": true,
-                "connected_projects": editors,
-                "count": editors.len(),
-                "plugin_source_version": source,
-                "stale_editors": stale,
-            }))
-        }
-        "info" => {
-            let proj = resolve_project(project_path.as_deref()).await?;
-            let connected = registry.has_editor(&proj).await;
-            let source = crate::launcher::source_plugin_version();
-            let live = registry.editor_plugin_version(&proj).await;
-            let installed = crate::launcher::read_plugin_version(&proj);
-            let stale = matches!((&live, &source), (Some(l), Some(s)) if l != s);
-            let dirty = registry.dirty_scenes(&proj).await;
-            let unexpected = registry.unexpected_close(&proj).await;
-            Ok(json!({
-                "ok": true,
-                "project_path": proj,
-                "connected": connected,
-                "plugin_version_source": source,
-                "plugin_version_installed": installed,
-                "plugin_version_editor": live,
-                "plugin_stale": stale,
-                "plugin_stale_remedy": if stale {
-                    "El editor corre una version ANTIGUA del plugin. Ejecuta session/reopen para recargar el codigo nuevo; hasta entonces las tools usan la version vieja."
-                } else {
-                    ""
-                },
-                // RediseÃ±o persistencia 2026-08-07:
-                "dirty_scenes": dirty,
-                "unexpected_close": unexpected.is_some(),
-                "unexpected_close_dirty": unexpected.unwrap_or_default(),
-            }))
-        }
-        "open" => {
-            // Auto-launch del editor (port de godot_launcher.py).
-            let proj = resolve_project(project_path.as_deref()).await?;
-            let port = ws_port();
-            // RediseÃ±o persistencia: al reconectar, limpiar el flag de cierre
-            // inesperado (el agente ya fue avisado por el error de la tool).
-            registry.clear_unexpected_close(&proj).await;
-            let mode_str = mode.as_deref().unwrap_or("attached").to_lowercase();
-            let is_isolated = mode_str == "isolated";
-            if is_isolated {
-                let aid = agent_id.clone().unwrap_or_else(|| "default".to_string());
-                let role = format!("agent:{aid}");
-                let editor_connected = registry.has_editor_with_role(&proj, &role).await;
-                let outcome = crate::launcher::launch_agent_editor(&proj, &aid, port, godot_path.as_deref());
-                let dirty = registry.dirty_scenes(&proj).await;
-                let mut connected = editor_connected;
-                let mut wait_ms: u64 = 0;
-                if outcome.launched && !editor_connected {
-                    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(crate::constants::EDITOR_CONNECT_TIMEOUT_MS);
-                    while std::time::Instant::now() < deadline {
-                        tokio::time::sleep(std::time::Duration::from_millis(crate::constants::EDITOR_CONNECT_POLL_MS)).await;
-                        wait_ms += crate::constants::EDITOR_CONNECT_POLL_MS;
-                        if registry.has_editor_with_role(&proj, &role).await { connected = true; break; }
-                    }
-                }
-                if outcome.launched && !connected {
-                    return Err(ToolError::internal(format!("agent editor lanzado pero NO conecto al WS en {wait_ms}ms (role={role}). Ejecuta session/diagnose.")));
-                }
-                if connected { set_active_role(&proj, &role); }
-                return Ok(serde_json::json!({
-                    "ok": true,
-                    "project_path": proj,
-                    "mode": "isolated",
-                    "role": role,
-                    "launched": outcome.launched,
-                    "connected": connected,
-                    "connect_wait_ms": wait_ms,
-                    "plugin_changed": outcome.plugin_changed,
-                    "plugin_version_source": outcome.source_version,
-                    "plugin_version_installed": outcome.installed_version,
-                    "message": outcome.msg,
-                    "dirty_scenes": dirty,
-                    "note": "agente VISIBLE en segunda ventana (mismo proyecto, sin clon) — plugin del agente conecta con role agent:<id>"
-                }));
-            }
-            // Si hay un editor del proyecto YA conectado, se reutiliza; si hay
-            // un proceso zombie sin conectar, launch_editor lo mata y relanza.
-            let editor_connected = registry.has_editor_with_role(&proj, "user").await || registry.has_editor(&proj).await;
-            let outcome = crate::launcher::launch_editor(
-                &proj,
-                port,
-                godot_path.as_deref(),
-                editor_connected,
-            );
-            let dirty = registry.dirty_scenes(&proj).await;
-            // D2 (2026-08-15): si se lanzÃ³ un editor nuevo, esperar a que el
-            // plugin conecte al WS (polling 500ms, timeout 15s). Elimina la
-            // carrera "launched:true pero la siguiente tool falla no editor
-            // connected" y detecta crash al arrancar.
-            let mut connected = editor_connected;
-            let mut wait_ms: u64 = 0;
-            if outcome.launched && !editor_connected {
-                let deadline = std::time::Instant::now()
-                    + std::time::Duration::from_millis(crate::constants::EDITOR_CONNECT_TIMEOUT_MS);
-                while std::time::Instant::now() < deadline {
-                    tokio::time::sleep(std::time::Duration::from_millis(
-                        crate::constants::EDITOR_CONNECT_POLL_MS,
-                    ))
-                    .await;
-                    wait_ms += crate::constants::EDITOR_CONNECT_POLL_MS;
-                    if registry.has_editor(&proj).await {
-                        connected = true;
-                        break;
-                    }
-                }
-            }
-            if connected { set_active_role(&proj, "user"); }
-            if outcome.launched && !connected {
-                return Err(ToolError::internal(format!(
-                    "editor lanzado pero NO conecto al WS server en {wait_ms}ms. \
-                     Posibles causas: crash al arrancar, plugin con SCRIPT ERROR, \
-                     o puerto WS ocupado. Ejecuta session/diagnose para el \
-                     debugger unificado (integridad plugin + grafo headless + \
-                     estado editor)."
-                )));
-            }
-            Ok(json!({
-                "ok": true,
-                "project_path": proj,
-                "daemon_active": true,
-                "launched": outcome.launched,
-                "connected": connected,
-                "connect_wait_ms": wait_ms,
-                "plugin_changed": outcome.plugin_changed,
-                "plugin_version_source": outcome.source_version,
-                "plugin_version_installed": outcome.installed_version,
-                "message": outcome.msg,
-                "dirty_scenes": dirty,
-                "note": "editor abierto/reutilizado â€” el plugin conecta al WS server automÃ¡ticamente; si el plugin cambio en disco y el editor ya estaba conectado, ejecuta session/reopen para recargar el codigo nuevo",
-            }))
-        }
-        "reopen" => {
-            // Recarga limpia: mata el editor (aunque estÃ© conectado) y relanza.
-            // Usado tras settings read-at-startup que devuelven
-            // restart_required: true, o para recargar el plugin actualizado.
-            // Reusa el contexto del proyecto â€” el agente NO repite project_path.
-            //
-            // Fix 2026-08-07: reopen es un reinicio DELIBERADO del editor â€”
-            // igual que session/close: flush dirty ANTES del kill y marcar
-            // GRACEFUL para que la desconexiÃ³n WS que sigue NO marque
-            // unexpected_close. Tras relanzar, limpiar cualquier flag previo
-            // (el editor nuevo conecta limpio).
-            let proj = resolve_project(project_path.as_deref()).await?;
-            let port = ws_port();
-            let dirty = registry.dirty_scenes(&proj).await;
-            let mut flushed: Vec<String> = Vec::new();
-            let mut failed: Vec<String> = Vec::new();
-            for scene in &dirty {
-                match forward(registry, &proj, "scene/save", json!({"scene_path": scene})).await {
-                    Ok(_) => {
-                        registry.clean_dirty(&proj, scene).await;
-                        flushed.push(scene.clone());
-                    }
-                    Err(_) => failed.push(scene.clone()),
-                }
-            }
-            registry.mark_graceful_close(&proj).await;
-            let killed = crate::launcher::close_editor(&proj);
-            registry.take_graceful_close(&proj).await;
-            if killed {
-                // esperar a que libere el lock
-                std::thread::sleep(std::time::Duration::from_millis(
-                    crate::constants::EDITOR_KILL_WAIT_MS,
-                ));
-            }
-            registry.clear_unexpected_close(&proj).await;
-            let outcome = crate::launcher::launch_editor(
-                &proj,
-                port,
-                godot_path.as_deref(),
-                false, // tras el kill nunca hay editor conectado
-            );
-            Ok(json!({
-                "ok": true,
-                "project_path": proj,
-                "killed_editor": killed,
-                "launched": outcome.launched,
-                "plugin_changed": outcome.plugin_changed,
-                "plugin_version_source": outcome.source_version,
-                "plugin_version_installed": outcome.installed_version,
-                "flushed_scenes": flushed,
-                "flush_failed": failed,
-                "message": outcome.msg,
-            }))
-        }
-        "close" => {
-            let proj = resolve_project(project_path.as_deref()).await?;
-            clear_active_role(&proj);
-            clear_active_role(&proj);
-            // RediseÃ±o persistencia 2026-08-07:
-            // 1. Flush: si hay escenas dirty, guardarlas ANTES de cerrar
-            //    (el editor sigue vivo â€” podemos pedir scene/save).
-            // 2. Marcar cierre GRACEFUL para que la desconexiÃ³n WS que sigue
-            //    NO marque unexpected_close.
-            let dirty = registry.dirty_scenes(&proj).await;
-            let mut flushed: Vec<String> = Vec::new();
-            let mut failed: Vec<String> = Vec::new();
-            for scene in &dirty {
-                match forward(registry, &proj, "scene/save", json!({"scene_path": scene})).await {
-                    Ok(_) => {
-                        registry.clean_dirty(&proj, scene).await;
-                        flushed.push(scene.clone());
-                    }
-                    Err(_) => failed.push(scene.clone()),
-                }
-            }
-            if kill_editor {
-                registry.mark_graceful_close(&proj).await;
-                let killed = crate::launcher::close_editor(&proj);
-                registry.take_graceful_close(&proj).await;
-                Ok(json!({
-                    "ok": true,
-                    "project_path": proj,
-                    "closed_editor": killed,
-                    "flushed_scenes": flushed,
-                    "flush_failed": failed,
-                }))
-            } else {
-                // Sin matar el editor: el plugin queda reconectando, listo para
-                // la prÃ³xima sesiÃ³n (decisiÃ³n del General).
-                Ok(json!({
-                    "ok": true,
-                    "project_path": proj,
-                    "closed_editor": false,
-                    "flushed_scenes": flushed,
-                    "flush_failed": failed,
-                    "message": "editor dejado vivo (reconecta solo)",
-                }))
-            }
-        }
-        "diagnose" => {
-            // DEBUGGER UNIFICADO del plugin (2026-08-08): deja de adivinar.
-            // Reporta: integridad archivo por archivo (source vs instalado),
-            // validaciÃ³n del grafo completo (godot headless en sandbox), y
-            // estado del editor (procesos vivos con cmdline, conexiÃ³n WS).
-            let proj = resolve_project(project_path.as_deref()).await?;
-            let source = crate::launcher::source_plugin_version();
-            let installed = crate::launcher::read_plugin_version(&proj);
-            let live = registry.editor_plugin_version(&proj).await;
-            let connected = registry.has_editor(&proj).await;
-            let integrity = crate::launcher::plugin_integrity(&proj);
-            let stale_count = integrity
-                .iter()
-                .filter(|f| f.status == "stale" || f.status == "missing")
-                .count();
-            let graph = crate::launcher::validate_plugin_graph(&proj, godot_path.as_deref());
-            let procs = crate::launcher::godot_processes_detailed(&proj);
-            Ok(json!({
-                "ok": true,
-                "project_path": proj,
-                "plugin": {
-                    "source_version": source,
-                    "installed_version": installed,
-                    "editor_version": live,
-                    "stale": matches!((&live, &source), (Some(l), Some(s)) if l != s),
-                },
-                "integrity": {
-                    "files": integrity,
-                    "stale_count": stale_count,
-                    "message": if stale_count == 0 {
-                        "plugin integro: todos los archivos coinciden con source"
-                    } else {
-                        "plugin INCOMPLETO: hay archivos stale/missing - ejecuta session/open (sync) y session/reopen (recarga el editor)"
-                    },
-                },
-                "graph": {
-                    "ok": graph.ok,
-                    "errors": graph.errors,
-                    "output_tail": graph.output_tail,
-                    "message": if graph.ok {
-                        "el plugin CARGA sin errores en godot headless (grafo completo)"
-                    } else {
-                        "el plugin FALLA al cargar - SCRIPT ERROR/Parse Error arriba (esto crashea el editor real)"
-                    },
-                },
-                "editor": {
-                    "connected": connected,
-                    "processes": procs.iter().map(|(pid, cmd)| json!({
-                        "pid": pid,
-                        "cmdline": cmd,
-                    })).collect::<Vec<_>>(),
-                    "detected": !procs.is_empty(),
-                    "port": ws_port(),
-                },
-                "remedy": if !graph.ok || stale_count > 0 {
-                    "session/open (sync plugin) + session/reopen (recarga editor). Si el grafo sigue roto, el bug esta en addons/heren source."
-                } else {
-                    ""
-                },
-            }))
-        }
-        other => Err(ToolError::invalid_params(format!(
-            "unknown session action: {other}"
-        ))),
-    }
-}
-
 /// Lee el puerto WS (default 9099). SIEMPRE cacheado con OnceLock.
 /// Discovery (fix 2026-09-03): el caller escribe `.heren/server_port.json`
 /// para que el editor sepa reconectar al server correcto.
@@ -564,20 +250,134 @@ fn ws_port() -> u16 {
             .and_then(|a| a.rsplit(':').next().map(std::string::ToString::to_string))
             .and_then(|p| p.parse().ok())
             .unwrap_or(crate::constants::WS_PORT_BASE);
-        // HEREN_WS_ADDR explÃ­cito â†’ respetar sin buscar (el usuario lo fijÃ³).
+        // HEREN_WS_ADDR explícito → respetar sin buscar (el usuario lo fijó).
         if std::env::var("HEREN_WS_ADDR").is_ok() {
             return base;
         }
-        // Buscar puerto libre partiendo de 9099 (otra sesiÃ³n puede tenerlo).
+        // Buscar puerto libre partiendo de 9099 (otra sesión puede tenerlo).
         for port in base..base + 20 {
             if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
                 return port;
             }
         }
-        base // todos ocupados: improbable; el bind fallarÃ¡ con error claro
+        base // todos ocupados: improbable; el bind fallará con error claro
     })
 }
 
+// ============================================================
+// HEALTH — reemplaza la antigua tool session. Sin lifecycle (Fennara-style):
+// el primer tool call con project_path paga el auto-launch; los siguientes ~20ms.
+// HEREN_AUTO_LAUNCH=0 deshabilita el auto-launch (el usuario abre Godot manualmente).
+// ============================================================
+
+#[tool(
+    description = "Health check del server y de los editores conectados. Con diagnose=true ejecuta el debugger unificado (integridad plugin + grafo headless en sandbox). Sin project_path: estado global (versiones, conexiones, env vars). Con project_path: detalle de ese proyecto (conexión, versiones, dirty, unexpected_close). La conexión de editores es AUTO-MANAGIDA: no hay tool session — el server lanza el editor si hace falta."
+)]
+#[allow(clippy::too_many_arguments)]
+async fn health(
+    project_path: Option<String>,
+    godot_path: Option<String>,
+    diagnose: Option<bool>,
+) -> Result<Value, ToolError> {
+    let registry = EditorRegistry::global();
+    let source = crate::launcher::source_plugin_version();
+    let editors = registry.connected_editors().await;
+    let connected_projects: Vec<String> = editors.iter().map(|(p, _, _)| p.clone()).collect();
+
+    // Plugins stale (editor con version != source).
+    let mut stale: Vec<Value> = Vec::new();
+    for (proj, _, live_ver) in &editors {
+        if let (Some(live), Some(src)) = (live_ver.as_ref(), source.as_ref()) {
+            if live != src {
+                stale.push(json!({
+                    "project_path": proj,
+                    "plugin_version_editor": live,
+                    "plugin_version_source": src,
+                    "remedy": "cierra y reabre Godot para recargar el plugin con el codigo nuevo",
+                }));
+            }
+        }
+    }
+
+    // Config: env vars que afectan el comportamiento.
+    let auto_launch = std::env::var("HEREN_AUTO_LAUNCH")
+        .map(|v| v != "0" && v.to_lowercase() != "false")
+        .unwrap_or(true);
+    let default_project_env = std::env::var("HEREN_DEFAULT_PROJECT").ok();
+    let last_project = get_last_project();
+
+    let mut result = json!({
+        "ok": true,
+        "server": "heren-server (Rust)",
+        "version": env!("CARGO_PKG_VERSION"),
+        "connected_projects": connected_projects,
+        "editor_count": editors.len(),
+        "plugin_source_version": source,
+        "stale_editors": stale,
+        "auto_launch": auto_launch,
+        "default_project_env": default_project_env,
+        "last_project": last_project,
+    });
+
+    // Detalle por proyecto si se pidió.
+    if let Some(p) = project_path.as_deref() {
+        let proj = resolve_project(Some(p)).await?;
+        if !registry.has_editor(&proj).await {
+            ensure_editor_connected(&proj, godot_path.as_deref(), registry).await?;
+        }
+        let connected = registry.has_editor(&proj).await;
+        let installed = crate::launcher::read_plugin_version(&proj);
+        let live = registry.editor_plugin_version(&proj).await;
+        let is_stale = matches!((&live, &source), (Some(l), Some(s)) if l != s);
+        let dirty = registry.dirty_scenes(&proj).await;
+        let unexpected = registry.unexpected_close(&proj).await;
+        let stale_msg = if is_stale {
+            "El editor corre una version ANTIGUA del plugin. Cierra y reabre Godot para recargar el codigo nuevo."
+        } else {
+            ""
+        };
+        result["project"] = json!({
+            "project_path": proj,
+            "connected": connected,
+            "plugin_version_source": source,
+            "plugin_version_installed": installed,
+            "plugin_version_editor": live,
+            "plugin_stale": is_stale,
+            "plugin_stale_remedy": stale_msg,
+            "dirty_scenes": dirty,
+            "unexpected_close": unexpected.is_some(),
+            "unexpected_close_dirty": unexpected.unwrap_or_default(),
+        });
+    }
+
+    // Diagnose opcional: valida el plugin del proyecto en sandbox headless.
+    if diagnose.unwrap_or(false) {
+        let proj = match project_path.as_deref() {
+            Some(p) => resolve_project(Some(p)).await?,
+            None => match get_last_project() {
+                Some(p) if std::path::Path::new(&p).join("project.godot").exists() => p,
+                _ => String::new(),
+            },
+        };
+        if proj.is_empty() {
+            result["diagnose"] = json!({
+                "skipped": "no project_path and no resolvable last_project"
+            });
+        } else {
+            let diag = crate::launcher::validate_plugin_graph(&proj, godot_path.as_deref());
+            result["diagnose"] = json!({
+                "project_path": proj,
+                "ok": diag.ok,
+                "errors": diag.errors,
+                "output_tail": diag.output_tail,
+            });
+        }
+    }
+    Ok(result)
+}
+
+// ============================================================
+// SCENE
 // ============================================================
 // SCENE
 // ============================================================
@@ -1224,7 +1024,7 @@ fn parse_node_info(value: &serde_json::Value) -> Option<crate::scene_tool::schem
 // ============================================================
 
 #[tool(
-    description = "Nodos: mutaciones estructurales. add|instantiate|remove|duplicate|rename|move|set_owner|reorder. template usa el registry transversal en vez de instance_path. Lecturas → node_query, props → node_props."
+    description = "Nodos: mutaciones estructurales. add|instantiate|remove|duplicate|rename. template usa el registry transversal en vez de instance_path. move/set_owner/reorder archivados (§0.12 W4) — usar scene_script. Lecturas → node_query, props → node_props."
 )]
 #[allow(clippy::too_many_arguments)]
 async fn node(
@@ -1237,8 +1037,6 @@ async fn node(
     instance_path: Option<String>,
     properties: Option<GodotDict>,
     new_name: Option<String>,
-    new_parent: Option<String>,
-    index: Option<i64>,
     parent_path: Option<String>,
     template: Option<String>,
     script: Option<String>,
@@ -1262,8 +1060,6 @@ async fn node(
             ("instance_path", instance_path.map(Value::String)),
             ("properties", properties.map(Into::into)),
             ("new_name", new_name.map(Value::String)),
-            ("new_parent", new_parent.map(Value::String)),
-            ("index", index.map(|i| json!(i))),
             ("parent_path", parent_path.map(Value::String)),
             ("template", template.map(Value::String)),
             ("script", script.map(Value::String)),
@@ -1273,7 +1069,7 @@ async fn node(
 }
 
 #[tool(
-    description = "Nodos: lecturas sin mutación. get_info|get_children|get_prop|find. find acepta query (texto) o by=tipo."
+    description = "Nodos: lecturas sin mutación. get_info|get_children|get_prop|find|class_info|props_diff. find acepta query (texto) o by=tipo. class_info = API real de una clase vía ClassDB (métodos/props/señales/enums; filter=substring; úsalo ANTES de llamar APIs que no conoces). props_diff = props del nodo que difieren del default de su clase."
 )]
 #[allow(clippy::too_many_arguments)]
 async fn node_query(
@@ -1284,6 +1080,9 @@ async fn node_query(
     property_name: Option<String>,
     recursive: Option<bool>,
     query: Option<String>,
+    class_name: Option<String>,
+    filter: Option<String>,
+    include_inherited: Option<bool>,
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
@@ -1302,6 +1101,9 @@ async fn node_query(
             ("property_name", property_name.map(Value::String)),
             ("recursive", recursive.map(|v| json!(v))),
             ("query", query.map(Value::String)),
+            ("class_name", class_name.map(Value::String)),
+            ("filter", filter.map(Value::String)),
+            ("include_inherited", include_inherited.map(Value::Bool)),
         ]),
     );
     forward(registry, &proj, &format!("node/{action}"), a).await
@@ -1359,7 +1161,7 @@ async fn node_props(
 // ============================================================
 
 #[tool(
-    description = "UI 2D: create|layout|canvas_layer|templates|get_info|theme. create: Control desde template o desde cero + layout preset. layout: presets de anchors (full_rect, bottom_center, etc.). canvas_layer: CanvasLayer para HUD. templates: lista con params. theme: crea/modifica Theme .tres con claves ThemeType/item."
+    description = "UI 2D: create|canvas_layer|templates|get_info. create: Control desde template o desde cero. canvas_layer: CanvasLayer para HUD. templates: lista con params del registry transversal."
 )]
 #[allow(clippy::too_many_arguments)]
 async fn ui(
@@ -1370,12 +1172,10 @@ async fn ui(
     node_type: Option<String>,
     node_name: Option<String>,
     template: Option<String>,
-    layout: Option<String>,
     properties: Option<GodotDict>,
     parent_path: Option<String>,
     layer: Option<i64>,
     follow_viewport: Option<bool>,
-    theme_path: Option<String>,
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
@@ -1394,17 +1194,15 @@ async fn ui(
             ("node_type", node_type.map(Value::String)),
             ("node_name", node_name.map(Value::String)),
             ("template", template.map(Value::String)),
-            ("layout", layout.map(Value::String)),
             ("properties", properties.map(Into::into)),
             ("parent_path", parent_path.map(Value::String)),
             ("layer", layer.map(|i| json!(i))),
             ("follow_viewport", follow_viewport.map(|v| json!(v))),
-            ("theme_path", theme_path.map(Value::String)),
         ]),
     );
     let mutating = matches!(
         action.as_str(),
-        "create" | "layout" | "canvas_layer" | "theme"
+        "create" | "canvas_layer"
     );
     if mutating {
         forward_mutating(registry, &proj, &format!("ui/{action}"), a, &scene_path).await
@@ -1557,8 +1355,9 @@ fn setup_plugin(project_path: Option<&str>) -> Result<Value, ToolError> {
         "installed": installed,
         "install_msg": install_msg,
         "enabled": enabled,
+        "guidelines": "res://addons/heren/ai/guidelines.md",
         "message": format!(
-            "plugin: {install_msg}; [editor_plugins]: {}",
+            "plugin: {install_msg}; [editor_plugins]: {}; guía para agentes en res://addons/heren/ai/guidelines.md",
             if enabled { "normalizado/habilitado" } else { "ya correcto" }
         ),
     }))
@@ -1663,7 +1462,7 @@ fn create_project(
 // ============================================================
 
 #[tool(
-    description = "Shaders y materiales: create|edit|get|inspect|validate|material|uniform|apply. apply es one-shot. Defaults en el plugin para todos los args."
+    description = "Shaders: create|edit|get|inspect|validate. Defaults en el plugin para todos los args. material/uniform/apply archivados (§0.12 W4) — usar scene_script."
 )]
 #[allow(clippy::too_many_arguments)]
 async fn shader(
@@ -1674,11 +1473,6 @@ async fn shader(
     shader_type: Option<String>,
     code: Option<String>,
     append: Option<bool>,
-    node_path: Option<String>,
-    material_name: Option<String>,
-    uniforms: Option<GodotDict>,
-    uniform_name: Option<String>,
-    value: Option<GodotVariant>,
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
@@ -1697,19 +1491,11 @@ async fn shader(
             ("shader_type", shader_type.map(Value::String)),
             ("code", code.map(Value::String)),
             ("append", append.map(|v| json!(v))),
-            ("node_path", node_path.map(Value::String)),
-            ("material_name", material_name.map(Value::String)),
-            ("uniforms", uniforms.map(Into::into)),
-            ("uniform_name", uniform_name.map(Value::String)),
-            ("value", value.map(Into::into)),
         ]),
     );
-    // Shader: las acciones que ESCRIBEN (create/edit/apply/material/uniform)
-    // marcan dirty; las de lectura (get/inspect/validate) no.
-    let mutating = matches!(
-        action.as_str(),
-        "create" | "edit" | "apply" | "material" | "uniform"
-    );
+    // Shader: las acciones que ESCRIBEN (create/edit) marcan dirty;
+    // las de lectura (get/inspect/validate) no.
+    let mutating = matches!(action.as_str(), "create" | "edit");
     if mutating {
         forward_mutating(registry, &proj, &format!("shader/{action}"), a, &scene_path).await
     } else {
@@ -1722,7 +1508,7 @@ async fn shader(
 // ============================================================
 
 #[tool(
-    description = "Animaciones: create_player|create|add_track|add_key|state_machine|play|stop|seek|speed|get_tracks|get_keyframes|remove_track|remove_key|update_key|one_shot|tween|record|from_path|loop_pose|preview|curve|capture_pose|tree_activate|tree_travel|tree_set_param|duplicate|delete|rename|reverse|blend_pose|retarget. Defaults en el plugin."
+    description = "Animaciones: create_player|create|add_track|add_key|state_machine|play|stop|seek|speed|get_*|remove_*|update_*|one_shot|tween|record|from_path|loop_pose|preview|curve|duplicate|delete|rename|reverse. Defaults en el plugin. tree_*/capture_pose/blend_pose/retarget archivados (§0.12 W4) — usar scene_script."
 )]
 #[allow(clippy::too_many_arguments)]
 async fn animation(
@@ -1746,11 +1532,7 @@ async fn animation(
     transitions: Option<GodotVariant>,
     custom_blend: Option<f64>,
     speed: Option<f64>,
-    tree_path: Option<String>,
     graph_type: Option<String>,
-    parameters: Option<GodotDict>,
-    nodes: Option<GodotDict>,
-    connections: Option<GodotDict>,
     points: Option<GodotDict>,
     key_idx: Option<i64>,
     loop_mode: Option<String>,
@@ -1764,38 +1546,10 @@ async fn animation(
     amplitude: Option<f64>,
     frequency: Option<f64>,
     axis: Option<String>,
-    skeleton_path: Option<String>,
-    bone_name: Option<String>,
-    transform: Option<GodotDict>,
-    ik_name: Option<String>,
-    root_bone: Option<String>,
-    tip_bone: Option<String>,
-    target_path: Option<String>,
-    interpolation: Option<f64>,
-    max_iterations: Option<i64>,
-    override_tip_basis: Option<bool>,
-    start: Option<bool>,
-    bones: Option<GodotDict>,
-    chain: Option<GodotDict>,
-    from_bone: Option<String>,
-    depth: Option<i64>,
-    dim: Option<String>,
-    state: Option<String>,
-    name: Option<String>,
-    target_position: Option<GodotDict>,
-    use_magnet: Option<bool>,
-    magnet: Option<GodotDict>,
-    influence: Option<f64>,
-    min_distance: Option<f64>,
-    weights: Option<GodotDict>,
-    active: Option<bool>,
     new_name: Option<String>,
     library: Option<String>,
-    source_skeleton: Option<String>,
-    target_skeleton: Option<String>,
-    target_pose: Option<GodotDict>,
-    factor: Option<f64>,
-    rest: Option<bool>,
+    start: Option<bool>,
+    active: Option<bool>,
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
@@ -1827,11 +1581,7 @@ async fn animation(
             ("transitions", transitions.map(Into::into)),
             ("custom_blend", custom_blend.map(|v| json!(v))),
             ("speed", speed.map(|v| json!(v))),
-            ("tree_path", tree_path.map(Value::String)),
             ("graph_type", graph_type.map(Value::String)),
-            ("parameters", parameters.map(Into::into)),
-            ("nodes", nodes.map(Into::into)),
-            ("connections", connections.map(Into::into)),
             ("points", points.map(Into::into)),
             ("key_idx", key_idx.map(|v| json!(v))),
             ("loop_mode", loop_mode.map(Value::String)),
@@ -1845,42 +1595,14 @@ async fn animation(
             ("amplitude", amplitude.map(|v| json!(v))),
             ("frequency", frequency.map(|v| json!(v))),
             ("axis", axis.map(Value::String)),
-            ("skeleton_path", skeleton_path.map(Value::String)),
-            ("bone_name", bone_name.map(Value::String)),
-            ("transform", transform.map(Into::into)),
-            ("ik_name", ik_name.map(Value::String)),
-            ("root_bone", root_bone.map(Value::String)),
-            ("tip_bone", tip_bone.map(Value::String)),
-            ("target_path", target_path.map(Value::String)),
-            ("interpolation", interpolation.map(|v| json!(v))),
-            ("max_iterations", max_iterations.map(|v| json!(v))),
-            ("override_tip_basis", override_tip_basis.map(|v| json!(v))),
-            ("start", start.map(|v| json!(v))),
-            ("bones", bones.map(Into::into)),
-            ("chain", chain.map(Into::into)),
-            ("from_bone", from_bone.map(Value::String)),
-            ("depth", depth.map(|v| json!(v))),
-            ("dim", dim.map(Value::String)),
-            ("state", state.map(Value::String)),
-            ("name", name.map(Value::String)),
-            ("target_position", target_position.map(Into::into)),
-            ("use_magnet", use_magnet.map(|v| json!(v))),
-            ("magnet", magnet.map(Into::into)),
-            ("influence", influence.map(|v| json!(v))),
-            ("min_distance", min_distance.map(|v| json!(v))),
-            ("weights", weights.map(Into::into)),
-            ("active", active.map(|v| json!(v))),
             ("new_name", new_name.map(Value::String)),
             ("library", library.map(Value::String)),
-            ("source_skeleton", source_skeleton.map(Value::String)),
-            ("target_skeleton", target_skeleton.map(Value::String)),
-            ("target_pose", target_pose.map(Into::into)),
-            ("factor", factor.map(|v| json!(v))),
-            ("rest", rest.map(|v| json!(v))),
+            ("start", start.map(|v| json!(v))),
+            ("active", active.map(|v| json!(v))),
         ]),
     );
-    // AnimaciÃ³n: las acciones de ESCRITURA marcan dirty (persistencia
-    // 2026-08-07); las de lectura (get_*/preview) no mutan el Ã¡rbol.
+    // Animación: las acciones de ESCRITURA marcan dirty (persistencia
+    // 2026-08-07); las de lectura (get_*/preview) no mutan el árbol.
     let mutating = matches!(
         action.as_str(),
         "create_player"
@@ -1896,16 +1618,10 @@ async fn animation(
             | "record"
             | "from_path"
             | "loop_pose"
-            | "capture_pose"
-            | "tree_activate"
-            | "tree_travel"
-            | "tree_set_param"
             | "duplicate"
             | "delete"
             | "rename"
             | "reverse"
-            | "blend_pose"
-            | "retarget"
             | "tween"
     );
     if mutating {
@@ -1919,159 +1635,6 @@ async fn animation(
         .await
     } else {
         forward(registry, &proj, &format!("animation/{action}"), a).await
-    }
-}
-
-// ============================================================
-// SKELETON
-// ============================================================
-
-#[tool(
-    description = "Esqueletos 2D/3D: skeleton_create|skeleton_add_bone|skeleton_set_rest|skeleton_skin|skeleton_attachment|skeleton_get_bones|skeleton_get_pose|skeleton_set_pose|skeleton_ik|skeleton_fabrik|capture_pose. Defaults en el plugin."
-)]
-#[allow(clippy::too_many_arguments)]
-async fn skeleton(
-    action: String,
-    project_path: Option<String>,
-    parent_path: Option<String>,
-    skeleton_name: Option<String>,
-    is_3d: Option<bool>,
-    skeleton_path: Option<String>,
-    bone_name: Option<String>,
-    rest_transform: Option<GodotDict>,
-    length: Option<f64>,
-    bone_angle: Option<f64>,
-    polygon_path: Option<String>,
-    bone_weights: Option<GodotDict>,
-    attachment_name: Option<String>,
-    transform: Option<GodotDict>,
-    ik_name: Option<String>,
-    root_bone: Option<String>,
-    tip_bone: Option<String>,
-    target_path: Option<String>,
-    interpolation: Option<f64>,
-    max_iterations: Option<i64>,
-    override_tip_basis: Option<bool>,
-    start: Option<bool>,
-    target_position: Option<GodotDict>,
-    use_magnet: Option<bool>,
-    magnet: Option<GodotDict>,
-    influence: Option<f64>,
-    min_distance: Option<f64>,
-    weights: Option<GodotDict>,
-    bones: Option<GodotDict>,
-    chain: Option<GodotDict>,
-    from_bone: Option<String>,
-    depth: Option<i64>,
-    compact: Option<bool>,
-    context: Option<bool>,
-    compare: Option<GodotDict>,
-) -> Result<Value, ToolError> {
-    let proj = resolve_project(project_path.as_deref()).await?;
-    let registry = EditorRegistry::global();
-    let a = args(&[
-        ("parent_path", parent_path.map(Value::String)),
-        ("skeleton_name", skeleton_name.map(Value::String)),
-        ("is_3d", is_3d.map(|v| json!(v))),
-        ("skeleton_path", skeleton_path.map(Value::String)),
-        ("bone_name", bone_name.map(Value::String)),
-        ("rest_transform", rest_transform.map(Into::into)),
-        ("length", length.map(|v| json!(v))),
-        ("bone_angle", bone_angle.map(|v| json!(v))),
-        ("polygon_path", polygon_path.map(Value::String)),
-        ("bone_weights", bone_weights.map(Into::into)),
-        ("attachment_name", attachment_name.map(Value::String)),
-        ("transform", transform.map(Into::into)),
-        ("ik_name", ik_name.map(Value::String)),
-        ("root_bone", root_bone.map(Value::String)),
-        ("tip_bone", tip_bone.map(Value::String)),
-        ("target_path", target_path.map(Value::String)),
-        ("interpolation", interpolation.map(|v| json!(v))),
-        ("max_iterations", max_iterations.map(|v| json!(v))),
-        ("override_tip_basis", override_tip_basis.map(|v| json!(v))),
-        ("start", start.map(|v| json!(v))),
-        ("target_position", target_position.map(Into::into)),
-        ("use_magnet", use_magnet.map(|v| json!(v))),
-        ("magnet", magnet.map(Into::into)),
-        ("influence", influence.map(|v| json!(v))),
-        ("min_distance", min_distance.map(|v| json!(v))),
-        ("weights", weights.map(Into::into)),
-        ("bones", bones.map(Into::into)),
-        ("chain", chain.map(Into::into)),
-        ("from_bone", from_bone.map(Value::String)),
-        ("depth", depth.map(|v| json!(v))),
-        ("compact", compact.map(Value::Bool)),
-        ("context", context.map(Value::Bool)),
-        ("compare", compare.map(Into::into)),
-    ]);
-    forward(registry, &proj, &format!("skeleton/{action}"), a).await
-}
-
-// ============================================================
-// TILEMAP
-// ============================================================
-
-#[tool(
-    description = "TileMaps/TileSets: inspect_set|inspect_map|set_cell|terrain|pattern. Defaults en el plugin."
-)]
-#[allow(clippy::too_many_arguments)]
-async fn tilemap(
-    action: String,
-    project_path: Option<String>,
-    scene_path: Option<String>,
-    tileset_path: Option<String>,
-    tilemap_path: Option<String>,
-    layer: Option<i64>,
-    coords: Option<GodotDict>,
-    atlas_coords: Option<GodotDict>,
-    source_id: Option<i64>,
-    alternative_tile: Option<i64>,
-    cells: Option<GodotDict>,
-    terrain_set: Option<i64>,
-    terrain: Option<i64>,
-    region: Option<GodotDict>,
-    pattern_name: Option<String>,
-) -> Result<Value, ToolError> {
-    let proj = resolve_project(project_path.as_deref()).await?;
-    let registry = EditorRegistry::global();
-    let scene_path = scene_path
-        .as_deref()
-        .map(normalize_scene_path)
-        .unwrap_or_default();
-    let a = apply_scene_context(
-        &proj,
-        args(&[
-            (
-                "scene_path",
-                (!scene_path.is_empty()).then(|| Value::String(scene_path.clone())),
-            ),
-            ("tileset_path", tileset_path.map(Value::String)),
-            ("tilemap_path", tilemap_path.map(Value::String)),
-            ("layer", layer.map(|v| json!(v))),
-            ("coords", coords.map(Into::into)),
-            ("atlas_coords", atlas_coords.map(Into::into)),
-            ("source_id", source_id.map(|v| json!(v))),
-            ("alternative_tile", alternative_tile.map(|v| json!(v))),
-            ("cells", cells.map(Into::into)),
-            ("terrain_set", terrain_set.map(|v| json!(v))),
-            ("terrain", terrain.map(|v| json!(v))),
-            ("region", region.map(Into::into)),
-            ("pattern_name", pattern_name.map(Value::String)),
-        ]),
-    );
-    // Tilemap: set_cell/terrain/pattern mutan el mapa (dirty); inspect_* no.
-    let mutating = matches!(action.as_str(), "set_cell" | "terrain" | "pattern");
-    if mutating {
-        forward_mutating(
-            registry,
-            &proj,
-            &format!("tilemap/{action}"),
-            a,
-            &scene_path,
-        )
-        .await
-    } else {
-        forward(registry, &proj, &format!("tilemap/{action}"), a).await
     }
 }
 
@@ -2128,7 +1691,7 @@ async fn debug(
 // VALIDATE
 // ============================================================
 
-#[tool(    description = "Validación: scene|script|node|resource")]
+#[tool(    description = "Validación: scene|script|scripts|node|resource. scripts = bulk con el compilador del editor (reload) sobre todos los .gd del proyecto; mensajes en debug/output")]
 async fn validate(
     action: String,
     project_path: Option<String>,
@@ -2136,6 +1699,7 @@ async fn validate(
     script_path: Option<String>,
     node_path: Option<String>,
     resource_path: Option<String>,
+    dir: Option<String>,
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
@@ -2150,6 +1714,7 @@ async fn validate(
         ("script_path", script_path.map(Value::String)),
         ("node_path", node_path.map(Value::String)),
         ("resource_path", resource_path.map(Value::String)),
+        ("dir", dir.map(Value::String)),
     ]);
     forward(registry, &proj, &format!("validate/{action}"), a).await
 }
@@ -2158,7 +1723,7 @@ async fn validate(
 // SIGNAL
 // ============================================================
 
-#[tool(    description = "Señales: connect|disconnect|list|set_script")]
+#[tool(description = "Señales: connect|disconnect|list. set_script archivado (§0.12 W4) — usa node/set_script.")]
 #[allow(clippy::too_many_arguments)]
 async fn signal(
     action: String,
@@ -2168,8 +1733,6 @@ async fn signal(
     to_node: Option<String>,
     signal_name: Option<String>,
     method: Option<String>,
-    node_path: Option<String>,
-    script_path: Option<String>,
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
@@ -2188,12 +1751,10 @@ async fn signal(
             ("to_node", to_node.map(Value::String)),
             ("signal_name", signal_name.map(Value::String)),
             ("method", method.map(Value::String)),
-            ("node_path", node_path.map(Value::String)),
-            ("script_path", script_path.map(Value::String)),
         ]),
     );
-    // SeÃ±ales: connect/disconnect/set_script mutan el Ã¡rbol (dirty); list no.
-    let mutating = matches!(action.as_str(), "connect" | "disconnect" | "set_script");
+    // Señales: connect/disconnect mutan el árbol (dirty); list no.
+    let mutating = matches!(action.as_str(), "connect" | "disconnect");
     if mutating {
         forward_mutating(registry, &proj, &format!("signal/{action}"), a, &scene_path).await
     } else {
@@ -2272,30 +1833,90 @@ async fn visual(
 }
 
 // ============================================================
-// HEALTH
+// SCENE SCRIPT (W4 Worker-First)
 // ============================================================
 
-#[tool(description = "Health check del server y del editor")]
-async fn health(project_path: Option<String>) -> Result<Value, ToolError> {
+#[tool(
+    description = "Workers GDScript del agente: run|list. run ejecuta un worker (@tool, extends RefCounted, func run(ctx)) contra la escena: parse-check previo, save transaccional (solo si ctx.mark_modified()), snapshot+restore en fallo, coords del resultado. ctx: get_scene_root/set_scene_root/own/instance_scene/template/coords/get_node_or_null/find_nodes_by_name/remove_node/clear_children/log/error/mark_modified/output. mode=inspect es read-only detached. code (primera vez) o script_path (reintentos: parcha el mismo archivo con resource/edit_script). CONTRATO: ran=false = el worker falló (ver error) pero la tool tuvo éxito — itera parchando el script_path devuelto; la escena original queda intacta."
+)]
+#[allow(clippy::too_many_arguments)]
+async fn scene_script(
+    action: String,
+    project_path: Option<String>,
+    scene_path: Option<String>,
+    code: Option<String>,
+    script_path: Option<String>,
+    mode: Option<String>,
+    save: Option<bool>,
+    tier: Option<i64>,
+) -> Result<Value, ToolError> {
+    let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
-    let editors = registry.connected_projects().await;
-    // Sin project_path explícito → resolver con el mismo fallback que las
-    // demás tools (last_project / rol activo / único proyecto conectado).
-    // Antes devolvía `false` fijo con None pese a haber editor vivo.
-    let proj = resolve_project(project_path.as_deref()).await.ok();
-    let project_connected = match &proj {
-        Some(p) => registry.has_editor(p).await,
-        None => false,
-    };
-    Ok(json!({
-        "ok": true,
-        "server": "heren-server (Rust)",
-        "version": env!("CARGO_PKG_VERSION"),
-        "connected_projects": editors,
-        "resolved_project": proj,
-        "project_connected": project_connected,
-    }))
+    let normalized_scene = scene_path
+        .as_deref()
+        .map(normalize_scene_path)
+        .unwrap_or_default();
+    let is_inspect = mode.as_deref() == Some("inspect");
+    let a = apply_scene_context(
+        &proj,
+        args(&[
+            (
+                "scene_path",
+                (!normalized_scene.is_empty()).then(|| Value::String(normalized_scene.clone())),
+            ),
+            ("code", code.map(Value::String)),
+            ("script_path", script_path.map(Value::String)),
+            ("mode", mode.map(Value::String)),
+            ("save", save.map(Value::Bool)),
+            ("tier", tier.map(|v| json!(v))),
+        ]),
+    );
+    if action == "run" && !is_inspect {
+        // run en modo edit muta la escena (dirty si no guardó).
+        forward_mutating(
+            registry,
+            &proj,
+            "scene_script/run",
+            a,
+            &normalized_scene,
+        )
+        .await
+    } else {
+        forward(registry, &proj, &format!("scene_script/{action}"), a).await
+    }
 }
+
+// ============================================================
+// FILESYSTEM (W4b §0.12 — EditorFileSystem: scan/status/import_errors/exists/import)
+// ============================================================
+
+#[tool(
+    description = "EditorFileSystem: scan|status|import_errors|exists|import. scan fuerza un rescan y espera a is_scanning()=false (cierra el gap EFS en frío). status reporta is_scanning + file_count recursivo. import_errors lista archivos con errores de import (walk recursivo del EFS, max_items default 100). exists consulta FileAccess.file_exists para varios paths (mejor que ResourceLoader.exists para archivos sin .import). import reimporta un path puntual vía update_file(). timeouts en segundos."
+)]
+async fn filesystem(
+    action: String,
+    project_path: Option<String>,
+    paths: Option<Vec<String>>,
+    path: Option<String>,
+    timeout_seconds: Option<f64>,
+    max_items: Option<i64>,
+) -> Result<Value, ToolError> {
+    let proj = resolve_project(project_path.as_deref()).await?;
+    let registry = EditorRegistry::global();
+    let a = args(&[
+        ("paths", paths.map(|v| json!(v))),
+        ("path", path.map(Value::String)),
+        ("timeout_seconds", timeout_seconds.map(|v| json!(v))),
+        ("max_items", max_items.map(|v| json!(v))),
+    ]);
+    forward(registry, &proj, &format!("filesystem/{action}"), a).await
+}
+
+// ============================================================
+// HEALTH (reemplaza la antigua tool health simple y la tool session completa —
+// sin lifecycle, Fennara-style)
+// ============================================================
+// (definida arriba; aquí solo el doc-link por contexto)
 
 /// Punto de entrada del binario.
 pub async fn run() -> Result<(), ServerError> {
@@ -2304,27 +1925,16 @@ pub async fn run() -> Result<(), ServerError> {
     // Fase 1 (2026-09-03): state de planning vive en el plugin-registry
     // (HerenSceneRegistry en GDScript). El server NO mantiene SceneRegistry
     // propio — toda la orquestación es forward + pure-logic (coder/validator).
-    let project_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-
-    // Discovery (fix 2026-09-03): escribir `.heren/server_port.json` para que
-    // el editor sepa reconectar al server correcto cuando OpenCode reinicia.
-    let port = ws_port();
-    crate::discovery::write_discovery(&project_root, port);
-    eprintln!("[heren-server] discovery: wrote .heren/server_port.json (port={port}, pid={})", std::process::id());
-
-    // Cleanup al cerrar: borrar discovery file.
-    let pr_cleanup = project_root.clone();
-    tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
-        crate::discovery::remove_discovery(&pr_cleanup);
-        std::process::exit(0);
-    });
+    // NOTA: ya NO escribimos discovery aquí (se hacía en CWD, no en project_path).
+    // El discovery se escribe en ensure_editor_connected cuando hay project_path real.
+    let _ = ws_port(); // inicializa el puerto (OnceLock)
 
     // WS plugin server: el EditorPlugin Godot conecta aquÃ­ (patrÃ³n gopeak).
     // Multi-sesiÃ³n (fix 2026-08-06): CADA heren-server de cada sesiÃ³n OpenCode
     // bindea su PROPIO puerto libre (ws_port cachea el mismo para session/open).
     // NO matamos otros heren-server â€” eso asesinaba servers de sesiones
     // hermanas a mitad de operaciÃ³n (MCP connection closed + AbortError).
+    let port = ws_port();
     let ws_addr = format!("127.0.0.1:{port}");
     let ws_addr_clone = ws_addr.clone();
     tokio::spawn(async move {
@@ -2340,7 +1950,7 @@ pub async fn run() -> Result<(), ServerError> {
     // MCP server por stdio (OpenCode). Este bloquea hasta que termine.
     let result = flojo_run_stdio(Heren::new()).await;
 
-    // Cleanup post-ejecución (si ctrlc no se disparó).
-    crate::discovery::remove_discovery(&project_root);
+    // NOTA: NO limpiamos discovery aquí — se escribe por-project en
+    // ensure_editor_connected. Archivos stale son inofensivos (PID muerto).
     result
 }

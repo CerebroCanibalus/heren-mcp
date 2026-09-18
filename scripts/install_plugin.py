@@ -7,7 +7,14 @@ v3 daemon setup: the v4 plugin travels WITH the project as an EditorPlugin.
 Usage:
     python tools/install_plugin.py --project D:/path/to/godot/project
     python tools/install_plugin.py --project ... --source D:/repo/addons/heren
+    python tools/install_plugin.py --project ... --force   # content-aware sync
+    python tools/install_plugin.py --project ... --force --dry-run
     python tools/install_plugin.py --project ... --remove   # uninstall
+
+Por defecto solo chequea EXISTENCIA de archivos. Con --force hace content-aware
+sync: detecta archivos modificados/nuevos/borrados y sincroniza solo el diff.
+Útil para iterar: edita addons/heren/ en este repo, --force actualiza el
+proyecto destino sin necesidad de re-instalar desde cero.
 """
 
 from __future__ import annotations
@@ -35,12 +42,25 @@ def ensure_no_bom(path: Path) -> None:
         path.write_bytes(data[3:])
 
 
-def _source_files_match(source: Path, dst: Path) -> bool:
-    """¿TODOS los archivos del source existen en dst? (instalación completa)"""
+def _source_files_match(source: Path, dst: Path, *, content_aware: bool = False) -> bool:
+    """¿TODOS los archivos del source existen en dst? (instalación completa)
+
+    Por defecto solo chequea existencia. Si content_aware=True, también
+    compara bytes — útil para sincronizar después de editar el source
+    (instalación incremental real).
+    """
     for f in source.rglob("*"):
-        if f.is_file():
-            rel = f.relative_to(source)
-            if not (dst / rel).exists():
+        if not f.is_file():
+            continue
+        rel = f.relative_to(source)
+        target = dst / rel
+        if not target.exists():
+            return False
+        if content_aware:
+            try:
+                if f.read_bytes() != target.read_bytes():
+                    return False
+            except OSError:
                 return False
     return True
 
@@ -64,24 +84,70 @@ def _normalize_enabled(pg: Path) -> None:
     ensure_no_bom(pg)
 
 
-def install(project: Path, source: Path) -> tuple[bool, str]:
+def install(
+    project: Path, source: Path, *, force: bool = False, dry_run: bool = False
+) -> tuple[bool, str]:
     if not source.exists():
         return False, f"plugin source not found: {source}"
     if not (project / "project.godot").exists():
         return False, f"not a Godot project (no project.godot): {project}"
 
     dst = project / "addons" / "heren"
-    # Verifica TODOS los archivos, no solo plugin.cfg (instalación parcial).
-    if (dst / "plugin.cfg").exists() and _source_files_match(source, dst):
-        msg = "already installed (addons/heren/plugin.cfg exists)"
-        _normalize_enabled(project / "project.godot")
+    # Verifica TODOS los archivos. --force (o --content-aware) hace content-aware
+    # sync: detecta archivos modificados y los copia aunque ya existan.
+    content_aware = force  # --force implica content-aware (alias futuro)
+    if (dst / "plugin.cfg").exists() and _source_files_match(
+        source, dst, content_aware=content_aware
+    ):
+        msg = "already installed (addons/heren synced)" if force else \
+            "already installed (addons/heren/plugin.cfg exists)"
+        if not dry_run:
+            _normalize_enabled(project / "project.godot")
         return False, msg
 
-    dst.parent.mkdir(parents=True, exist_ok=True)
+    # Diff: qué archivos cambiaron/son nuevos/faltan en dst.
+    changes: dict[str, list[str]] = {"new": [], "modified": [], "deleted": []}
+    src_files = {f.relative_to(source) for f in source.rglob("*") if f.is_file()}
     if dst.exists():
-        shutil.rmtree(dst)
-    shutil.copytree(source, dst)
-    # Strip .uid sidecar files (Godot regenerates per-project).
+        dst_files = {f.relative_to(dst) for f in dst.rglob("*") if f.is_file()}
+        for rel in src_files:
+            src_bytes = (source / rel).read_bytes()
+            dst_bytes = (dst / rel).read_bytes() if (dst / rel).exists() else b""
+            if rel not in dst_files:
+                changes["new"].append(str(rel))
+            elif src_bytes != dst_bytes:
+                changes["modified"].append(str(rel))
+        for rel in dst_files - src_files:
+            changes["deleted"].append(str(rel))
+
+    n_changed = sum(len(v) for v in changes.values())
+    summary = (
+        f"{len(changes['new'])} new, {len(changes['modified'])} modified, "
+        f"{len(changes['deleted'])} deleted"
+    )
+
+    if dry_run:
+        return True, f"[dry-run] would sync: {summary}"
+
+    # Copia incremental: archivos nuevos/modificados se sobreescriben; los
+    # borrados se eliminan (preserva archivos del usuario SOLO si no están
+    # en el source — el plugin viaja completo).
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if not dst.exists():
+        shutil.copytree(source, dst)
+    else:
+        for rel in changes["new"] + changes["modified"]:
+            target = dst / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source / rel, target)
+        for rel in changes["deleted"]:
+            target = dst / rel
+            if target.is_file():
+                target.unlink()
+            elif target.is_dir():
+                shutil.rmtree(target)
+
+    # Strip .uid sidecar files (Godot regenera por proyecto).
     for uid in dst.rglob("*.uid"):
         uid.unlink()
 
@@ -89,10 +155,11 @@ def install(project: Path, source: Path) -> tuple[bool, str]:
     pg = project / "project.godot"
     had_old = OLD_PLUGIN_RE.search(pg.read_text(encoding="utf-8")) is not None
     _normalize_enabled(pg)
+    force_tag = " (force)" if force else ""
     if had_old:
-        msg = f"installed to {dst} + normalized [editor_plugins] format"
+        msg = f"synced{force_tag} to {dst} ({summary}) + normalized [editor_plugins]"
     else:
-        msg = f"installed to {dst} + enabled in project.godot"
+        msg = f"synced{force_tag} to {dst} ({summary}) + enabled in project.godot"
     return True, msg
 
 
@@ -127,11 +194,25 @@ def main() -> None:
     parser.add_argument(
         "--remove", action="store_true", help="uninstall instead of install"
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="content-aware sync: detecta archivos modificados y los actualiza "
+             "(sin --force, asume que ya está sincronizado si plugin.cfg existe)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="muestra qué se copiaría sin tocar disco",
+    )
     args = parser.parse_args()
 
     project = Path(args.project).resolve()
     source = Path(args.source).resolve()
-    ok, msg = uninstall(project) if args.remove else install(project, source)
+    if args.remove:
+        ok, msg = uninstall(project)
+    else:
+        ok, msg = install(project, source, force=args.force, dry_run=args.dry_run)
     print(("OK: " if ok else "SKIP: ") + msg)
     sys.exit(0 if ok else 1)
 
