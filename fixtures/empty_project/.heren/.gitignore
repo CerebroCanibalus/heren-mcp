@@ -1,0 +1,7 @@
+# Heren runtime artifacts (no se commitean).
+# El plugin los regenera en runtime.
+backup/
+locks/
+session.json
+tmp/
+tmp/**
