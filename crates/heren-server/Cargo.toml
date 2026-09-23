@@ -8,7 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 publish = false
 
-description = "Heren MCP v4 — Godot EditorPlugin bridge (FlojoMCP dogfooding)"
+description = "Heren MCP v5.0 — Godot EditorPlugin bridge (FlojoMCP dogfooding)"
 
 [dependencies]
 # FlojoMCP (framework MCP casero): temporalmente por path al workspace

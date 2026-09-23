@@ -15,298 +15,348 @@
 
 ---
 
-# ⚡ Heren Godot MCP v4.7
+<div align="center">
 
-🔥 **Heren Godot MCP** — *Plus Ultra*: ir más allá. 🌍
+# ⚡ Heren Godot MCP v5.0
 
-Servidor MCP de alto rendimiento para **Godot Engine 4.x** que permite a IAs y asistentes controlar el editor real directamente: crear escenas, manipular nodos, gestionar recursos, conectar señales, animar, esqueletos, shaders, validar código y **construir HUDs/UI 2D**. **Todo contra el editor vivo, con Undo/Redo real.**
+**Plus Ultra: el agente ya no pregunta QUÉ herramienta llamar — escribe el código.**
 
-**📢 v4.7 (UI)**: nueva tool **`ui`** + **sistema transversal de templates** — 6 templates 2D prefabricados (`health_bar`, `crosshair`, `dialogue_box`, `score_label`, `boss_bar`, `inventory_slot`) instanciables con 1 llamada vía `node/instantiate {template: "..."}` o `ui/create`, presets de anchors (`ui/layout`), CanvasLayer para HUD overlay (`ui/canvas_layer`), creación de Themes (`ui/theme`) y lecturas enriquecidas con anchors/offsets para Control (adiós a la ceguera de UI).
+Servidor MCP de alto rendimiento para Godot Engine 4.x, escrito en Rust.
+Conecta un agente de IA al editor vivo — no a archivos, no a CLI efímeras —
+para que cree escenas, muta nodos, anime esqueletos, escriba UI, valide y deshaga
+con un `Ctrl+Z` cualquier cosa que se haya inventado.
 
-**📢 v4.6**: Toolset rediseñado — **18 tools, solo `action` required** (fin del laberinto de schemas: ya no hay parámetros required absurdos; el agente no adivina). `node` dividida en mutaciones/lecturas/props (`node`/`node_query`/`node_props`), `visual` en textual/imagen (`visual_text`/`visual_image`). **`debug/output`** con `filter=error|all` expone errores del juego + del editor (formato panel Output, con stack). **`session/diagnose`** = debugger unificado (integridad plugin + grafo headless + estado editor). Orientación continua: `node_not_found` devuelve `parent_children[]`, `rename`/`move` devuelven `previous_path`/`old_parent`. Anti-incrustado: recursos inline sin path → warning `resource_incrusted_inline`. 100% **Rust** sobre **[FlojoMCP](https://github.com/CerebroCanibalus/flojomcp)**.
+<p>
+  <a href="https://github.com/CerebroCanibalus/heren-mcp"><b>★ Star</b></a> ·
+  <a href="https://github.com/CerebroCanibalus/heren-mcp/issues">🐛 Issues</a> ·
+  <a href="CHANGELOG.md">📋 CHANGELOG</a> ·
+  <a href="AGENTS.md">📖 AGENTS.md</a>
+</p>
+
+</div>
 
 ---
 
-## 🚀 Características
+## 🐉 Por qué v5.0 cambia las reglas
 
-| Característica | Descripción |
+Antes, el dilema del agente ante una mutación compleja era un laberinto: elegir
+entre 30+ tools tipadas, adivinar args por action, rezar para que el schema
+aceptara la estructura. El traductor coder→handler se comía la mitad del fix-loop.
+
+**v5.0 introduce Worker-First (W4)** — el corazón del cambio desde v4.9: el agente
+escribe un worker GDScript corto contra la API real de Godot, y nosotros lo
+ejecutamos con red transaccional.
+
+```
+parse-check previo
+   ↓
+snapshot del .tscn → .heren/backup/
+   ↓
+worker.run(ctx)         ← ctx.own · ctx.instance_scene · ctx.template · ctx.coords
+   ↓
+¿ctx.mark_modified()?   ← si NO, no se guarda NADA (escena original intacta)
+   ↓
+post-validación
+   ↓
+si falla → restaurar snapshot → receipt con diagnóstico
+```
+
+Una llamada mal escrita no rompe tu escena. Y `scene_script/inspect` (W4b) le da
+al agente el árbol + huesos + animaciones + materiales **antes** de escribir el
+worker. Cero round-trips ciegos.
+
+> *"Si `run_scene_edit_script` nos ahorra CASI TODAS las tools, que así sea."* — Filosofía adoptada v5.0.
+
+---
+
+## 🎯 Qué hace distinto a Heren
+
+| Capacidad | Cómo lo resuelve |
 |---|---|
-| ⚡ **Server en Rust (FlojoMCP)** | `heren-server.exe` de **~7 MB**, sin Python ni Node.js. Arranque instantáneo, schemas en compile-time |
-| 🎯 **Editor real, no daemon** | Se conecta al **EditorPlugin** dentro del Godot abierto — Undo/Redo, viewports 2D/3D reales, EditorFileSystem |
-| 🔄 **Auto-launch del editor** | Cualquier tool con `project_path` lanza Godot (o reusa uno ya abierto) — sin tool de sesión previa |
-| 🛠️ **19 tools centralizadas** | Escenas, nodos (mutaciones/lecturas/props), recursos, scripts, señales, animaciones, esqueletos, shaders, tilemaps, validación, debug y **UI 2D (tool `ui` + templates)** — **solo `action` required**, schemas sin trampas |
-| 👀 **Sistema de visión** | `visual_text` (coords/summary/ascii, ~20-150 tok) + `visual_image` (capture/nodo, render off-screen de la escena real) — jerarquía de costo sin quemar contexto |
-| 🧩 **UI 2D + templates** | Tool `ui` (create/layout/canvas_layer/templates/get_info/theme) + **sistema transversal de templates**: 6 prefabs .tscn instanciables con 1 llamada (`node/instantiate {template}` o `ui/create`), params por nombre de nodo canónico |
-| 🔍 **Debug real con errores** | `debug/output` con `filter=error` expone errores del juego + del editor (formato panel Output, con stack) + `session/diagnose` para integridad del plugin |
-| ↩️ **Undo/Redo integrado** | Cada mutación pasa por `EditorUndoRedoManager` — Ctrl+Z deshace lo que la IA creó |
-| ⚡ **`orchestrate`** | Ejecuta múltiples operaciones en una sola llamada, con plan en archivo para planes complejos |
-| 🏗️ **Crea proyectos desde cero** | `project/create` genera project.godot + escena main sin necesitar editor |
+| **Editor vivo, no headless** | `EditorPlugin` real dentro de Godot. Viewports 2D/3D reales, Undo/Redo real, EditorFileSystem real. |
+| **Worker GDScript transaccional** | El agente escribe código contra la API de Godot — sin traductor. Falla ⇒ escena intacta. |
+| **Proactividad en cada respuesta** | Toda mutación devuelve coords en su tier correcto y errores con `parent_children[]`. |
+| **Visión en 3 niveles** | Coords textuales (~20-100 tok) → ASCII → viewports reales. Imagen solo si el texto no basta. |
+| **Schema sin trampas** | Solo `action` es required. Cero `-32602` por parámetros que no aplican. |
+| **Rust sobre FlojoMCP** | ~11 MB release, arranque instantáneo, schemas compile-time. |
+| **Cero telemetría** | Por defecto y para siempre. |
+| **LSP bridge incluido** | `heren-server lsp-bridge` para OpenCode — diagnósticos con backoff y reconexión. |
 
 ---
 
-## 🆚 Frente a otros MCPs de Godot
+## 🆚 Frente a otros MCPs (julio 2026)
 
-Comparamos contra los MCPs de Godot más usados, con datos verificados de sus repos (`.competitors/`).
+Datos verificados de cada repositorio (`.competitors/` + `godot-mcp-runtime/comparison.md`).
+Una ❌ significa **el repo del competidor no expone esa capacidad** — no "es peor",
+sino "lo cubre otro MCP".
 
-| Capacidad | Coding-Solo (godot-mcp) | GoPeak | **Heren v4** |
-|---|---|---|---|
-| **Runtime** | Node.js | Node.js | **Rust (7 MB, sin runtime)** |
-| **Modo de operación** | Lanza Godot CLI por operación (`execFileAsync`) | Bridge HTTP/WS + addons | **EditorPlugin vivo conectado por WS** |
-| **Undo/Redo real** | ❌ (CLI desde cero) | ❌ | **✅ `EditorUndoRedoManager`** |
-| **Señales (connect/list)** | ❌ | ❌ (GAP documentado) | **✅ `signal`** |
-| **Animación** | ❌ | ❌ (SIGNIFICANT GAP: no AnimationPlayer/Tree) | **✅ 30+ actions: playback, tracks, state machine, tween, one_shot, record, IK** |
-| **Esqueletos 2D/3D** | ❌ | ❌ (solo roadmap) | **✅ pose, rest, skin, attachment, IK 2D FABRIK, IK 3D** |
-| **Shaders** | ❌ | ❌ (solo roadmap en su análisis) | **✅ create/edit/validate real/material/apply one-shot** |
-| **Tilemap** | ❌ | ❌ (SIGNIFICANT GAP) | **✅ set_cell/terrain/pattern** |
-| **Visión** | ❌ | screenshots runtime | **✅ jerarquía de costo: coords → ASCII → viewports 2D/3D reales + presupuesto** |
-| **Batch** | ❌ | ❌ | **✅ `orchestrate` con plan en archivo** |
-| **Config proyecto** | setting básico | parcial | **✅ setting op (get/set/list/delete/set_multi) + input_map persistente real + autoload** |
-| **Crear proyecto desde 0** | ❌ | ❌ | **✅ `project/create` sin editor** |
+| Capacidad | Coding-Solo<br>4.5k★ MIT | Hi-godot<br>868★ MIT | GoPeak<br>227★ MIT | Fennara<br>191★ MIT | Godot MCP Pro<br>473★ $15 | **Heren v5.0**<br>Rust 11MB |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Modo de operación | CLI headless | Editor WS | `npx` + addon | Addon + daemon | Editor (pago) | **EditorPlugin vivo vía WS** |
+| **Undo/Redo real** | ❌ | ✅ | ❌ | ✅ transaccional | ✅ | **✅ `EditorUndoRedoManager`** |
+| **Señales connect/list** | ❌ | ✅ | ❌ | ✅ | ✅ | **✅ `signal`** |
+| **AnimationPlayer/Tree** | ❌ | parcial | ❌ | parcial | ✅ 6 tools | **✅ 25+ actions** |
+| **Esqueletos 2D/3D + IK** | ❌ | parcial | ❌ | ❌ | parcial | **✅ pose, rest, skin, FABRIK, IK 3D** |
+| **Shaders .gdshader** | ❌ | ✅ | parcial | ✅ | ✅ | **✅ + material/uniform/apply** |
+| **Tilemap** | ❌ | ✅ | ❌ | parcial | ✅ | **✅ set_cell/terrain/pattern** |
+| **UI 2D + Themes** | ❌ | parcial | ❌ | parcial | ✅ | **✅ `ui` + 6 templates + theme** |
+| **Visión de la escena** | ❌ | screenshots | runtime | ❌ | screenshots | **✅ jerarquía: coords → ASCII → reales** |
+| **LSP diagnostics** | ❌ | ❌ | ✅ propio | ❌ | ❌ | **✅ `lsp-bridge` para OpenCode** |
+| **Batch / orquestación** | ❌ | ❌ | ❌ | ✅ loop | ✅ | **✅ `orchestrate` + `scene_script`** |
+| **Agent GDScript worker** | ❌ | ❌ | ❌ | ✅ patch-rerun | ❌ | **✅ `scene_script/run` con snapshot** |
+| **Vista READ-ONLY sin worker** | ❌ | ❌ | ❌ | ❌ | ❌ | **✅ `scene_script/inspect` (W4b)** |
+| **Receipt proactivo** | ❌ | ❌ | ❌ | ❌ | ❌ | **✅ `aggregates` + tier dinámico** |
+| **Runtime externo** | Node.js | Python | Node.js | Python | Node.js | **Rust nativo** |
+| **Telemetría** | opt-in | opt-out ⚠️ | ninguna | ninguna | sí | **ninguna, para siempre** |
+| **License** | MIT | MIT | MIT | MIT | Propietario | **MIT** |
 
-**Por qué Heren gana donde gana:**
-- **Undo/Redo real**: toda mutación pasa por `EditorUndoRedoManager` — el Ctrl+Z del usuario deshace lo que la IA creó. Coding-Solo reescribe archivos desde CLI (sin deshacer); GoPeak no lo expone.
-- **Editor real, no archivos**: el plugin vive dentro del editor que el usuario ve (viewports, EditorFileSystem, play con breakpoints). GoPeak también usa bridge con addons, pero sus GAPS en animación/señales/tilemap son nuestros dominios.
-- **Profundidad por dominio**: 19 tools centralizadas con ~80+ acciones frente a decenas de tools de 1 función. Una llamada `animation/one_shot` crea animación completa; en GoPeak sería imposible (no hay animación).
-- **Sistema de visión con costo**: no solo capturas — jerarquía de costo (coords textuales ~20 tok → ASCII → imagen) con `visual_text`/`visual_image` separadas, para no quemar contexto.
-- **Schemas sin trampas**: solo `action` required en todas las tools — el agente nunca recibe `-32602 required` por parámetros que no aplican a su acción.
-- **Debug con errores reales**: `debug/output` con `filter=error` muestra errores del juego + del editor (formato panel Output con stack), y `session/diagnose` diagnostica la salud del plugin entero.
-- **Sin runtime externo**: Rust nativo. Node.js (ambos competidores) exige npm install + versión de Node.
+**Lectura honesta**
 
-> ⚠️ La comparativa anterior marcaba ❌/⚡ sin verificar. Esta tabla usa datos reales de los repositorios (`.competitors/`). GoPeak es un proyecto sólido en debug/run/LSP/DAP; Coding-Solo es sólido en ejecución de proyectos y captura de output. Donde no competimos es donde ellos destacan; donde competimos, aportamos editor real + undo + dominios profundos.
+- **Coding-Solo** (4.5k★, limpio, MIT) es la referencia file-level. Si solo quieres leer `.gd`/`.tscn` sin tocar editor, vale.
+- **GoPeak** brilla donde nosotros no: trae LSP + DAP out-of-the-box. Sólido para depuración exclusiva de runtime.
+- **Fennara** fue nuestra inspiración filosófica. Su worker GDScript convenció al General de que el paradigma importa más que el conteo de tools. Lo citamos en §0.12 de AGENTS.md.
+- **Hi-godot/godot-ai** (868★) es el más popular con editor-live. Su telemetría opt-out y Python lo alejan del ethos.
+- **Godot MCP Pro** ($15, 175 tools declaradas, no auditadas) es la opción comercial. Cerrado.
+- **Heren** gana donde el agente **escribe código contra Godot**, no invoca tools individuales. Una llamada reemplaza cinco.
 
 ---
 
-## 📦 Instalación
-
-### Requisitos
-
-- 🦀 **Rust** (para compilar) — o descarga el `.exe` precompilado
-- ⚙️ **Godot** >= 4.2 (recomendado 4.6+)
-- 💻 **Windows / Linux / macOS**
-
-### Desde fuente
+## ⚡ Quickstart
 
 ```bash
 git clone https://github.com/CerebroCanibalus/heren-mcp.git
 cd heren-mcp
 
-# Opcion A: instalador automatico (compila + registra MCP + verifica)
+# Opción A: instalador automático (compila + registra MCP + verifica)
 python scripts/install_mcp.py
 
-# Opcion B: manual
+# Opción B: manual
 cargo build --release
-# → target/release/heren-server.exe
+# → target/release/heren-server.exe (~11 MB)
 ```
 
-> `scripts/install_mcp.py` compila el server, registra el MCP `heren` en tu
-> `opencode.jsonc` (detecta rutas) y verifica el arranque. Ver
-> [docs/INSTALL.md](docs/INSTALL.md).
+### Configuración MCP
 
-### Configuración MCP (OpenCode, Claude Desktop, Cursor, etc.)
-
-```json
+```jsonc
 {
   "mcpServers": {
     "heren": {
       "command": "path/to/heren-server.exe",
       "environment": {
-        "GODOT_EXE": "D:/Mis Juegos/Godot/Godot_v4.6.1-stable_win64.exe"
+        "GODOT_EXE": "D:/Godot/Godot_v4.6.1-stable_win64.exe"
       }
     }
   }
 }
 ```
 
-> El server habla **NDJSON por stdio** (el framing estándar de MCP). El editor se lanza solo al primer tool call con `project_path` (auto-launch).
+> El server habla **NDJSON por stdio** (framing MCP estándar). El primer tool call
+> con `project_path` auto-lanza Godot y carga el plugin — sin tool de sesión previa.
+> `HEREN_AUTO_LAUNCH=0` para abrir Godot manualmente.
 
 ### Variables de entorno
 
-| Variable | Descripción |
-|----------|-------------|
-| `GODOT_EXE` | Ruta al ejecutable de Godot |
-| `GODOT_PATH` | Alias de `GODOT_EXE` |
-| `HEREN_PLUGIN_SOURCE` | Ruta al plugin fuente (por defecto `addons/heren/`) |
-| `HEREN_LOG_FILE` | Archivo de log (opcional; el server jamás inunda stderr) |
+| Variable | Default | Uso |
+|----------|---------|-----|
+| `GODOT_EXE` | — | Ruta a Godot (obligatoria) |
+| `HEREN_AUTO_LAUNCH` | `1` | `0` deshabilita auto-launch |
+| `HEREN_DEFAULT_PROJECT` | — | Proyecto por defecto (si no, `last_project`) |
+| `HEREN_PLUGIN_SOURCE` | `addons/heren/` | Ruta al plugin fuente |
+| `HEREN_LOG_FILE` | — | Log opcional (jamás inunda stderr) |
 
 ---
 
-## 🚀 Uso Rápido
+## 🚀 Flujo real de uso
 
-```python
-# Abrir sesión: lanza el editor (si no está), instala el plugin y conecta
-session(action="open", project_path="D:/MiJuego")
-# → {"launched": true, "message": "launched", "ok": true}
+### 1. Worker GDScript (recomendado para todo)
 
-# Crear escena
-scene(action="create", project_path="D:/MiJuego", scene_path="res://Player.tscn")
-
-# Añadir nodo (con Undo/Redo)
-node(
-    action="add",
-    project_path="D:/MiJuego",
-    parent_path=".",
-    node_type="CharacterBody2D",
-    node_name="Player"
-)
-
-# Leer (node_query no muta) + ver la escena sin imagen
-node_query(action="get_children", project_path="D:/MiJuego", node_path=".", recursive=true)
-visual_text(action="summary", project_path="D:/MiJuego")
-
-# Guardar
-scene(action="save", project_path="D:/MiJuego")
-
-# Correr y ver errores de runtime (formato del panel Output)
-debug(action="run_scene", project_path="D:/MiJuego")
-debug(action="output", filter="error", project_path="D:/MiJuego")
-# → output_errors: ["E 0:00:06:695 global.gd:7 @ get_playstate(): Node not found..."]
+```gdscript
+# res://.heren/tmp/workers/character.gd  (lo escribe el agente)
+@tool
+extends RefCounted
+func run(ctx) -> void:
+    var root := ctx.get_scene_root()
+    var rig := Node3D.new()
+    rig.name = "Rig"
+    ctx.own(root.add_child(rig))            # transaccional
+    var skel := Skeleton3D.new()
+    skel.name = "Skel"
+    ctx.own(rig.add_child(skel))
+    for bone_name in ["Hip", "Spine", "Head", "L_Arm", "R_Arm"]:
+        skel.add_bone(NamedBone(bone_name))
+    ctx.mark_modified()                     # requerido para guardar
+    ctx.snapshot_subtree("./Rig", 2)       # adjuntar al receipt
 ```
 
-> ⚠️ En OpenCode las tools aparecen con prefijo `godot_` (ej. `godot_session`, `godot_node`, `godot_scene`).
-
-### 🔹 Batch con `orchestrate`
-
 ```python
-# Multiples operaciones en una sola llamada
-orchestrate(
-    project_path="D:/MiJuego",
-    plan={"ops": [
-        {"tool": "node", "args": {"action": "add", "node_type": "Sprite2D", "node_name": "Body"}},
-        {"tool": "node", "args": {"action": "add", "node_type": "CollisionShape2D", "node_name": "Hitbox"}},
-        {"tool": "scene", "args": {"action": "save"}}
-    ]},
-    on_error="stop"
-)
+# Desde el agente
+godot_scene_script(action="run", code=<code>, save=True, tier=2)
+# → {
+#     "ok": true, "ran": true, "scene_saved": true,
+#     "coords": {
+#       "root": {<coord tier 2>},
+#       "touched": ["./Rig", "./Rig/Skel"],
+#       "aggregates": {
+#         "skeletons_3d": [{"path": "./Rig/Skel", "bone_count": 5,
+#                           "bones": ["Hip","Spine","Head","L_Arm","R_Arm"]}],
+#         "subtrees": [{"path": "./Rig", "tier": 2, "tree": {...}}]
+#       }
+#     }
+#   }
 ```
 
-### 🔹 HUD en 1 llamada con templates (v4.7)
+El agente **no re-inspecciona**. El receipt ya trae huesos, materiales, animaciones.
+Y si tocó un `Skeleton3D`, el tier efectivo sube automático a 3.
+
+### 2. Inspect READ-ONLY antes de escribir
 
 ```python
-# Barra de vida completa (fondo + fill + label) con 1 llamada:
-node(action="instantiate", project_path="D:/MiJuego",
-     template="health_bar", parent_path="CanvasLayer",
-     properties={"color": {"r": 0.9, "g": 0.2, "b": 0.2, "a": 1.0}, "label": "HP 100/100"})
-
-# HUD completo: CanvasLayer + barra anclada abajo-centro + theme
-ui(action="canvas_layer", project_path="D:/MiJuego", layer=1)
-ui(action="create", project_path="D:/MiJuego",
-   template="boss_bar", parent_path="CanvasLayer", layout="bottom_center",
-   properties={"name": "EL JEFE", "color": {"r": 0.9, "g": 0.15, "b": 0.15, "a": 1.0}})
-ui(action="layout", project_path="D:/MiJuego",
-   node_path="CanvasLayer/BossBar", layout="bottom_center")
-ui(action="theme", project_path="D:/MiJuego", theme_path="res://ui/theme.tres",
-   node_path="CanvasLayer",
-   properties={"colors": {"Label/font_color": {"r": 1, "g": 0.85, "b": 0.3, "a": 1}}})
-
-# Ver el layout (anchors/offsets) sin imagen:
-node_query(action="get_info", project_path="D:/MiJuego", node_path="CanvasLayer/BossBar")
-# → ui: {anchors: {...}, offsets: {...}, size_flags: {...}}
+godot_scene_script(action="inspect", scene_path="res://levels/forest.tscn", tier=1)
+# → { "opaque_packed_scenes": [],
+#     "aggregates": { "skeletons_3d": [...], "animations": [...], ... },
+#     "scene_node_count": 87 }
 ```
 
-> 💡 Los templates son un **sistema transversal**: también los consumen `ui/templates` (lista) y en el futuro otras tools (scripts, shaders, tilemaps). Ver `addons/heren/templates/metadata.json`.
+### 3. UI 2D con templates (1 llamada)
+
+```python
+godot_ui(action="create", template="health_bar", parent_path="CanvasLayer",
+         layout="bottom_center",
+         properties={"color": {"r": 0.9, "g": 0.2, "b": 0.2, "a": 1.0},
+                     "label": "HP 100/100"})
+
+# 6 templates listos: health_bar · crosshair · dialogue_box ·
+#                     score_label · boss_bar · inventory_slot
+```
+
+### 4. Debug con errores reales
+
+```python
+godot_debug(action="run_scene")              # play
+godot_debug(action="output", filter="error") # errores del juego + del editor
+# → "E 0:00:06:695 global.gd:7 @ get_playstate(): Node not found..."
+```
 
 ---
 
-## 🛠️ Las 19 Tools (80+ Acciones)
+## 🛠️ Las 15 tools (90+ acciones)
 
-> **v4.6**: todas las tools exigen SOLO `action` como required — el resto de args son opcionales con defaults por action en el plugin. Nada de `-32602 required` absurdos.
+> v5.0: las tools que el agente rara vez invocaba (`animation/tree_*`, `skeleton/*`,
+> `tilemap/*`, `shader/material`, `node/move`...) se **archivaron**. El worker
+> las cubre con ~10 líneas de GDScript en vez de un handler + schema + dispatcher.
+> De ahí: 19 → 15.
 
-| Tool | Acciones | ¿Qué hace? |
-|------|----------|-----------|
-| **session** | open, **reopen**, close, list, info, health, **diagnose** | Sesiones; `diagnose` = debugger unificado (integridad plugin ok/stale/missing/orphan + grafo headless en sandbox + estado editor) |
-| **scene** | get_open_scenes, get_edited_scene_root, open, save, create, unload | Escenas contra el editor real (SceneRegistry evita escenas fantasma) |
-| **node** | add, instantiate, remove, duplicate, rename, move, set_owner, reorder | **Mutaciones** estructurales. `rename`/`move` devuelven `previous_path`/`old_parent`; errores con `parent_children[]` |
-| **node_query** | get_info, get_children, get_prop, find | **Lecturas** — no mutan la escena, no marcan dirty |
-| **node_props** | set_prop, set_props, array_append, array_remove | **Propiedades** — recursos por PATH (`res://...`); dict inline → warning `resource_incrusted_inline` |
-| **resource** | create, read, update, delete, list, create_script, read_script, edit_script | Recursos `.tres` y scripts `.gd` |
-| **project** | create, setup_plugin, **setting (op get/set/list/delete/set_multi + restart-aware)**, autoload, remove_autoload, **input_map (persistente real)**, shader_global | Configuración, input mapping y creación de proyectos |
-| **shader** | create, edit, get, inspect, validate, material, uniform, apply | Shaders `.gdshader`, materiales y aplicar shader+material+uniforms en 1 llamada |
-| **animation** | create_player, create, add_track, add_key, state_machine, play, stop, seek, speed, get_animations, get_tracks, get_keyframes, one_shot, tween, record, from_path, loop_pose, preview, curve, capture_pose, blend_pose, retarget, reverse, duplicate, delete, rename, tree_* | Animaciones completas: playback, edición, procedural, IK, batch one-shot |
-| **skeleton** | skeleton_create, skeleton_add_bone, skeleton_set_rest, skeleton_skin, skeleton_attachment, skeleton_get_bones, skeleton_get_pose, skeleton_set_pose, skeleton_ik, skeleton_fabrik, capture_pose | Esqueletos 2D/3D + IK 2D FABRIK e IK 3D |
-| **tilemap** | inspect_set, inspect_map, set_cell, terrain, pattern | TileMaps/TileSets |
-| **signal** | connect, disconnect, list, set_script | Señales (CONNECT_PERSIST, defensivo) |
-| **validate** | scene, script, node, resource | Validación contra la escena viva |
-| **debug** | run_scene, output, breakpoint, control, stack, vars, profiler, summary | Depuración con el editor real. `output` con filter=error\|all → errores del juego + del editor (formato panel Output con stack); `run_scene` op=play\|stop |
-| **orchestrate** | (múltiples ops) | Batch operations, plan en archivo, errores por op sin abortar |
-| **visual_text** | coords, summary, ascii | Visión textual NIVEL 0-1 (sin imagen, ~20-150 tok) — usarla SIEMPRE primero |
-| **visual_image** | capture, node | Visión imagen NIVEL 2-3 — render off-screen de la ESCENA real (nunca 2×2), image_content base64 |
-| **ui** | create, layout, canvas_layer, templates, get_info, **theme** | **UI 2D** (v4.7): Control desde template o desde cero + presets de anchors (`full_rect`, `bottom_center`, `center`…), CanvasLayer para HUD overlay, lista de templates, info de Control (anchors/offsets/size_flags), Theme .tres (colors/styleboxes/font_sizes/constants) |
-| **health** | server + editor | Health check con proyectos conectados |
+| # | Tool | Acciones clave |
+|---|------|----------------|
+| 1 | `scene` | open, save, create, plan, orchestrate, validate, status, list |
+| 2 | `node` | add, instantiate, remove, duplicate, rename |
+| 2b | `node_query` | get_prop, get_info, get_children, find, **class_info**, **props_diff** |
+| 2c | `node_props` | set_prop, set_props, array_append, array_remove |
+| 3 | `resource` | create, read, update, delete, create_script, read_script, edit_script |
+| 4 | `project` | create, setup_plugin, setting, autoload, input_map, shader_global |
+| 5 | `shader` | create, edit, get, inspect, validate |
+| 6 | `animation` | create_player, add_track, state_machine, one_shot, tween, record, … |
+| 7 | `debug` | run_scene, stop_scene, output, breakpoint, vars, stack, profiler |
+| 8 | `validate` | scene, script (con `parse_hints`), node, resource |
+| 9 | `signal` | connect, disconnect, list |
+| 10 | `visual` | coords, summary, ascii, spatial |
+| 11 | `ui` | create, layout, canvas_layer, templates, get_info, theme |
+| 12 | `filesystem` | scan, status, import_errors, exists, import |
+| 13 | `health` | server + editor (+ `diagnose=true`) |
+| 14 | `scene_script` | **run, list, inspect** — W4 + W4b inspect proactivo |
+
+📖 Tabla completa con todas las acciones: [AGENTS.md §6](AGENTS.md).
+
+> **Patrón de tool**: 1 tool = N acciones vía `action`. Solo `action` es required. Fin del laberinto de schemas.
 
 ---
 
 ## 🧠 Arquitectura
 
 ```
-OpenCode / Claude / Cursor (cliente MCP)
-        │  stdio · NDJSON
-        ▼
-HerenServer.exe  (Rust · FlojoMCP · ~7 MB)
-        │  WebSocket local (127.0.0.1)
-        ▼
-HerenEditorPlugin  (EditorPlugin GDScript)
-   ├── editor_plugin.gd      # extends EditorPlugin, lifecycle
-   ├── ws_client.gd          # cliente WS con auto-reconnect
-   ├── dispatcher.gd         # rutea tools/call → handlers
-   ├── undo_redo_wrapper.gd  # EditorUndoRedoManager
-   └── handlers/             # scene, node, resource, animation+skeleton,
-                             # shader, project, signal, validate, debug,
-                             # tilemap, visual, coords
+┌─────────────────────────────────────────────────────────────────────┐
+│  OpenCode · Claude · Cursor · Codex  (cliente MCP)                  │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │  stdio · NDJSON
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  heren-server.exe  ·  Rust · FlojoMCP  ·  ~11 MB                    │
+│  schemas compile-time · 0 deps runtime                              │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌─────────────────┐   │
+│  │  LSP bridge      │  │  .heren/server_  │  │  WS server      │   │
+│  │  stdio↔TCP :6005 │  │  port.json       │  │  127.0.0.1:9099 │   │
+│  └──────────────────┘  └──────────────────┘  └────────┬────────┘   │
+└─────────────────────────────────────────────────────────┼───────────┘
+                                                          │  WebSocket
+                                                          ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  HerenEditorPlugin  ·  extends Godot EditorPlugin                   │
+│  ws_client · dispatcher · handlers/ (scene · node · resource ·     │
+│          project · animation · shader · signal · … · scene_script)  │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-**El ciclo de vida:**
+**Ciclo de vida**
 
-1. **Primer tool call con `project_path`** → `ensure_editor_connected`: el server encuentra Godot, instala el plugin si hace falta, lo habilita en `project.godot` y lanza `godot --editor` (auto-launch, 3-10s una sola vez; luego ~20ms).
-2. **El plugin conecta** al server por WebSocket (`HEREN_MCP_PORT`) y se registra por proyecto.
-3. **Las tools** se enrutan al handler correcto, operan sobre el editor real (con Undo/Redo) y devuelven coordenadas/resultados.
-4. **`health`** te dice qué proyectos tienen editor conectado y diagnósticos bajo demanda.
+1. Cliente envía `tools/call` con `action=...` por NDJSON.
+2. Server valida el schema (compile-time), resuelve `project_path`, encuentra editor o lo auto-lanza.
+3. Forward al plugin por WebSocket. `dispatcher.gd` enruta `(tool_prefix, action) → handler_method` — **sin fallbacks mágicos**.
+4. El handler opera contra el editor real con `EditorUndoRedoManager`. `Ctrl+Z` deshace cualquier cosa.
+5. El receipt incluye **coords** (sistema §7). El agente sabe qué pasó sin re-inspeccionar.
 
-**Robustez de conexión:** si hay un editor del proyecto abierto pero **desconectado** (plugin obsoleto o editor colgado), el siguiente tool call con `project_path` lo relanza limpio. El plugin tiene auto-reconnect con backoff vía `.heren/server_port.json`.
+**Sin tool `session`** desde v5.0. El editor conectado **es** la sesión. El primer tool call
+paga el auto-launch; los siguientes son ~20ms. El server nunca mata al editor.
 
-**Sin tool de sesión:** `session/open|close|info|status|list|diagnose|reopen` fueron **eliminados** (2026-09-09) — el primer tool call con `project_path` paga el auto-launch; los siguientes son ~20ms. `HEREN_AUTO_LAUNCH=0` deshabilita el auto-launch (el usuario abre Godot manualmente).
+📖 Detalles: [AGENTS.md §2](AGENTS.md) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ---
 
-## 📚 Documentación
+## 🧪 Tests
 
-- 🤖 [AGENTS.md](AGENTS.md) — Guía completa para agentes de IA (incluye bugs/estado)
-- 📦 [docs/INSTALL.md](docs/INSTALL.md) — Instalación detallada
-- 📋 [docs/API.md](docs/API.md) — Referencia de la API
-- 🏗️ [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Arquitectura técnica
-- 🤝 [CONTRIBUTING.md](CONTRIBUTING.md) — Cómo contribuir
-- 📝 [CHANGELOG.md](CHANGELOG.md) — Historial de cambios
+77 GDScript + 100+ Rust, todo verde:
+
+```bash
+scripts/validate_plugin.bat    # Windows 1-click
+
+# Equivalente manual (4 pasos):
+python scripts/install_plugin.py --project fixtures/empty_project --force
+godot --headless --editor --path fixtures/empty_project --quit-after 5
+godot --headless --path fixtures/empty_project --script res://addons/heren/tests/run_tests.gd
+cargo test -p heren-server
+```
+
+Resultados: `RESULT: 77 passed, 0 failed` · `cargo test: 85 passed, 0 failed`.
 
 ---
 
 ## 🔬 Hecho con FlojoMCP
 
-Heren v4 está construido sobre **[FlojoMCP](https://github.com/CerebroCanibalus/flojomcp)**, el framework de servidores MCP en Rust que genera schemas en **compile-time** (imposible de romper en runtime), expone un server WebSocket local para que se conecten plugins externos (como este EditorPlugin de Godot), y envía imágenes como `image_content` MCP estándar. Rápido, pequeño y sin runtime.
+Heren se construye sobre [FlojoMCP](https://github.com/CerebroCanibalus/flojomcp),
+framework MCP en Rust que genera schemas en compile-time, expone un WS local
+para plugins externos y envía imágenes como `image_content` MCP estándar.
+Sin runtime, sin Node, sin Python.
 
 ---
 
-## 🤝 Contribuir
+## 📚 Documentación
 
-¡Las contribuciones son bienvenidas! Lee [CONTRIBUTING.md](CONTRIBUTING.md) para:
-
-- 📥 Cómo clonar e instalar
-- 📥 Cómo correr tests
-- 📥 Cómo reportar bugs
-- 🎨 Estilo de código
-- 📥 Cómo proponer features
+- 📖 [AGENTS.md](AGENTS.md) — Biblia del agente: bugs abiertos, decisiones, lecciones, gotchas.
+- 📋 [CHANGELOG.md](CHANGELOG.md) — Historial de iteraciones.
+- 📦 [docs/INSTALL.md](docs/INSTALL.md) — Instalación detallada.
+- 🔌 [opencode.lsp.example.jsonc](opencode.lsp.example.jsonc) — LSP bridge para OpenCode.
+- 🏗️ [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Arquitectura técnica.
+- 🤝 [CONTRIBUTING.md](CONTRIBUTING.md) — Cómo contribuir.
 
 ---
 
-## 📄 Licencia
+## 📄 Licencia · 🤝 Contribuir
 
-[MIT](LICENSE) © 2026 Heren MCP Contributors
+[MIT](LICENSE) © 2026 Heren MCP Contributors. Lee [CONTRIBUTING.md](CONTRIBUTING.md):
+todo cambio en `.gd` pasa por `scripts/validate_plugin.bat` antes de commitear.
 
 ---
 
 <div align="center">
-
-⭐ [Star en GitHub](https://github.com/CerebroCanibalus/heren-mcp) · 🐛 [Reportar bug](https://github.com/CerebroCanibalus/heren-mcp/issues) · 💡 [Proponer feature](https://github.com/CerebroCanibalus/heren-mcp/issues)
-
----
 
 **Por los trabajadores y los iberófonos del mundo** 🌍
 

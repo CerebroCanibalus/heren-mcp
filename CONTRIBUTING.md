@@ -251,7 +251,7 @@ Busca en [Issues](https://github.com/CerebroCanibalus/heren-mcp/issues) antes.
 - OS: Windows 11 / Ubuntu 22.04
 - Rust: stable (rustc --version)
 - Godot: 4.6.1-stable
-- Versión Heren MCP: 4.6.0
+- Versión Heren MCP: 5.0.0
 
 **Logs:** (usar HEREN_LOG_FILE) y **Configuración MCP:**
 ```

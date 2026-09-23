@@ -2,10 +2,10 @@
 
 > Biblia del agente. Léelo antes de tocar código.
 >
-> **ESTADO: v4.9** — EditorPlugin (GDScript→EditorInterface) + heren-server.exe Rust/FlojoMCP.
-> 18 tools centralizadas, WS plugin server (patrón gopeak), auto-launch, NDJSON por stdio.
+> **ESTADO: v5.0** — EditorPlugin (GDScript→EditorInterface) + heren-server.exe Rust/FlojoMCP.
+> 15 tools centralizadas (19 → 15 en v5.0 W4 cleanup), WS plugin server (patrón gopeak), auto-launch, NDJSON por stdio.
 > Workspace Rust local (`crates/heren-server`); FlojoMCP = framework SOLO (crates.io, por version).
-> Bridge Python y daemon v3 **archivados en rama `archive/v3`**. **Cambios nuevos → v4/Rust.**
+> Bridge Python y daemon v3 **archivados en rama `archive/v3`**. **Cambios nuevos → v5/Rust.**
 > **Historial de fases completadas y bugs arreglados → CHANGELOG.md** (este archivo solo guarda conocimiento VIVO).
 > **Dirección actual: Plan Worker-First (§0.12)** — `scene_script` (worker GDScript del agente) reemplazará la mayoría de las tools enumeradas.
 
@@ -118,6 +118,64 @@ Resto (8-14): guía en proyecto (W3 ✅), runtime_session/probes (W5), import (W
 | **W8** | Test runner GUT/gdUnit headless — **NADIE lo tiene** | Pendiente |
 
 **Pendiente W4**: limpieza de tools/steps que scene_script reemplaza (animation tree_*/skeleton/tilemap/ui theme+layout/signal/node duplicate+reorder+move+set_owner/shader material+uniform+apply + steps tipados Fases 2/2b/3/4) — propuesta al General pendiente de OK.
+
+### §0.15 W4b inspect (2026-09-22) — vista READ-ONLY sin ejecutar worker
+
+**Problema descubierto (E2E Omega 2026-09-22)**: con W4 el agente escribe workers GDScript **ciegos** — no sabe qué nodos/huesos/animaciones tiene la escena hasta ejecutar el worker (1 round-trip por insight). El General pidió proactividad: el agente debe ver el contenido antes de escribir.
+
+**Solución**: `scene_script/inspect` — vista READ-ONLY instantánea sin ejecutar código. **Decisiones del General**:
+- **Tier 1 por defecto** (~80-100 tok/nodo: pos/rot/scale + bbox/aabb).
+- **PackedScene instanciadas son opacas** (no se expanden); opt-in vía `expand_scene=[res://path.tscn,...]`. Una sub-escena aparece como `{kind:"PackedScene", source, child_count}`.
+
+**Contrato**:
+- Args: `scene_path` (o usa edited root), `tier` (default 1), `depth` (default -1 ilimitado), `expand_scene` (default []).
+- Output:
+  - `root` — coord del root + `children` recursivo (opacos como `{kind:"PackedScene", source, child_count}` sin `children`).
+  - `opaque_packed_scenes` — array de relpaths de las sub-escenas que NO se expandieron.
+  - `aggregates` — cruzados (cualquier nodo, no por padre):
+    - `skeletons_3d` — `{path, bone_count, bones[]}` (todos los nombres)
+    - `skeletons_2d` — idem
+    - `animations` — `{path, libraries:[{name, length}]}`
+    - `animation_trees` — `{path, anim_player, active}`
+    - `materials` — `{path, materials:[{index, path, class}], override_count}`
+    - `lights` — `{path, class, light_color, light_energy, enabled}`
+    - `audios` — `{path, class, stream_path, playing}`
+    - `cameras` — `{path, class, current}`
+    - `tilemaps` — `{path, class}`
+  - `scene_node_count` — total de nodos en el árbol recursivo.
+
+**Tests**: 3 nuevos en `run_tests.gd` (not_found, opaco + opt-in expand, aggregates). Resultado: **75 passed, 0 failed** (era 72 antes). Cargo tools_parity: 7/7 pass.
+
+**Lección meta**: el root.instanced de una PackedScene tiene `scene_file_path = path de la propia escena` — el walk inicial lo marcaba como opaco y nunca entraba a sus hijos. Fix: parámetro `is_root` en `_inspect_walk` que exenta la raíz del check de opacidad (los PackedScene HIJOS sí son opacos).
+
+### §0.15b Receipt post-worker proactivo (W4b, 2026-09-22)
+
+**Problema**: el receipt de `handle_run` solo traía `touched` (tier 1) + `root` coords. El agente tenía que re-inspeccionar la escena tras cada worker para saber QUÉ quedó.
+
+**Solución**:
+- **Aggregates** (skeleton bones, animations, animation_trees, materials, lights, audios, cameras, tilemaps) incluidos en `receipt.coords.aggregates`. Reusa `_inspect_aggregates` del W4b inspect — un motor, dos consumidores.
+- **Tier dinámico**: si el worker tocó un nodo con estado dinámico (Skeleton3D, Skeleton2D, AnimationPlayer, AnimationTree, Light3D, audio, camera), el tier efectivo del receipt sube automáticamente a 3 → el agente ve el árbol dinámico resultante SIN re-inspect. `_touched_dynamic(ctx)` decide.
+- **`ctx.snapshot_subtree(path, tier)`**: el worker puede adjuntar al receipt un subárbol específico (ej. "así quedó el personaje"). El receipt lo devuelve en `coords.subtrees[]`. Coste acotado al subárbol. Rechaza en read-only.
+
+**Convención unificada de paths**: antes había DOS formatos incompatibles:
+- `_inspect_walk` → `./X/Y/Z` (con `./`)
+- `ctx._relpath` → `/X/Y/Z` (sin `./`)
+
+El agente veía paths distintos en `changes.added[]` vs `inspect.tree`. **Fix**: `_relpath` ahora usa `./X/Y/Z` consistente con `_inspect_walk`. Root → `"."`. Huérfanos → nombre plano. Tests actualizados. Lección: **unificar convenciones de path antes de tener consumidores**.
+
+**Tests**: 2 nuevos (aggregates + snapshot_subtree) + 1 modificado (W4 relpath). Resultado: **77 passed, 0 failed**.
+
+### §0.16 archive/ mudado fuera del addon (2026-09-22)
+
+**Problema**: los 7 handlers archivados de v3 (`animation_tree_handlers`, `skeleton_handlers`, `tilemap_handlers`, `ui_layout_theme_handlers`, `shader_ops_handlers`, `node_movement_handlers`, README) vivían en `addons/heren/archive/handlers/` — DENTRO del directorio que escanea el addon. Cada vez que Godot arrancaba, intentaba compilarlos → 7 parse errors garantizados por diseño (dependen de APIs v3 que ya no existen) → **el plugin completo dejaba de cargar** (un parse error en CUALQUIER archivo del addon rompe TODO el grafo).
+
+**Síntoma reportado por el General**: logs con `Parse Error: _undo_redo is not a function`, `Cannot infer the type of "normalized"`, `Preload file "res://addons/heren/archive/handlers/coords.gd" does not exist`, etc. — todos en archivos del archivo histórico. Los logs del proyecto del juego del General sumaban errores de su propio código (`Color.red` → `Color.RED`, `preload("res://scenes/rigid_body_3d.tscn")` faltante, addon de terceros con `class_name` colisión) — esos no son de Heren.
+
+**Fix**: `git mv addons/heren/archive/ → archived_handlers/gd_source/` (raíz del repo, FUERA de `addons/`). Godot ya no los escanea. El README del archivo explica por qué se mantienen como `.gd` (highlighting) pero siguen siendo código muerto histórico (parse errors si alguien los compila).
+
+**Fixture**: `fixtures/empty_project/addons/heren/archive/` también borrado (es código derivado, no fuente; `install_plugin.py --force` lo regenera desde `addons/heren/` que ya no lo trae).
+
+**Validación**: `validate_plugin.bat` (sync → compile → tests → cargo) corre limpio. **0 parse errors, 75/75 GDScript tests, cargo build OK**.
 
 ### Gaps (consolidado)
 
@@ -362,7 +420,7 @@ Tool call con project_path → ensure_editor_connected():
 
 ## 12. Checklist
 
-- [ ] **Plan W (§0.12)**: ~~W0~~ ✅ → ~~W1~~ ✅ → ~~W2~~ ✅ → ~~W3~~ ✅ → ~~W4~~ ✅ (E2E 27/27 + Omega) → W4b imports → W5 runtime. **Pendiente W4: limpieza de tools reemplazadas** (propuesta al General). W7/W8 (export/build, test runner) = diferenciadores.
+- [x] **Plan W (§0.12)**: ~~W0~~ ✅ → ~~W1~~ ✅ → ~~W2~~ ✅ → ~~W3~~ ✅ → ~~W4~~ ✅ (E2E 27/27 + Omega) → ~~**W4b inspect**~~ ✅ (2026-09-22, `scene_script/inspect` + fix archive/) → W5 runtime. **Pendiente W4: limpieza de tools reemplazadas** (propuesta al General). W7/W8 (export/build, test runner) = diferenciadores.
 - [ ] **§0.5 Sin sesiones** (✅ arquitectura, ✅ R0 codec): implementado (Opción B — reemplazar tool session por auto-launch + health). Pendientes: R3 fuzz permanente, W4b (imports/readiness).
 - [ ] §0.8 Fases 1-3 (single registry, fail-fast, dispatcher explícito) — W4/W5 sobre Fase 1.
 - [ ] M1 array_remove · M2 summary node_count · M3 validate/node scripts · P5 verbose · P10 get_animation.

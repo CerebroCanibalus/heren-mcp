@@ -15,252 +15,351 @@
 
 ---
 
-# ⚡ Heren Godot MCP v4.6
+<div align="center">
 
-🔥 **Heren Godot MCP** — *Plus Ultra*: go beyond. 🌍
+# ⚡ Heren Godot MCP v5.0
 
-High-performance MCP server for **Godot Engine 4.x** that lets AI agents control the **real editor** directly: create scenes, manipulate nodes, manage resources, connect signals, animate, rig skeletons, shaders and validate code. **All against the live editor, with real Undo/Redo.**
+**Plus Ultra: the agent no longer asks WHICH tool — it writes the code.**
 
-**📢 v4.6**: Toolset redesigned — **18 tools, only `action` required** (end of the schema maze: no more absurd required params, agents don't guess). `node` split into mutations/reads/props (`node`/`node_query`/`node_props`), `visual` split into textual/image (`visual_text`/`visual_image`). **`debug/output`** with `filter=error|all` exposes game + editor errors (Output panel format, with stack). **`session/diagnose`** = unified debugger (plugin integrity + headless graph + editor state). Continuous orientation: `node_not_found` returns `parent_children[]`, `rename`/`move` return `previous_path`/`old_parent`. Anti-inline: resources without path → `resource_incrusted_inline` warning. 100% **Rust** on **[FlojoMCP](https://github.com/CerebroCanibalus/flojomcp)**.
+A high-performance MCP server for Godot Engine 4.x, written in Rust.
+Plugs an AI agent into the live editor — not into files, not into throwaway CLI calls —
+so it can build scenes, mutate nodes, animate skeletons, write UI, validate, and `Ctrl+Z`
+its way out of anything it made up.
+
+<p>
+  <a href="https://github.com/CerebroCanibalus/heren-mcp"><b>★ Star</b></a> ·
+  <a href="https://github.com/CerebroCanibalus/heren-mcp/issues">🐛 Issues</a> ·
+  <a href="CHANGELOG.md">📋 CHANGELOG</a> ·
+  <a href="AGENTS.md">📖 AGENTS.md</a>
+</p>
+
+</div>
 
 ---
 
-## 🚀 Features
+## 🐉 Why v5.0 changes the rules
 
-| Feature | Description |
+The old problem was a maze. Pick among 30+ typed tools. Guess args per action. Pray the schema accepted the structure. The coder→handler translator ate half the fix-loop.
+
+**v5.0 introduces Worker-First (W4)** — the heart of the break from v4.9: the
+agent writes a short GDScript worker against Godot's real API, and we run it
+under a transactional safety net.
+
+```
+parse-check first
+   ↓
+snapshot the .tscn → .heren/backup/
+   ↓
+worker.run(ctx)         ← ctx.own · ctx.instance_scene · ctx.template · ctx.coords
+   ↓
+did it mark_modified?   ← if NO, NOTHING is saved (original scene intact)
+   ↓
+post-validation
+   ↓
+if fail → restore snapshot → receipt with diagnostics
+```
+
+One bad call won't break your scene. And `scene_script/inspect` (W4b) gives the agent the tree + bones + animations + materials **before** it writes the worker. No blind round-trips.
+
+> *"If `run_scene_edit_script` saves us from ALMOST ALL the tools, so be it."* — Design philosophy adopted v5.0.
+
+---
+
+## 🎯 What makes Heren different
+
+| Capability | How Heren solves it |
 |---|---|
-| ⚡ **Rust server (FlojoMCP)** | `heren-server.exe` ~**7 MB**, no Python or Node.js. Instant startup, compile-time schemas |
-| 🎯 **Real editor, not a daemon** | Connects to the **EditorPlugin** inside the open Godot — Undo/Redo, real 2D/3D viewports, EditorFileSystem |
-| 🔄 **Editor auto-launch** | Any tool with `project_path` launches Godot (or reuses an open editor) — no prior session tool |
-| 🛠️ **18 centralized tools** | Scenes, nodes (mutations/reads/props), resources, scripts, signals, animations, skeletons, shaders, tilemaps, validation, debug — **only `action` required**, no-trap schemas |
-| 👀 **Vision system** | `visual_text` (coords/summary/ascii, ~20-150 tok) + `visual_image` (capture/node, off-screen render of the REAL scene) — cost hierarchy without burning context |
-| 🔍 **Real debugging with errors** | `debug/output` with `filter=error` exposes game + editor errors (Output panel format, with stack) + `session/diagnose` for plugin integrity |
-| ↩️ **Built-in Undo/Redo** | Every mutation goes through `EditorUndoRedoManager` — Ctrl+Z undoes what the AI created |
-| ⚡ **`orchestrate`** | Runs multiple operations in one call, with a plan file for complex plans |
-| 🏗️ **Create projects from scratch** | `project/create` generates project.godot + main scene without needing an editor |
+| **Live editor, not headless** | A real `EditorPlugin` inside Godot. Real 2D/3D viewports, real Undo/Redo, real EditorFileSystem. |
+| **Transactional GDScript worker** | The agent writes code against Godot's API — no translator. Failure ⇒ scene intact. |
+| **Proactive every reply** | Every mutation returns coords at the right tier and errors with `parent_children[]`. |
+| **3-tier vision** | Textual coords (~20-100 tok) → ASCII → real viewports. Image only if text isn't enough. |
+| **Trap-free schemas** | Only `action` is required. No `-32602` for params that don't apply. |
+| **Rust on FlojoMCP** | ~11 MB release binary, instant startup, compile-time schemas. |
+| **Zero telemetry** | Nothing leaves your machine. By default and forever. |
+| **LSP bridge included** | `heren-server lsp-bridge` for OpenCode — GDScript diagnostics with backoff and reconnect. |
 
 ---
 
-## 🆚 Versus other Godot MCPs
+## 🆚 Versus other Godot MCPs (July 2026)
 
-**Coding-Solo** and **GoPeak** are good projects, but they either launch Godot from scratch per operation, or rely on an external daemon that can't touch the real editor.
+Verified data from each repo (`.competitors/` + `godot-mcp-runtime/comparison.md`). A ❌
+means **the competitor's repo doesn't expose that capability** — not "it's worse", but
+"another MCP covers it".
 
-**Heren Godot MCP v4** lives **inside** the real editor: an EditorPlugin that talks to the Rust server over a local WebSocket. It's not "operating blindly on files", it's **controlling the editor the user sees**.
+| Capability | Coding-Solo<br>4.5k★ MIT | Hi-godot<br>868★ MIT | GoPeak<br>227★ MIT | Fennara<br>191★ MIT | Godot MCP Pro<br>473★ $15 | **Heren v5.0**<br>Rust 11MB |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Mode of operation | Headless CLI | Editor WS | `npx` + addon | Addon + daemon | Editor (paid) | **EditorPlugin live via WS** |
+| **Real Undo/Redo** | ❌ | ✅ | ❌ | ✅ transactional | ✅ | **✅ `EditorUndoRedoManager`** |
+| **Signal connect/list** | ❌ | ✅ | ❌ | ✅ | ✅ | **✅ `signal`** |
+| **AnimationPlayer/Tree** | ❌ | partial | ❌ | partial | ✅ 6 tools | **✅ 25+ actions** |
+| **2D/3D skeletons + IK** | ❌ | partial | ❌ | ❌ | partial | **✅ pose, rest, skin, FABRIK, IK 3D** |
+| **.gdshader shaders** | ❌ | ✅ | partial | ✅ | ✅ | **✅ + material/uniform/apply** |
+| **Tilemap** | ❌ | ✅ | ❌ | partial | ✅ | **✅ set_cell/terrain/pattern** |
+| **2D UI + Themes** | ❌ | partial | ❌ | partial | ✅ | **✅ `ui` + 6 templates + theme** |
+| **Scene vision** | ❌ | screenshots | runtime | ❌ | screenshots | **✅ cost tier: coords → ASCII → real** |
+| **LSP diagnostics** | ❌ | ❌ | ✅ own LSP | ❌ | ❌ | **✅ `lsp-bridge` for OpenCode** |
+| **Batch / orchestration** | ❌ | ❌ | ❌ | ✅ loop | ✅ | **✅ `orchestrate` + `scene_script`** |
+| **Agent GDScript worker** | ❌ | ❌ | ❌ | ✅ patch-rerun | ❌ | **✅ `scene_script/run` with snapshot** |
+| **READ-ONLY view without worker** | ❌ | ❌ | ❌ | ❌ | ❌ | **✅ `scene_script/inspect` (W4b)** |
+| **Proactive receipt** | ❌ | ❌ | ❌ | ❌ | ❌ | **✅ `aggregates` + dynamic tier** |
+| **Runtime required** | Node.js | Python | Node.js | Python | Node.js | **Native Rust** |
+| **Telemetry** | opt-in | opt-out ⚠️ | none | none | yes | **none, forever** |
+| **License** | MIT | MIT | MIT | MIT | Proprietary | **MIT** |
 
-| Capability | Coding-Solo | GoPeak | **Heren v4** |
-|---|---|---|---|
-| **Server** | Node.js | Node.js | **Rust (7 MB, no runtime)** |
-| **Undo/Redo** | ❌ | ❌ | **✅ EditorUndoRedoManager** |
-| **Real editor** | ❌ | ❌ | **✅ EditorPlugin** |
-| **Editor auto-launch** | ❌ | ❌ | **✅** |
-| **Vision (real viewports)** | ❌ | ❌ | **✅ 2D/3D + budget** |
-| **Session** | ❌ | ❌ | **✅ live connected editor** |
-| **2D/3D skeletons** | ❌ | ⚡ | **✅** |
-| **Reliable schemas** | runtime | runtime | **✅ compile-time** |
+**Honest reading**
+
+- **Coding-Solo** (4.5k★, clean, MIT) is the file-level reference. If you only want to read `.gd`/`.tscn` without touching the editor, it works.
+- **GoPeak** shines where we don't: ships LSP + DAP out-of-the-box. Solid for pure runtime debugging.
+- **Fennara** was our philosophical inspiration. Their GDScript worker convinced the General that paradigm beats tool count. We cite them in §0.12 of AGENTS.md.
+- **Hi-godot/godot-ai** (868★) is the most popular with editor-live mode. Its opt-out telemetry and Python dep sit ill with Heren's ethos.
+- **Godot MCP Pro** ($15, 175 self-declared tools, unaudited) is the commercial play. Closed.
+- **Heren** wins where the agent **writes code against Godot**, not invokes individual tools. One call replaces five.
 
 ---
 
-## 📦 Installation
-
-### Requirements
-
-- 🦀 **Rust** (to compile) — or download a prebuilt `.exe`
-- ⚙️ **Godot** >= 4.2 (4.6+ recommended)
-- 💻 **Windows / Linux / macOS**
-
-### From source
+## ⚡ Quickstart
 
 ```bash
 git clone https://github.com/CerebroCanibalus/heren-mcp.git
 cd heren-mcp
 
-# Option A: automatic installer (compiles + registers MCP + verifies)
-python install_mcp.py
+# Option A: auto-installer (compile + register MCP + verify)
+python scripts/install_mcp.py
 
 # Option B: manual
 cargo build --release
-# → target/release/heren-server.exe
+# → target/release/heren-server.exe (~11 MB)
 ```
 
-> `install_mcp.py` compiles the server, registers the `heren` MCP in your
-> `opencode.jsonc` (auto-detects paths) and verifies startup. See
-> [docs/INSTALL.md](docs/INSTALL.md).
+### MCP configuration
 
-### MCP configuration (OpenCode, Claude Desktop, Cursor, etc.)
-
-```json
+```jsonc
 {
   "mcpServers": {
     "heren": {
       "command": "path/to/heren-server.exe",
       "environment": {
-        "GODOT_EXE": "D:/Mis Juegos/Godot/Godot_v4.6.1-stable_win64.exe"
+        "GODOT_EXE": "D:/Godot/Godot_v4.6.1-stable_win64.exe"
       }
     }
   }
 }
 ```
 
-> The server speaks **NDJSON over stdio** (the standard MCP framing). The editor auto-launches on the first tool call with `project_path`.
+> The server speaks **NDJSON over stdio** (standard MCP framing). The first tool call
+> with `project_path` auto-launches Godot and loads the plugin — no prior session tool.
+> `HEREN_AUTO_LAUNCH=0` to open Godot manually.
 
 ### Environment variables
 
-| Variable | Description |
-|----------|-------------|
-| `GODOT_EXE` | Path to the Godot executable |
-| `GODOT_PATH` | Alias for `GODOT_EXE` |
-| `HEREN_PLUGIN_SOURCE` | Path to the source plugin (default `addons/heren/`) |
-| `HEREN_LOG_FILE` | Log file (optional; the server never floods stderr) |
+| Variable | Default | Use |
+|----------|---------|-----|
+| `GODOT_EXE` | — | Path to Godot (required) |
+| `HEREN_AUTO_LAUNCH` | `1` | `0` disables editor auto-launch |
+| `HEREN_DEFAULT_PROJECT` | — | Default project (else falls back to `last_project`) |
+| `HEREN_PLUGIN_SOURCE` | `addons/heren/` | Source plugin path |
+| `HEREN_LOG_FILE` | — | Optional log (server never floods stderr) |
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Real-world flow
 
-```python
-# Open a session: launches the editor (if needed), installs the plugin, connects
-session(action="open", project_path="D:/MyGame")
-# → {"launched": true, "message": "launched", "ok": true}
+### 1. Agent's GDScript worker (recommended for everything)
 
-# Create a scene
-scene(action="create", project_path="D:/MyGame", scene_path="res://Player.tscn")
-
-# Add a node (with Undo/Redo)
-node(
-    action="add",
-    project_path="D:/MyGame",
-    parent_path=".",
-    node_type="CharacterBody2D",
-    node_name="Player"
-)
-
-# Save
-scene(action="save", project_path="D:/MyGame")
+```gdscript
+# res://.heren/tmp/workers/character.gd  (agent writes this)
+@tool
+extends RefCounted
+func run(ctx) -> void:
+    var root := ctx.get_scene_root()
+    var rig := Node3D.new()
+    rig.name = "Rig"
+    ctx.own(root.add_child(rig))            # transactional
+    var skel := Skeleton3D.new()
+    skel.name = "Skel"
+    ctx.own(rig.add_child(skel))
+    for bone_name in ["Hip", "Spine", "Head", "L_Arm", "R_Arm"]:
+        skel.add_bone(NamedBone(bone_name))
+    ctx.mark_modified()                     # required to actually save
+    ctx.snapshot_subtree("./Rig", 2)       # attach to receipt
 ```
 
-> ⚠️ In OpenCode the tools appear with a `godot_` prefix (e.g. `godot_session`, `godot_node`, `godot_scene`).
+```python
+# From the agent
+godot_scene_script(action="run", code=<code>, save=True, tier=2)
+# → {
+#     "ok": true, "ran": true, "scene_saved": true,
+#     "coords": {
+#       "root": {<coord tier 2>},
+#       "touched": ["./Rig", "./Rig/Skel"],
+#       "aggregates": {
+#         "skeletons_3d": [{"path": "./Rig/Skel", "bone_count": 5,
+#                           "bones": ["Hip","Spine","Head","L_Arm","R_Arm"]}],
+#         "subtrees": [{"path": "./Rig", "tier": 2, "tree": {...}}]
+#       }
+#     }
+#   }
+```
 
-### 🔹 Batch with `orchestrate`
+The agent doesn't re-inspect. The receipt already tells which bones exist, which
+materials, which animations. And if it touched a `Skeleton3D`, the effective tier
+auto-bumps to 3.
+
+### 2. READ-ONLY inspect before writing
 
 ```python
-# Multiple operations in a single call
-orchestrate(
-    project_path="D:/MyGame",
-    plan={"ops": [
-        {"tool": "node", "args": {"action": "add", "node_type": "Sprite2D", "node_name": "Body"}},
-        {"tool": "node", "args": {"action": "add", "node_type": "CollisionShape2D", "node_name": "Hitbox"}},
-        {"tool": "scene", "args": {"action": "save"}}
-    ]},
-    on_error="stop"
-)
+godot_scene_script(action="inspect", scene_path="res://levels/forest.tscn", tier=1)
+# → { "opaque_packed_scenes": [],
+#     "aggregates": { "skeletons_3d": [...], "animations": [...], ... },
+#     "scene_node_count": 87 }
+```
+
+### 3. 2D UI with templates (1 call)
+
+```python
+godot_ui(action="create", template="health_bar", parent_path="CanvasLayer",
+         layout="bottom_center",
+         properties={"color": {"r": 0.9, "g": 0.2, "b": 0.2, "a": 1.0},
+                     "label": "HP 100/100"})
+
+# 6 templates ready: health_bar · crosshair · dialogue_box ·
+#                    score_label · boss_bar · inventory_slot
+```
+
+### 4. Debug with real errors
+
+```python
+godot_debug(action="run_scene")              # play
+godot_debug(action="output", filter="error") # runtime + editor errors
+# → "E 0:00:06:695 global.gd:7 @ get_playstate(): Node not found..."
 ```
 
 ---
 
-## 🛠️ The 18 Tools (70+ Actions)
+## 🛠️ The 15 tools (90+ actions)
 
-> **v4.6**: every tool requires ONLY `action` — all other args are optional with per-action defaults in the plugin. No more absurd `-32602 required` errors.
+> v5.0: the tools the agent rarely invoked directly (`animation/tree_*`,
+> `skeleton/*`, `tilemap/*`, `shader/material`, `node/move`...) got **archived**.
+> The worker covers them with ~10 lines of GDScript instead of a handler + schema
+> + dispatcher. Hence: 19 → 15.
 
-| Tool | Actions | What it does |
-|------|----------|-----------|
-| **session** | open, **reopen**, close, list, info, health, **diagnose** | Sessions; `diagnose` = unified debugger (plugin integrity ok/stale/missing/orphan + headless graph in sandbox + editor state) |
-| **scene** | get_open_scenes, get_edited_scene_root, open, save, create, unload | Scenes against the real editor (SceneRegistry avoids ghost scenes) |
-| **node** | add, instantiate, remove, duplicate, rename, move, set_owner, reorder | **Mutations**. `rename`/`move` return `previous_path`/`old_parent`; errors include `parent_children[]` |
-| **node_query** | get_info, get_children, get_prop, find | **Reads** — no mutation, no dirty marking |
-| **node_props** | set_prop, set_props, array_append, array_remove | **Properties** — pass resources by PATH (`res://...`); inline dict → `resource_incrusted_inline` warning |
-| **resource** | create, read, update, delete, list, create_script, read_script, edit_script | `.tres` resources and `.gd` scripts |
-| **project** | create, setup_plugin, setting, autoload, remove_autoload, input_map, shader_global | Project config and creation |
-| **shader** | create, edit, get, inspect, validate, material, uniform, apply | `.gdshader` shaders, materials, one-shot apply |
-| **animation** | create_player, create, add_track, add_key, state_machine, play, stop, seek, speed, get_*, remove_*, update_*, one_shot, tween, record, from_path, loop_pose, preview, curve, capture_pose, tree_*, duplicate, delete, rename, reverse, blend_pose, retarget | Full animation: playback, editing, procedural, IK, one-shot batch |
-| **skeleton** | skeleton_create, skeleton_add_bone, skeleton_set_rest, skeleton_skin, skeleton_attachment, skeleton_get_*, skeleton_set_pose, skeleton_ik, skeleton_fabrik, capture_pose | 2D/3D skeletons + IK 2D FABRIK / IK 3D |
-| **tilemap** | inspect_set, inspect_map, set_cell, terrain, pattern | TileMaps/TileSets |
-| **signal** | connect, disconnect, list, set_script | Signals (CONNECT_PERSIST) |
-| **validate** | scene, script, node, resource | Validation against the live scene |
-| **debug** | run_scene, stop_scene, is_playing, get_editor_errors, **output**, status, breakpoint, control, stack, vars, profiler | Real-editor debugging. `get_editor_errors` → structured + `output_errors` (Output panel format); `output` with filter=error\|all |
-| **orchestrate** | (multiple ops) | Batch operations, plan file, per-op errors |
-| **visual_text** | coords, summary, ascii | Textual vision LEVEL 0-1 (no image, ~20-150 tok) — use it FIRST, always |
-| **visual_image** | capture, node | Image vision LEVEL 2-3 — off-screen render of the REAL scene (never 2×2), image_content base64 |
-| **health** | server + editor | Health check with connected projects |
+| # | Tool | Key actions |
+|---|------|-------------|
+| 1 | `scene` | open, save, create, plan, orchestrate, validate, status, list |
+| 2 | `node` | add, instantiate, remove, duplicate, rename |
+| 2b | `node_query` | get_prop, get_info, get_children, find, **class_info**, **props_diff** |
+| 2c | `node_props` | set_prop, set_props, array_append, array_remove |
+| 3 | `resource` | create, read, update, delete, create_script, read_script, edit_script |
+| 4 | `project` | create, setup_plugin, setting, autoload, input_map, shader_global |
+| 5 | `shader` | create, edit, get, inspect, validate |
+| 6 | `animation` | create_player, add_track, state_machine, one_shot, tween, record, … |
+| 7 | `debug` | run_scene, stop_scene, output, breakpoint, vars, stack, profiler |
+| 8 | `validate` | scene, script (with `parse_hints`), node, resource |
+| 9 | `signal` | connect, disconnect, list |
+| 10 | `visual` | coords, summary, ascii, spatial |
+| 11 | `ui` | create, layout, canvas_layer, templates, get_info, theme |
+| 12 | `filesystem` | scan, status, import_errors, exists, import |
+| 13 | `health` | server + editor (+ `diagnose=true`) |
+| 14 | `scene_script` | **run, list, inspect** — W4 Worker-First + W4b proactive inspect |
+
+📖 Full table (all actions) in [AGENTS.md §6](AGENTS.md).
+
+> **Tool pattern**: 1 tool = N actions via `action`. Only `action` is required. End of the schema maze.
 
 ---
 
 ## 🧠 Architecture
 
 ```
-OpenCode / Claude / Cursor (MCP client)
-        │  stdio · NDJSON
-        ▼
-HerenServer.exe  (Rust · FlojoMCP · ~7 MB)
-        │  local WebSocket (127.0.0.1)
-        ▼
-HerenEditorPlugin  (EditorPlugin GDScript)
-   ├── editor_plugin.gd      # extends EditorPlugin, lifecycle
-   ├── ws_client.gd          # WS client with auto-reconnect
-   ├── dispatcher.gd         # routes tools/call → handlers
-   ├── undo_redo_wrapper.gd  # EditorUndoRedoManager
-   └── handlers/             # scene, node, resource, animation+skeleton,
-                             # shader, project, signal, validate, debug,
-                             # tilemap, visual, coords
+┌─────────────────────────────────────────────────────────────────────┐
+│  OpenCode · Claude · Cursor · Codex  (MCP client)                   │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │  stdio · NDJSON
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  heren-server.exe  ·  Rust · FlojoMCP  ·  ~11 MB                    │
+│  compile-time schemas · 0 runtime deps                              │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌─────────────────┐   │
+│  │  LSP bridge      │  │  .heren/server_  │  │  WS server      │   │
+│  │  stdio↔TCP :6005 │  │  port.json       │  │  127.0.0.1:9099 │   │
+│  └──────────────────┘  └──────────────────┘  └────────┬────────┘   │
+└─────────────────────────────────────────────────────────┼───────────┘
+                                                          │  WebSocket
+                                                          ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  HerenEditorPlugin  ·  extends the Godot EditorPlugin               │
+│  ws_client · dispatcher · handlers/ (scene · node · resource ·     │
+│          project · animation · shader · signal · … · scene_script)  │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-**The lifecycle:**
+**Lifecycle**
 
-1. **First tool call with `project_path`** → `ensure_editor_connected`: the server finds Godot, installs the plugin if needed, enables it in `project.godot` and launches `godot --editor` (auto-launch, 3-10s once; then ~20ms).
-2. **The plugin connects** to the server over WebSocket (`HEREN_MCP_PORT`) and registers by project.
-3. **The tools** route to the right handler, operate on the real editor (with Undo/Redo) and return coordinates/results.
-4. **`health`** tells you which projects have a connected editor and offers diagnostics on demand.
+1. Client sends `tools/call` with `action=...` over NDJSON.
+2. Server validates the schema (compile-time), resolves `project_path`, finds editor or auto-launches.
+3. Forward to the plugin over WebSocket. `dispatcher.gd` routes `(tool_prefix, action) → handler_method` — **no magic fallbacks**.
+4. The handler operates against the real editor under `EditorUndoRedoManager`. `Ctrl+Z` undoes anything.
+5. The receipt includes **coords** (system §7). The agent knows what happened without re-inspecting.
 
-**Connection robustness:** if a project editor is open but **disconnected** (outdated plugin or hung editor), the next tool call with `project_path` cleanly relaunches it. The plugin auto-reconnects with backoff via `.heren/server_port.json`.
+**No `session` tool** since v5.0. The connected editor **is** the session. The first
+tool call with `project_path` pays the auto-launch; subsequent calls are ~20ms.
+The server never kills the editor.
 
-**No session tool:** `session/open|close|info|status|list|diagnose|reopen` were **removed** (2026-09-09) — the first tool call with `project_path` pays the auto-launch; subsequent calls are ~20ms. `HEREN_AUTO_LAUNCH=0` disables auto-launch (the user opens Godot manually).
+📖 Details: [AGENTS.md §2](AGENTS.md) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ---
 
-## 📚 Documentation
+## 🧪 Tests
 
-- 🤖 [AGENTS.md](AGENTS.md) — Full guide for AI agents (includes bugs/status)
-- 📦 [docs/INSTALL.md](docs/INSTALL.md) — Detailed installation
-- 📋 [docs/API.md](docs/API.md) — API reference
-- 🏗️ [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Technical architecture
-- 🤝 [CONTRIBUTING.md](CONTRIBUTING.md) — How to contribute
-- 📝 [CHANGELOG.md](CHANGELOG.md) — Change history
+77 GDScript + 100+ Rust tests, all green:
+
+```bash
+scripts/validate_plugin.bat    # Windows 1-click
+
+# Manual equivalent (4 steps):
+python scripts/install_plugin.py --project fixtures/empty_project --force
+godot --headless --editor --path fixtures/empty_project --quit-after 5
+godot --headless --path fixtures/empty_project --script res://addons/heren/tests/run_tests.gd
+cargo test -p heren-server
+```
+
+Results: `RESULT: 77 passed, 0 failed` · `cargo test: 85 passed, 0 failed`.
 
 ---
 
 ## 🔬 Built with FlojoMCP
 
-Heren v4 is built on **[FlojoMCP](https://github.com/CerebroCanibalus/flojomcp)**, the Rust MCP server framework that generates schemas at **compile-time** (impossible to break at runtime), exposes a local WebSocket server for external plugins to connect to (like this Godot EditorPlugin), and sends images as standard MCP `image_content`. Fast, small, no runtime.
+Heren runs on [FlojoMCP](https://github.com/CerebroCanibalus/flojomcp), the Rust MCP
+framework that generates compile-time schemas, exposes a local WebSocket for external
+plugins, and sends images as standard MCP `image_content`. No runtime. No Node. No Python.
 
 ---
 
-## 🤝 Contributing
+## 📚 Documentation
 
-Contributions are welcome! Read [CONTRIBUTING.md](CONTRIBUTING.md) for:
-
-- 📥 How to clone and install
-- 📥 How to run tests
-- 📥 How to report bugs
-- 🎨 Code style
-- 📥 How to propose features
+- 📖 [AGENTS.md](AGENTS.md) — Agent bible: open bugs, decisions, lessons, gotchas.
+- 📋 [CHANGELOG.md](CHANGELOG.md) — Iteration history.
+- 📦 [docs/INSTALL.md](docs/INSTALL.md) — Detailed installation.
+- 🔌 [opencode.lsp.example.jsonc](opencode.lsp.example.jsonc) — LSP bridge for OpenCode.
+- 🏗️ [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Technical architecture.
+- 🤝 [CONTRIBUTING.md](CONTRIBUTING.md) — How to contribute.
 
 ---
 
-## 📄 License
+## 📄 License · 🤝 Contributing
 
-[MIT](LICENSE) © 2026 Heren MCP Contributors
+[MIT](LICENSE) © 2026 Heren MCP Contributors. Read [CONTRIBUTING.md](CONTRIBUTING.md):
+every `.gd` change runs through `scripts/validate_plugin.bat` before commit.
 
 ---
 
 <div align="center">
 
-⭐ [Star on GitHub](https://github.com/CerebroCanibalus/heren-mcp) · 🐛 [Report a bug](https://github.com/CerebroCanibalus/heren-mcp/issues) · 💡 [Propose a feature](https://github.com/CerebroCanibalus/heren-mcp/issues)
-
----
-
-**For the workers and the Ibero-pahones of the world** 🌍
+**For the workers and the iberophones of the world** 🌍
 
 🇪🇸 🇲🇽 🇦🇷 🇨🇴 🇨🇱 🇵🇪 🇻🇪 🇪🇨 🇬🇹 🇨🇺 🇧🇴 🇩🇴 🇭🇳 🇵🇾 🇸🇻 🇳🇮 🇨🇷 🇵🇦 🇺🇾 🇪🇶 🇵🇷 🇬🇶 🇵🇹 🇧🇷 🇲🇿 🇦🇴 🇨🇻 🇲🇴 🇬🇼 🇸🇹 🇹🇱
 
-*Because creation shouldn't be limited to English.*
+*Creation shouldn't be locked to English.*
 
 ⚡ **Plus Ultra: go beyond.** 🌍
 
