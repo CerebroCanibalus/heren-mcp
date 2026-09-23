@@ -1837,7 +1837,7 @@ async fn visual(
 // ============================================================
 
 #[tool(
-    description = "Workers GDScript del agente: run|list. run ejecuta un worker (@tool, extends RefCounted, func run(ctx)) contra la escena: parse-check previo, save transaccional (solo si ctx.mark_modified()), snapshot+restore en fallo, coords del resultado. ctx: get_scene_root/set_scene_root/own/instance_scene/template/coords/get_node_or_null/find_nodes_by_name/remove_node/clear_children/log/error/mark_modified/output. mode=inspect es read-only detached. code (primera vez) o script_path (reintentos: parcha el mismo archivo con resource/edit_script). CONTRATO: ran=false = el worker falló (ver error) pero la tool tuvo éxito — itera parchando el script_path devuelto; la escena original queda intacta."
+    description = "Workers GDScript del agente: run|list|inspect. run ejecuta un worker (@tool, extends RefCounted, func run(ctx)) contra la escena: parse-check previo, save transaccional (solo si ctx.mark_modified()), snapshot+restore en fallo, coords del resultado. ctx: get_scene_root/set_scene_root/own/instance_scene/template/coords/get_node_or_null/find_nodes_by_name/remove_node/clear_children/log/error/mark_modified/output. mode=inspect es read-only detached. code (primera vez) o script_path (reintentos: parcha el mismo archivo con resource/edit_script). CONTRATO: ran=false = el worker falló (ver error) pero la tool tuvo éxito — itera parchando el script_path devuelto; la escena original queda intacta. inspect (W4b) vista READ-ONLY sin ejecutar worker: árbol recursivo (tier 1/2/3, default 1) + agregados (skeleton bones, animations, materials, lights, audio, cameras). PackedScene instanciadas opacas por defecto — opt-in vía expand_scene=[res://path.tscn,...]. NO muta."
 )]
 #[allow(clippy::too_many_arguments)]
 async fn scene_script(
@@ -1849,6 +1849,8 @@ async fn scene_script(
     mode: Option<String>,
     save: Option<bool>,
     tier: Option<i64>,
+    depth: Option<i64>,
+    expand_scene: Option<Vec<String>>,
 ) -> Result<Value, ToolError> {
     let proj = resolve_project(project_path.as_deref()).await?;
     let registry = EditorRegistry::global();
@@ -1857,6 +1859,7 @@ async fn scene_script(
         .map(normalize_scene_path)
         .unwrap_or_default();
     let is_inspect = mode.as_deref() == Some("inspect");
+    let expand_json = expand_scene.map(|v| Value::Array(v.into_iter().map(Value::String).collect()));
     let a = apply_scene_context(
         &proj,
         args(&[
@@ -1869,6 +1872,8 @@ async fn scene_script(
             ("mode", mode.map(Value::String)),
             ("save", save.map(Value::Bool)),
             ("tier", tier.map(|v| json!(v))),
+            ("depth", depth.map(|v| json!(v))),
+            ("expand_scene", expand_json),
         ]),
     );
     if action == "run" && !is_inspect {

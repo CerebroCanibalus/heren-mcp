@@ -51,6 +51,7 @@ const DISPATCH_ROUTES: &[&str] = &[
     "animation/delete",
     "filesystem/scan", "filesystem/status", "filesystem/import_errors",
     "filesystem/exists", "filesystem/import",
+    "scene_script/inspect",  // W4b — vista READ-ONLY sin ejecutar worker
 ];
 
 async fn list_tools() -> Vec<flojo_mcp::rmcp::model::Tool> {
