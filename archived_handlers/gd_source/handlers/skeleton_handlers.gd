@@ -6,7 +6,7 @@ extends "res://addons/heren/handlers/animation_handlers.gd"
 # retarget). Reemplazados por scene_script workers — el agente habla directo
 # con la API de Godot para tree manipulation, IK, FABRIK, skin, attachment, etc.
 #
-# Para restaurar, ver addons/heren/archive/handlers/README.md.
+# Para restaurar, ver archived_handlers/gd_source/handlers/README.md.
 
 func handle_skeleton_get_bones(args: Dictionary) -> Dictionary:
 	var root := _scene_root(args)

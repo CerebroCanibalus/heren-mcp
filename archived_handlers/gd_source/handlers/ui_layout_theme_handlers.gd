@@ -8,7 +8,7 @@ extends "res://addons/heren/handlers/ui_handlers.gd"
 #
 # Hereda de ui_handlers.gd (que sigue activo) para reutilizar helpers
 # (_scene_root, _resolve_node, LAYOUT_PRESETS, etc.).
-# Para restaurar, ver addons/heren/archive/handlers/README.md.
+# Para restaurar, ver archived_handlers/gd_source/handlers/README.md.
 
 func handle_ui_layout(args: Dictionary) -> Dictionary:
 	var root := _scene_root(args)

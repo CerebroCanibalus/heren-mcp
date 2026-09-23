@@ -8,7 +8,7 @@ extends "res://addons/heren/handlers/node_handlers.gd"
 #
 # Hereda de node_handlers.gd (que sigue activo) para reutilizar helpers
 # (_scene_root, _resolve_node, _node_coords, _count_scene_nodes, etc.).
-# Para restaurar, ver addons/heren/archive/handlers/README.md.
+# Para restaurar, ver archived_handlers/gd_source/handlers/README.md.
 
 ## Mueve un nodo a otro parent (UndoRedo + return old_parent).
 ## Args: node_path (str), new_parent_path (str), keep_global_transform (bool, default true).

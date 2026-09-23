@@ -7,7 +7,7 @@ extends "res://addons/heren/handlers/animation_handlers.gd"
 #
 # Hereda de animation_handlers.gd (que sigue activo) para reutilizar helpers
 # (_scene_root, _resolve_node, _resolve_tree, _node_path_relative, etc.).
-# Para restaurar, ver addons/heren/archive/handlers/README.md.
+# Para restaurar, ver archived_handlers/gd_source/handlers/README.md.
 
 func handle_tree_activate(args: Dictionary) -> Dictionary:
 	var root := _scene_root(args)

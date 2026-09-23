@@ -3,7 +3,7 @@ extends "res://addons/heren/handlers/heren_handler.gd"
 # Heren MCP v4 - ARCHIVADO 2026-09-09 (§0.12 W4 cleanup).
 # TileMap handlers completos. Reemplazados por scene_script workers.
 #
-# Para restaurar, ver addons/heren/archive/handlers/README.md.
+# Para restaurar, ver archived_handlers/gd_source/handlers/README.md.
 
 # Actions (heredadas de v3 tilemap_tool.py + daemon project_ops, adaptadas):
 #   inspect_set -> fuentes del TileSet (atlas: textura, grid, márgenes)

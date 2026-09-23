@@ -8,7 +8,7 @@ extends "res://addons/heren/handlers/shader_handlers.gd"
 #
 # Hereda de shader_handlers.gd (que sigue activo) para reutilizar helpers
 # (_scene_root, _resolve_node, _assign_material, _ensure_gdshader_ext, etc.).
-# Para restaurar, ver addons/heren/archive/handlers/README.md.
+# Para restaurar, ver archived_handlers/gd_source/handlers/README.md.
 
 ## One-shot: crea shader (si code) + material + asigna al nodo + uniforms en UNA
 ## llamada. Útil cuando el agente quiere "pintar este nodo con este shader"
