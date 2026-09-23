@@ -52,6 +52,9 @@ Thumbs.db
 *.backup
 *.bak
 
+# Heren runtime (server discovery — cambia con cada arranque del server)
+.heren/server_port.json
+
 # Temp/testing
 .temp/
 
