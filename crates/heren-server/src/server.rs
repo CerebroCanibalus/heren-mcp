@@ -33,6 +33,69 @@ fn remember_scene_context(proj: &str, scene_path: &str) {
     }
 }
 
+/// Desde cuándo vemos este proyecto con el editor CORRIENDO pero SIN conectar
+/// al WS (2026-09-28). Se usa para el margen de gracia del zombie: un proyecto
+/// grande puede tardar más que el timeout de conexión en arrancar, y antes lo
+/// matábamos y relanzábamos en bucle.
+fn editor_offline_since() -> &'static Mutex<HashMap<String, std::time::Instant>> {
+    static MAP: OnceLock<Mutex<HashMap<String, std::time::Instant>>> = OnceLock::new();
+    MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Milisegundos que llevamos viendo el editor sin conectar (0 = recién visto).
+fn offline_for_ms(project_path: &str) -> u64 {
+    let mut map = editor_offline_since().lock().unwrap();
+    let now = std::time::Instant::now();
+    match map.get(project_path) {
+        Some(t) => now.saturating_duration_since(*t).as_millis() as u64,
+        None => {
+            map.insert(project_path.to_string(), now);
+            0
+        }
+    }
+}
+
+/// El editor conectó → limpiar el marcador (ya no es zombie).
+fn mark_editor_online(project_path: &str) {
+    editor_offline_since()
+        .lock()
+        .unwrap()
+        .remove(project_path);
+}
+
+/// 🐛 Guard de seguridad antes de CUALQUIER `close_editor` (2026-09-28).
+///
+/// El server nunca debe destruir trabajo sin guardar del usuario. Matar el
+/// editor con escenas dirty pierde horas de trabajo y el propio código lo
+/// reconocía como deuda (§0.5: "el server NUNCA mata al editor").
+///
+/// Devuelve `Err` con las escenas sucias si NO es seguro matar.
+async fn ensure_no_unsaved_work(
+    registry: &EditorRegistry,
+    project_path: &str,
+) -> Result<(), String> {
+    let dirty = registry.dirty_scenes(project_path).await;
+    if dirty.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "no_se_puede_cerrar_el_editor: hay {n} escena(s) con cambios sin guardar \
+         ({scenes}). El server NO destruye tu trabajo — guardalas (scene/save) o \
+         cerralas tu a mano, y reintenta. Si de verdad quieres que el server \
+         las cierre, usa HEREN_FORCE_RELAUNCH=1.",
+        n = dirty.len(),
+        scenes = dirty.join(", "),
+    ))
+}
+
+/// El usuario puede forzar el relanzamiento (descartando su trabajo) con
+/// `HEREN_FORCE_RELAUNCH=1`. Opt-in explícito: el default es no perder nada.
+fn force_relaunch_allowed() -> bool {
+    std::env::var("HEREN_FORCE_RELAUNCH")
+        .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+        .unwrap_or(false)
+}
+
 /// AsÃ­ las ops de nodo operan SIEMPRE contra la escena objetivo, no contra
 /// la pestaÃ±a que estÃ© activa en ese momento.
 fn apply_scene_context(proj: &str, mut a: Value) -> Value {
@@ -134,16 +197,30 @@ async fn ensure_editor_connected(
 
     // 2. Si editor conectado y plugin al día → fast path (~0ms).
     if registry.has_editor(project_path).await {
+        mark_editor_online(project_path);
         if !plugin_changed {
             return Ok(());
         }
         // Plugin stale: matar editor para que el path de launch siguiente
         // arranque con el código nuevo. El registry también debe olvidarlo.
+        //
+        // 🚨 2026-09-28: matar el editor PIERDE escenas sin guardar. El propio
+        // código lo reconocía como deuda. Ahora es opt-in explícito.
+        if let Err(reason) = ensure_no_unsaved_work(registry, project_path).await {
+            if !force_relaunch_allowed() {
+                return Err(ToolError::internal(reason));
+            }
+            info!(
+                project_path,
+                "HEREN_FORCE_RELAUNCH=1: cerrando el editor con escenas sin guardar ({reason})"
+            );
+        }
         info!(
             project_path,
             "plugin changed on disk; killing running editor to reload new code (Godot #11612)"
         );
         crate::launcher::close_editor(project_path);
+        mark_editor_online(project_path); // el editor va a morir: no es zombie
         // Esperar kill real (taskkill es async en Windows).
         let kill_deadline = std::time::Instant::now()
             + std::time::Duration::from_millis(crate::constants::EDITOR_KILL_WAIT_MS * 2);
@@ -171,6 +248,38 @@ async fn ensure_editor_connected(
              Abre Godot con el plugin o habilita auto_launch."
         )));
     }
+    // 🐛 Grace period del zombie (2026-09-28): si el editor está CORRIENDO
+    // pero no conecta, puede estar arrancando (proyecto grande importando
+    // recursos / compilando shaders). Antes lo matábamos de inmediato y lo
+    // relanzábamos → bucle de kill+launch en cada tool call.
+    if crate::launcher::is_editor_running(project_path) {
+        let waited = offline_for_ms(project_path);
+        if waited < crate::constants::EDITOR_ZOMBIE_GRACE_MS {
+            return Err(ToolError::internal(format!(
+                "editor_arrancando: el proceso de Godot lleva {waited}ms sin conectar al WS \
+                 (margen de gracia: {}ms). No lo cierro — puede estar importando \
+                 recursos. Reintenta en unos segundos, o espera a que termine de abrir.",
+                crate::constants::EDITOR_ZOMBIE_GRACE_MS,
+            )));
+        }
+        // Margen agotado → zombie confirmado. Sigue el kill de launch_editor.
+        info!(
+            project_path,
+            waited_ms = waited,
+            "zombie confirmado tras el margen de gracia; relanzando el editor"
+        );
+    } else {
+        // No hay proceso: el editor murió al arrancar (crash). Puede relanzarse.
+        mark_editor_online(project_path);
+    }
+
+    // 🐛 Nunca destruir trabajo sin guardar, ni siquiera relanzando.
+    if let Err(reason) = ensure_no_unsaved_work(registry, project_path).await {
+        if !force_relaunch_allowed() {
+            return Err(ToolError::internal(reason));
+        }
+    }
+
     let port = ws_port();
     let outcome = crate::launcher::launch_editor(project_path, port, godot_path, false);
     if !outcome.launched {
@@ -189,6 +298,7 @@ async fn ensure_editor_connected(
         .await;
         wait_ms += crate::constants::EDITOR_CONNECT_POLL_MS;
         if registry.has_editor(project_path).await {
+            mark_editor_online(project_path);
             return Ok(());
         }
     }
@@ -229,14 +339,22 @@ async fn forward_mutating(
     // —peor— si la primera pasada mataba el editor por plugin stale, la
     // segunda lo relanzaba otra vez (doble launch por tool call).
     let result = forward(registry, project_path, tool_name, args).await?;
-    // Marcar dirty solo si la mutaciÃ³n tuvo Ã©xito (ok=true) y hay scene_path.
+    // Marcar/limpiar dirty segun el resultado (ok=true) y el scene_path.
     if !scene_path.is_empty() {
         let ok = result
             .get("ok")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         if ok {
-            registry.mark_dirty(project_path, scene_path).await;
+            // `scene/save` deja la escena limpia; cualquier otra mutacion la
+            // ensucia. Sin esta distincion, el guard anti-relaunch (2026-09-28)
+            // veria "sin guardar" en un proyecto recien guardado y bloquearia
+            // el relanzamiento para siempre.
+            if tool_name == "scene/save" {
+                registry.clear_dirty_scene(project_path, scene_path).await;
+            } else {
+                registry.mark_dirty(project_path, scene_path).await;
+            }
         }
     }
     Ok(result)
@@ -1958,7 +2076,79 @@ pub async fn run() -> Result<(), ServerError> {
     // MCP server por stdio (OpenCode). Este bloquea hasta que termine.
     let result = flojo_run_stdio(Heren::new()).await;
 
-    // NOTA: NO limpiamos discovery aquí — se escribe por-project en
+    // NOTA: NO limpiamos discovery aqui - se escribe por-project en
     // ensure_editor_connected. Archivos stale son inofensivos (PID muerto).
     result
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 🐛 Regresión 2026-09-28: el margen de gracia del zombie.
+    ///
+    /// Un proyecto grande tarda más que EDITOR_CONNECT_TIMEOUT_MS en conectar
+    /// (importa recursos, compila shaders). Antes, el siguiente tool call veía
+    /// "proceso corriendo + sin conectar" y lo mataba de inmediato → bucle de
+    /// kill+launch en cada tool call.
+    #[test]
+    fn offline_grace_counter_grows_and_resets() {
+        let proj = "res://_test_zombie_grace";
+        mark_editor_online(proj);
+        assert_eq!(offline_for_ms(proj), 0, "recien visto debe ser 0");
+
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        let second = offline_for_ms(proj);
+        assert!(second >= 25, "debe crecer con el tiempo, dio {second}");
+
+        // El editor conectó -> el margen se limpia.
+        mark_editor_online(proj);
+        assert_eq!(offline_for_ms(proj), 0, "tras conectar, reinicia");
+
+        let _ = editor_offline_since().lock().unwrap().remove(proj);
+    }
+
+    /// 🐛 Regresión 2026-09-28: el server NO debe destruir trabajo sin guardar.
+    ///
+    /// close_editor hace taskkill. Si hay escenas dirty, matamos horas de
+    /// trabajo del usuario. El propio código lo reconocía como deuda.
+    #[tokio::test]
+    async fn refuses_to_kill_editor_with_unsaved_work() {
+        // Instancia LOCAL: `global()` exige init_global() (solo lo llama run()).
+        let registry = EditorRegistry::new();
+        let proj = "res://_test_dirty_guard";
+        registry.clear_dirty(proj).await;
+
+        assert!(
+            ensure_no_unsaved_work(&registry, proj).await.is_ok(),
+            "sin escenas dirty debe permitir el relanzamiento"
+        );
+
+        registry.mark_dirty(proj, "res://Player.tscn").await;
+        registry.mark_dirty(proj, "res://Level.tscn").await;
+        let err = ensure_no_unsaved_work(&registry, proj)
+            .await
+            .expect_err("con escenas dirty NO debe permitir matar el editor");
+        assert!(
+            err.contains("Player.tscn") && err.contains("Level.tscn"),
+            "el error debe listar las escenas sucias: {err}"
+        );
+        assert!(
+            err.contains("HEREN_FORCE_RELAUNCH"),
+            "el error debe ofrecer el opt-in explicito: {err}"
+        );
+
+        registry.clear_dirty(proj).await;
+    }
+
+    /// El opt-in HEREN_FORCE_RELAUNCH debe venir apagado por defecto:
+    /// perder trabajo del usuario nunca es el comportamiento implicito.
+    #[test]
+    fn force_relaunch_is_opt_in() {
+        if std::env::var("HEREN_FORCE_RELAUNCH").is_err() {
+            assert!(
+                !force_relaunch_allowed(),
+                "HEREN_FORCE_RELAUNCH debe requerir opt-in explicito"
+            );
+        }
+    }
 }

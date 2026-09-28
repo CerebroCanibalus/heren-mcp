@@ -242,6 +242,24 @@ impl EditorRegistry {
         v
     }
 
+    /// Limpia UNA escena del registro dirty. Lo invoca `scene/save` al guardar:
+    /// el doc de `mark_dirty` lo prometía pero nadie lo llamaba, así que un
+    /// proyecto ya guardado seguía figurando como "sin guardar" para el guard
+    /// anti-relaunch y bloqueaba el relanzamiento para siempre.
+    pub async fn clear_dirty_scene(&self, project_path: &str, scene_path: &str) {
+        let key = normalize_project_path(project_path);
+        let mut state = self.state.lock().await;
+        if let Some(set) = state.dirty.get_mut(&key) {
+            set.remove(scene_path);
+        }
+    }
+
+    /// Vacía por completo el registro dirty de un proyecto.
+    pub async fn clear_dirty(&self, project_path: &str) {
+        let key = normalize_project_path(project_path);
+        self.state.lock().await.dirty.remove(&key);
+    }
+
     /// Marca el cierre INESPERADO del editor (WS cayó sin session/close).
     /// Guarda las dirty que quedaban para el diagnóstico del agente.
     ///

@@ -22,3 +22,13 @@ pub const EDITOR_CONNECT_TIMEOUT_MS: u64 = 15_000;
 
 /// D2: intervalo de polling de conexión del editor (server.rs open).
 pub const EDITOR_CONNECT_POLL_MS: u64 = 500;
+
+/// Margen de gracia para un editor que corre pero todavía no conectó
+/// (2026-09-28). 🐛 Un proyecto grande con "importando recursos" o compilando
+/// shaders puede tardar MÁS que `EDITOR_CONNECT_TIMEOUT_MS` en conectar.
+/// Antes, el siguiente tool call lo veía como "zombie" y lo mataba — matando
+/// y relanzando Godot en bucle.
+///
+/// Durante esta ventana NUNCA matamos el proceso: puede estar arrancando.
+/// Transcurrida, sí lo tratamos como zombie real.
+pub const EDITOR_ZOMBIE_GRACE_MS: u64 = 30_000;

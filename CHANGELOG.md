@@ -1,5 +1,56 @@
 # Changelog — Heren MCP
 
+## [Unreleased] - 2026-09-28 - 🐛 Anti-loop de relanzamiento + guard de trabajo sin guardar
+
+### 🐛 Segundo vector de loop: zombie matado sin margen de gracia
+- **Problema**: el fix del `.uid` (2026-09-27) tapaba el loop más frecuente, pero
+  existía OTRO camino que mataba y relanzaba el editor en bucle:
+  1. Un tool call no encuentra editor conectado → `launch_editor` (server.rs:175)
+  2. Espera `EDITOR_CONNECT_TIMEOUT_MS` (15s) → no conectó → devuelve error
+  3. El **siguiente** tool call → `launch_editor` otra vez → `launcher.rs:684` ve
+     `is_editor_running()==true` → **`close_editor()`** → kill → relanza
+  4. Vuelve al paso 1. Un kill+launch cada ~15s, indefinidamente.
+- **Causa raíz**: `EDITOR_CONNECT_TIMEOUT_MS = 15s` no cubre un proyecto grande
+  con "importando recursos" o compilando shaders. El proceso estaba vivo y
+  sano, solo lento. El código lo trataba como zombie desde el primer instante.
+- **Fix**: margen de gracia `EDITOR_ZOMBIE_GRACE_MS = 30_000`.
+  - `editor_offline_since()` — registro `HashMap<proyecto, Instant>` con el
+    primer instante en que vemos el editor corriendo pero sin conectar.
+  - Dentro del margen → **NO se mata**: se devuelve un error accionable
+    ("editor_arrancando... reintenta en unos segundos").
+  - Margen agotado → zombie confirmado → sí se relanza.
+  - `mark_editor_online()` limpia el registro cuando el editor conecta (para que
+    el próximo problema no herede un margen ya consumido).
+
+### 🚨 Guard: el server NO destruye trabajo sin guardar
+- **Problema**: `close_editor()` hace taskkill. Con escenas dirty, eso pierde
+  horas de trabajo del usuario. El propio código lo reconocía como deuda:
+  *"⚠️ si la escena tiene cambios sin guardar (dirty), el agente los PIERDE al
+  matar el editor"* (server.rs:159-161). Nunca se implementó. Y contradecía
+  AGENTS.md §0.5: "el server NUNCA mata al editor".
+- **Fix**: `ensure_no_unsaved_work()` — antes de CUALQUIER `close_editor`
+  consulta `registry.dirty_scenes()`. Si hay escenas sucias, NO mata: devuelve
+  un error que las lista y ofrece el opt-in `HEREN_FORCE_RELAUNCH=1`.
+  Perder trabajo del usuario nunca es el comportamiento implícito.
+- **Bug de soporte** resuelto de paso: `mark_dirty` no tenía contraparte —
+  `scene/save` marcaba la escena sucia y nadie la limpiaba → un proyecto recién
+  guardado seguía figurando "sin guardar" y el guard bloquearía el
+  relanzamiento para siempre. Añadidos `clear_dirty_scene()` y `clear_dirty()`
+  en `registry.rs`; `forward_mutating` limpia el dirty cuando
+  `tool_name == "scene/save"`.
+
+### 🧪 Tests (3 nuevos)
+- `offline_grace_counter_grows_and_resets` — el contador arranca en 0, crece con
+  el tiempo, y se reinicia cuando el editor conecta.
+- `refuses_to_kill_editor_with_unsaved_work` — sin dirty permite matar; con
+  dirty BLOQUEA y el error lista las escenas + ofrece el opt-in.
+- `force_relaunch_is_opt_in` — `HEREN_FORCE_RELAUNCH` apagado por defecto.
+- Total: **89 tests lib / 100+ global, 0 failed**. GDScript: 77/0.
+- Release verificado limpio (10.8 MB) en target alterno (el `target/release`
+  real está bloqueado por servidores MCP vivos en sesiones hermanas).
+
+---
+
 ## [Unreleased] - 2026-09-27 - 🐛 CRÍTICO: el editor se reiniciaba en cada tool call
 
 ### 🐛 Bug crítico: `.uid` de Godot provocaba kill+relaunch perpetuo del editor
