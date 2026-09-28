@@ -14,6 +14,8 @@
 ## 0. Pendientes
 
 ### Bugs abiertos
+- **CRÍTICO (fixed 2026-09-27, "el editor se cierra y abre en cada tool call")**: `ensure_plugin_installed` borraba los sidecars `.uid` que Godot 4.4+ genera junto a cada script. Como esos `.uid` NO existen en el source, el paso de "borrar huérfanos" los eliminaba y devolvía `changed=true` en **cada** llamada → `ensure_editor_connected` lo leía como "plugin stale" → `close_editor()` + `launch_editor()` → Godot regenera los `.uid` → loop infinito. **El usuario perdía el editor en cada tool call.** Fix: `is_godot_generated()` filtra `.uid` en `collect_files` y en `prune_orphans`; el prune ahora es recursivo (antes solo top-level, dejando handlers huérfanos para siempre). Test: `ensure_plugin_installed_ignores_godot_uid_sidecars`. **Lección**: el test de idempotencia existente usaba un destino VACÍO, sin los `.uid` que Godot genera al importar un proyecto real — el camino feliz estaba cubierto, el mundo real no.
+- **LSP test flaky**: `lsp_bridge::tests::scan_for_lsp_finds_listening_port` falla ~2/3 de veces (PID race entre el scan y el assert: `left: 62128, right: 62129`). No afecta producción, pero ensucia CI. Fix pendiente: hacer el assert tolerante (±1 PID) o comparar por nombre de proceso.
 - **M1** `node/array_remove`: borra el primer elemento, no el `value` (int vs float en `find`). Fix: tipar/normalizar.
 - **M2** `visual/summary`: `node_count:0` inconsistente (by_type OK). Handler cuenta mal.
 - **M3** `validate/node`: `script_cannot_instantiate` — scripts MCP no se compilan. Falta re-import/scan.

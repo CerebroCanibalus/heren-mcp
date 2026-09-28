@@ -1,5 +1,51 @@
 # Changelog — Heren MCP
 
+## [Unreleased] - 2026-09-27 - 🐛 CRÍTICO: el editor se reiniciaba en cada tool call
+
+### 🐛 Bug crítico: `.uid` de Godot provocaba kill+relaunch perpetuo del editor
+- **Síntoma (reportado por General Beria)**: la tool `resource` (y cualquier otra)
+  cerraba y abría Godot constantemente. El usuario sospechaba que la pérdida de
+  "sesiones" forzaba el cierre/apertura.
+- **Causa raíz**: `ensure_plugin_installed` (corre en **cada** tool call vía
+  `ensure_editor_connected`) tenía un paso de "borrar huérfanos del destino"
+  (source = única verdad). Godot 4.4+ genera un sidecar `<script>.gd.uid` junto a
+  CADA script al importar el proyecto. Esos `.uid`:
+  1. no existen en el source del plugin,
+  2. el prune los borraba → `changed = true`,
+  3. `ensure_editor_connected` leía `plugin_changed=true` como "plugin stale"
+     → `close_editor()` (taskkill) + `launch_editor()`,
+  4. Godot al arrancar **regenera** los `.uid`,
+  5. vuelta al punto 1. Loop infinito.
+- **Por qué NO lo detectaba el test de idempotencia**: usaba un destino
+  **VACÍO** (recién creado). El camino feliz estaba cubierto; el mundo real
+  (proyecto ya importado por Godot, con `.uid` por todo) no. El bug vivía
+  justo fuera del alcance del test.
+- **Fix** (`crates/heren-server/src/launcher.rs`):
+  - `is_godot_generated(rel)` — helper que identifica `.uid`.
+  - `collect_files` ahora EXCLUYE los `.uid` (el plugin no los distribuye).
+  - `prune_orphans` (nuevo, reemplaza el prune top-level inline) — ahora
+    **recursivo** (antes solo borraba en el top-level: un handler archivado
+    quedaba para siempre en el proyecto del usuario) y **respeta** los `.uid`.
+- **Segundo bug (mismo commit)**: `forward_mutating` llamaba
+  `ensure_editor_connected` **DOS veces** (una propia + otra dentro de
+  `forward`). Si la primera pasada mataba el editor, la segunda lo relanzaba
+  → doble launch por tool call. Fix: quitar la llamada redundante.
+- **Tests**:
+  - `ensure_plugin_installed_ignores_godot_uid_sidecars` (nuevo) — reproduce
+    el caso real: instala, simula que Godot crea `.uid` en top-level Y
+    subdirectorios, verifica que el 2º sync es NO-OP y que los `.uid`
+    sobreviven.
+  - `integrity_detects_stale_and_orphan` (actualizado) — el fixture usaba
+    `ghost.gd.uid` como ejemplo de orphan, lo cual era incorrecto (`.uid` es de
+    Godot, no nuestro). Ahora usa `ghost.gd` y además asserta que ningún
+    `.uid` aparece en el reporte de integridad.
+  - Resultado: **86 tests lib / 100+ total, 0 failed**.
+- **Lección meta**: "test que cubre el camino feliz" ≠ "test que cubre el
+  mundo real". El fixture tenía que simular un proyecto **importado por Godot**,
+  no un directorio vacío.
+
+---
+
 > **Política de versiones**: `[X.Y.Z]` se publica al cortar un release público
 > (binarios en `bin/` + tag `vX.Y.Z` en git). Las iteraciones intermedias
 > `[4.9]`–`[4.14]` y los `[Unreleased]` debajo son commits en `main` sin release;

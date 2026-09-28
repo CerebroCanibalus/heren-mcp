@@ -224,7 +224,10 @@ async fn forward_mutating(
     args: Value,
     scene_path: &str,
 ) -> Result<Value, ToolError> {
-    ensure_editor_connected(project_path, None, registry).await?;
+    // ⚠️ NO llamamos `ensure_editor_connected` aquí: `forward` ya lo hace
+    // (server.rs:211). Llamarlo dos veces duplicaba el sync del plugin y
+    // —peor— si la primera pasada mataba el editor por plugin stale, la
+    // segunda lo relanzaba otra vez (doble launch por tool call).
     let result = forward(registry, project_path, tool_name, args).await?;
     // Marcar dirty solo si la mutaciÃ³n tuvo Ã©xito (ok=true) y hay scene_path.
     if !scene_path.is_empty() {

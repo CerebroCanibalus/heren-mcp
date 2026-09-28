@@ -126,17 +126,8 @@ pub fn ensure_plugin_installed(project_path: &str) -> (bool, String) {
     }
 
     // 2. Borrar huérfanos del destino (source es la única verdad).
-    if let Ok(entries) = std::fs::read_dir(&dst) {
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.is_file() {
-                let rel = p.strip_prefix(&dst).unwrap_or(&p).to_path_buf();
-                if !src_files.contains(&rel) {
-                    let _ = std::fs::remove_file(&p);
-                    changed = true;
-                }
-            }
-        }
+    if prune_orphans(&dst, &src_files) {
+        changed = true;
     }
 
     if !copy_failures.is_empty() {
@@ -158,7 +149,22 @@ pub fn ensure_plugin_installed(project_path: &str) -> (bool, String) {
     }
 }
 
-/// Lista de archivos relativos bajo `dir` (recursivo).
+/// ¿Es un artefacto que genera Godot y que el sync NO debe tocar?
+///
+/// Godot 4.4+ escribe un sidecar `<archivo>.uid` junto a cada script y
+/// resource al importar el proyecto. Es de la Toolchain, se regenera solo en
+/// CADA proyecto, y su UID es específico del proyecto. El plugin NO lo
+/// distribuye ni lo borra.
+///
+/// 🐛 Si el sync lo trata como "contenido nuestro" (o como huérfano a
+/// limpiar) devuelve `changed=true` en cada llamada, y `ensure_editor_connected`
+/// responde matando y relanzando el editor — en bucle, en cada tool call.
+fn is_godot_generated(rel: &Path) -> bool {
+    rel.extension().is_some_and(|e| e == "uid")
+}
+
+/// Lista de archivos relativos bajo `dir` (recursivo), EXCLUYENDO los
+/// artefactos que genera Godot (`.uid`).
 /// FIX 2026-08-08 (bug raíz del sync roto): la recursión perdía el prefijo de
 /// subdirectorio — `collect_files(&p)` hacía `strip_prefix(p)` en vez de
 /// `strip_prefix(root)` → `handlers/a.gd` salía como `a.gd` → el sync copiaba
@@ -173,7 +179,10 @@ fn collect_files(root: &Path) -> Vec<PathBuf> {
                 if p.is_dir() {
                     walk(root, &p, out);
                 } else {
-                    out.push(p.strip_prefix(root).unwrap_or(&p).to_path_buf());
+                    let rel = p.strip_prefix(root).unwrap_or(&p).to_path_buf();
+                    if !is_godot_generated(&rel) {
+                        out.push(rel);
+                    }
                 }
             }
         }
@@ -181,6 +190,42 @@ fn collect_files(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     walk(root, root, &mut out);
     out
+}
+
+/// Borra del destino los archivos que no están en `src_files` (el source es la
+/// única verdad). Devuelve `true` si borró algo.
+///
+/// 🐛 Antes solo miraba el TOP-LEVEL del destino: un handler eliminado del
+/// source (ej. al archivar) se quedaba para siempre en el proyecto del
+/// usuario, y Godot lo seguía compilando. Ahora es recursivo como
+/// `collect_files`.
+///
+/// Los `.uid` de Godot se respetan (ver `is_godot_generated`).
+fn prune_orphans(dst: &Path, src_files: &[PathBuf]) -> bool {
+    fn walk(root: &Path, dir: &Path, src_files: &[PathBuf], changed: &mut bool) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                walk(root, &p, src_files, changed);
+            } else {
+                let rel = p.strip_prefix(root).unwrap_or(&p).to_path_buf();
+                if is_godot_generated(&rel) {
+                    continue; // de Godot, no lo tocamos
+                }
+                if !src_files.contains(&rel) {
+                    if std::fs::remove_file(&p).is_ok() {
+                        *changed = true;
+                    }
+                }
+            }
+        }
+    }
+    let mut changed = false;
+    walk(dst, dst, src_files, &mut changed);
+    changed
 }
 
 /// ¿Difieren dos archivos? Comparación por contenido (si falla lectura → true).
@@ -1164,6 +1209,78 @@ DESKTOP-C36BCKD,"D:\Mis Juegos\Godot\Godot_v4.7.1-stable_win64.exe" "D:\Mis Jueg
         let _ = std::fs::remove_dir_all(&project);
     }
 
+    /// 🐛 BUG CRÍTICO (2026-09-27, reportado por General Beria): el sync
+    /// borraba los `.uid` sidecars que Godot 4.4+ genera junto a cada script,
+    /// y eso devolvía `changed=true` en CADA tool call. `ensure_editor_connected`
+    /// interpretando eso como "plugin stale" → `close_editor()` + relaunch
+    /// perpetuo. El usuario veía cómo Godot se cerraba y abría en cada llamada.
+    ///
+    /// Por qué el test de idempotencia de arriba NO lo detectaba: usa un
+    /// destino VACÍO (recién creado), sin los `.uid` que Godot genera al
+    /// importar un proyecto real. El camino feliz estaba cubierto; el mundo
+    /// real no.
+    #[test]
+    fn ensure_plugin_installed_ignores_godot_uid_sidecars() {
+        let project = std::env::temp_dir().join("heren_uid_proj");
+        let _ = std::fs::remove_dir_all(&project);
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            project.join("project.godot"),
+            "[application]\nconfig/name=\"test\"\n",
+        )
+        .unwrap();
+
+        // 1ª llamada: instala el plugin (changed=true).
+        let (changed1, msg1) = ensure_plugin_installed(project.to_str().unwrap());
+        assert!(changed1, "sync inicial debe copiar: {msg1}");
+
+        // Simular Godot 4.4+ importando el proyecto: crear un `.uid` por cada
+        // script, tanto en el top-level como en subdirectorios (handlers/, tests/).
+        let dst = project.join("addons").join("heren");
+        let mut uids = 0usize;
+        for rel in collect_files(&dst) {
+            if rel.extension().is_some_and(|e| e == "gd") {
+                let mut uid = dst.join(&rel);
+                uid.set_extension("gd.uid");
+                std::fs::write(&uid, b"uid://herenfixture\n").unwrap();
+                uids += 1;
+            }
+        }
+        assert!(uids > 0, "el plugin debe tener scripts .gd para crear .uid");
+
+        // 2ª llamada: los `.uid` NO son un cambio → NO-OP.
+        let (changed2, msg2) = ensure_plugin_installed(project.to_str().unwrap());
+        assert!(
+            !changed2,
+            "los .uid de Godot NO deben contar como cambio — provocaban \
+             kill+relaunch del editor en cada tool call: {msg2}"
+        );
+
+        // Y los `.uid` deben SEGUIR ahí: son de Godot, no nuestros.
+        // (Se cuenta en disco, no vía collect_files: esa ya los filtra.)
+        fn count_uids(dir: &std::path::Path) -> usize {
+            let mut n = 0;
+            if let Ok(rd) = std::fs::read_dir(dir) {
+                for e in rd.flatten() {
+                    let p = e.path();
+                    if p.is_dir() {
+                        n += count_uids(&p);
+                    } else if p.extension().is_some_and(|x| x == "uid") {
+                        n += 1;
+                    }
+                }
+            }
+            n
+        }
+        let survived = count_uids(&dst);
+        assert_eq!(
+            survived, uids,
+            "los .uid deben sobrevivir al sync ({survived} de {uids})"
+        );
+
+        let _ = std::fs::remove_dir_all(&project);
+    }
+
     const CANONICAL: &str = "enabled=PackedStringArray(\"res://addons/heren/plugin.cfg\")";
 
     fn write_project(dir: &std::path::Path, content: &str) {
@@ -1348,13 +1465,16 @@ DESKTOP-C36BCKD,"D:\Mis Juegos\Godot\Godot_v4.7.1-stable_win64.exe" "D:\Mis Jueg
             "func old_api() -> void:\n\tpass\n",
         )
         .unwrap();
-        // Orphan: archivo que no existe en source.
+        // Orphan: archivo NUESTRO que no existe en source (p. ej. un handler
+        // que se archivó pero quedó en el proyecto del usuario).
+        // ⚠️ NO usamos un `.uid` como ejemplo: esos son de Godot y el sync los
+        // respeta a propósito (ver `is_godot_generated`).
         std::fs::write(
             proj.join("addons")
                 .join("heren")
                 .join("handlers")
-                .join("ghost.gd.uid"),
-            "uid://x",
+                .join("ghost.gd"),
+            "extends Node\n",
         )
         .unwrap();
 
@@ -1371,10 +1491,16 @@ DESKTOP-C36BCKD,"D:\Mis Juegos\Godot\Godot_v4.7.1-stable_win64.exe" "D:\Mis Jueg
             matches!(dbg.map(|f| f.status.as_str()), Some("stale")),
             "debug_handlers.gd debe estar stale (mezcla toxica): {report:?}"
         );
-        let ghost = report.iter().find(|f| f.rel == "handlers/ghost.gd.uid");
+        let ghost = report.iter().find(|f| f.rel == "handlers/ghost.gd");
         assert!(
             matches!(ghost.map(|f| f.status.as_str()), Some("orphan")),
-            "ghost.gd.uid debe ser orphan: {report:?}"
+            "ghost.gd debe ser orphan: {report:?}"
+        );
+        // Los `.uid` de Godot no son asunto nuestro: no aparecen en el reporte
+        // (si aparecieran, cada proyecto real tendría N "orphans" falsos).
+        assert!(
+            !report.iter().any(|f| f.rel.ends_with(".uid")),
+            "los .uid de Godot no deben aparecer en el reporte de integridad: {report:?}"
         );
         let _ = std::fs::remove_dir_all(&proj);
     }
