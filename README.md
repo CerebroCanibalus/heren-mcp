@@ -64,8 +64,6 @@ Una llamada mal escrita no rompe tu escena. Y `scene_script/inspect` (W4b) le da
 al agente el árbol + huesos + animaciones + materiales **antes** de escribir el
 worker. Cero round-trips ciegos.
 
-> *"Si `run_scene_edit_script` nos ahorra CASI TODAS las tools, que así sea."* — Filosofía adoptada v5.0.
-
 ---
 
 ## 🎯 Qué hace distinto a Heren
@@ -85,10 +83,6 @@ worker. Cero round-trips ciegos.
 
 ## 🆚 Frente a otros MCPs (julio 2026)
 
-Datos verificados de cada repositorio (`.competitors/` + `godot-mcp-runtime/comparison.md`).
-Una ❌ significa **el repo del competidor no expone esa capacidad** — no "es peor",
-sino "lo cubre otro MCP".
-
 | Capacidad | Coding-Solo<br>4.5k★ MIT | Hi-godot<br>868★ MIT | GoPeak<br>227★ MIT | Fennara<br>191★ MIT | Godot MCP Pro<br>473★ $15 | **Heren v5.0**<br>Rust 11MB |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
 | Modo de operación | CLI headless | Editor WS | `npx` + addon | Addon + daemon | Editor (pago) | **EditorPlugin vivo vía WS** |
@@ -107,16 +101,6 @@ sino "lo cubre otro MCP".
 | **Receipt proactivo** | ❌ | ❌ | ❌ | ❌ | ❌ | **✅ `aggregates` + tier dinámico** |
 | **Runtime externo** | Node.js | Python | Node.js | Python | Node.js | **Rust nativo** |
 | **Telemetría** | opt-in | opt-out ⚠️ | ninguna | ninguna | sí | **ninguna, para siempre** |
-| **License** | MIT | MIT | MIT | MIT | Propietario | **MIT** |
-
-**Lectura honesta**
-
-- **Coding-Solo** (4.5k★, limpio, MIT) es la referencia file-level. Si solo quieres leer `.gd`/`.tscn` sin tocar editor, vale.
-- **GoPeak** brilla donde nosotros no: trae LSP + DAP out-of-the-box. Sólido para depuración exclusiva de runtime.
-- **Fennara** fue nuestra inspiración filosófica. Su worker GDScript convenció al General de que el paradigma importa más que el conteo de tools. Lo citamos en §0.12 de AGENTS.md.
-- **Hi-godot/godot-ai** (868★) es el más popular con editor-live. Su telemetría opt-out y Python lo alejan del ethos.
-- **Godot MCP Pro** ($15, 175 tools declaradas, no auditadas) es la opción comercial. Cerrado.
-- **Heren** gana donde el agente **escribe código contra Godot**, no invoca tools individuales. Una llamada reemplaza cinco.
 
 ---
 
@@ -268,66 +252,6 @@ godot_debug(action="output", filter="error") # errores del juego + del editor
 
 > **Patrón de tool**: 1 tool = N acciones vía `action`. Solo `action` es required. Fin del laberinto de schemas.
 
----
-
-## 🧠 Arquitectura
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│  OpenCode · Claude · Cursor · Codex  (cliente MCP)                  │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │  stdio · NDJSON
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  heren-server.exe  ·  Rust · FlojoMCP  ·  ~11 MB                    │
-│  schemas compile-time · 0 deps runtime                              │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌─────────────────┐   │
-│  │  LSP bridge      │  │  .heren/server_  │  │  WS server      │   │
-│  │  stdio↔TCP :6005 │  │  port.json       │  │  127.0.0.1:9099 │   │
-│  └──────────────────┘  └──────────────────┘  └────────┬────────┘   │
-└─────────────────────────────────────────────────────────┼───────────┘
-                                                          │  WebSocket
-                                                          ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  HerenEditorPlugin  ·  extends Godot EditorPlugin                   │
-│  ws_client · dispatcher · handlers/ (scene · node · resource ·     │
-│          project · animation · shader · signal · … · scene_script)  │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-**Ciclo de vida**
-
-1. Cliente envía `tools/call` con `action=...` por NDJSON.
-2. Server valida el schema (compile-time), resuelve `project_path`, encuentra editor o lo auto-lanza.
-3. Forward al plugin por WebSocket. `dispatcher.gd` enruta `(tool_prefix, action) → handler_method` — **sin fallbacks mágicos**.
-4. El handler opera contra el editor real con `EditorUndoRedoManager`. `Ctrl+Z` deshace cualquier cosa.
-5. El receipt incluye **coords** (sistema §7). El agente sabe qué pasó sin re-inspeccionar.
-
-**Sin tool `session`** desde v5.0. El editor conectado **es** la sesión. El primer tool call
-paga el auto-launch; los siguientes son ~20ms. El server nunca mata al editor.
-
-📖 Detalles: [AGENTS.md §2](AGENTS.md) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-
----
-
-## 🧪 Tests
-
-77 GDScript + 100+ Rust, todo verde:
-
-```bash
-scripts/validate_plugin.bat    # Windows 1-click
-
-# Equivalente manual (4 pasos):
-python scripts/install_plugin.py --project fixtures/empty_project --force
-godot --headless --editor --path fixtures/empty_project --quit-after 5
-godot --headless --path fixtures/empty_project --script res://addons/heren/tests/run_tests.gd
-cargo test -p heren-server
-```
-
-Resultados: `RESULT: 77 passed, 0 failed` · `cargo test: 85 passed, 0 failed`.
-
----
-
 ## 🔬 Hecho con FlojoMCP
 
 Heren se construye sobre [FlojoMCP](https://github.com/CerebroCanibalus/flojomcp),
@@ -342,7 +266,6 @@ Sin runtime, sin Node, sin Python.
 - 📖 [AGENTS.md](AGENTS.md) — Biblia del agente: bugs abiertos, decisiones, lecciones, gotchas.
 - 📋 [CHANGELOG.md](CHANGELOG.md) — Historial de iteraciones.
 - 📦 [docs/INSTALL.md](docs/INSTALL.md) — Instalación detallada.
-- 🔌 [opencode.lsp.example.jsonc](opencode.lsp.example.jsonc) — LSP bridge para OpenCode.
 - 🏗️ [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Arquitectura técnica.
 - 🤝 [CONTRIBUTING.md](CONTRIBUTING.md) — Cómo contribuir.
 
