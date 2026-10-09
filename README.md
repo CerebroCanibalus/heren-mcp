@@ -27,7 +27,6 @@ para que cree escenas, muta nodos, anime esqueletos, escriba UI, valide y deshag
 con un `Ctrl+Z` cualquier cosa que se haya inventado.
 
 <p>
-  <a href="https://github.com/CerebroCanibalus/heren-mcp"><b>★ Star</b></a> ·
   <a href="https://github.com/CerebroCanibalus/heren-mcp/issues">🐛 Issues</a> ·
   <a href="CHANGELOG.md">📋 CHANGELOG</a> ·
   <a href="AGENTS.md">📖 AGENTS.md</a>
