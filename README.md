@@ -277,8 +277,6 @@ Sin runtime, sin Node, sin Python.
 todo cambio en `.gd` pasa por `scripts/validate_plugin.bat` antes de commitear.
 
 ---
-
-<div align="center">
                               ██████ ███████████                      
                            ███ ███ █ ███████ █ ████                   
                        █  █ █  █  ███ ████ █     ████                 
@@ -324,7 +322,9 @@ todo cambio en `.gd` pasa por `scripts/validate_plugin.bat` antes de commitear.
                                      ██████                           
                                     █████                             
                                     ███                               
-                                    ██                                               
+                                    ██                                
+<div align="center">
+                                        
 **Por los trabajadores y los iberófonos del mundo** 
 
 🇪🇸 🇲🇽 🇦🇷 🇨🇴 🇨🇱 🇵🇪 🇻🇪 🇪🇨 🇬🇹 🇨🇺 🇧🇴 🇩🇴 🇭🇳 🇵🇾 🇸🇻 🇳🇮 🇨🇷 🇵🇦 🇺🇾 🇪🇶 🇵🇷 🇬🇶 🇵🇹 🇧🇷 🇲🇿 🇦🇴 🇨🇻 🇲🇴 🇬🇼 🇸🇹 🇹🇱
